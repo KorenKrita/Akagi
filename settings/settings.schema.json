@@ -44,7 +44,7 @@
       "description": "Whether to automatically switch the model based on the game."
     }
   },
-  "required": ["mitm", "model", "theme", "ot_server", "autoplay", "auto_switch_model"],
+  "required": ["majsoul_url", "model", "theme", "ot_server", "autoplay", "auto_switch_model"],
   "description": "Settings for the application.",
   "additionalProperties": false
 }

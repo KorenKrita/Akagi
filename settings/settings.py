@@ -145,6 +145,7 @@ def load_settings() -> Settings:
 
     # Parse settings
     return Settings(
+        majsoul_url=settings["majsoul_url"],
         theme=settings["theme"],
         model=settings["model"],
         ot=OTConfig(
