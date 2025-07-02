@@ -39,7 +39,7 @@ from mitm.client import Client
 from mjai_bot.bot import AkagiBot
 from mjai_bot.controller import Controller
 from autoplay.autoplay import AutoPlay
-from settings import MITMType, Settings, load_settings, get_settings, get_schema, verify_settings, save_settings
+from settings import Settings, load_settings, get_settings, get_schema, verify_settings, save_settings
 from settings.settings import settings
 
 mitm_client: Client = None
@@ -59,35 +59,6 @@ class SettingsScreen(Screen):
         pass
 
     def compose(self) -> ComposeResult:
-        # Vertical(
-        #     Horizontal(
-        #         Label("type: ", classes="settings_key"),
-        #         Select.from_values(["amatsuki", "majsoul", "tenhou"], value=settings["mitm"]["type"], id="settings_mitm_type"),
-        #         classes="settings_row",
-        #     ),
-        #     Horizontal(
-        #         Label("host: ", classes="settings_key"),
-        #         Input(value=settings["mitm"]["host"], id="settings_mitm_host"),
-        #         classes="settings_row",
-        #     ),
-        #     Horizontal(
-        #         Label("port: ", classes="settings_key"),
-        #         Input(value=str(settings["mitm"]["port"]), id="settings_mitm_port"),
-        #         classes="settings_row",
-        #     ),
-        #     classes="settings_vertical_container",
-        #     id="settings_mitm",
-        # ),
-        # Horizontal(
-        #     Label("theme: ", classes="settings_key"),
-        #     Input(value=settings["theme"], id="settings_theme"),
-        #     classes="settings_row",
-        # ),
-        # Horizontal(
-        #     Label("model: ", classes="settings_key"),
-        #     Input(value=settings["model"], id="settings_model"),
-        #     classes="settings_row",
-        # ),
         schema = get_schema()
         settings = get_settings()
         scrollable_container = ScrollableContainer(
@@ -227,10 +198,6 @@ class SettingsScreen(Screen):
             logger.info("Settings are valid, saving...")
             save_settings(local_settings)
             logger.info("Settings saved")
-            notify_restart_mitm = (
-                (local_settings["mitm"]["type"] != settings.mitm.type.value) and
-                mitm_client.running
-            )
             update_model = local_settings["model"] != settings.model
             # Reload settings
             settings.update(get_settings())
@@ -250,36 +217,9 @@ class SettingsScreen(Screen):
                         title="Model Error",
                         severity="error",
                     )
-            if notify_restart_mitm:
-                self.app.notify(
-                    "MITM settings changed, you need to restart MITM client for the changes to take effect.",
-                    title="MITM Settings Changed",
-                    severity="information",
-                )
             if settings.autoplay:
-                if settings.mitm.type.value in ["amatsuki", "riichi_city", "tenhou"]:
-                    self.app.notify(
-                        f"Autoplay does not support {settings.mitm.type.value} yet, please disable it.",
-                        title="Autoplay Warning",
-                        severity="warning",
-                    )
-                else:
-                    autoplay.set_autoplay()
-                    window = autoplay.auto_select_window()
-                    if window is not None:
-                        logger.info(f"Autoplay window found: {window.name}")
-                        self.app.notify(
-                            f"Autoplay window found: {window.name}",
-                            title="Autoplay",
-                            severity="information",
-                        )
-                    else:
-                        logger.warning("No autoplay window found")
-                        self.app.notify(
-                            "No autoplay window found, select a target window manually",
-                            title="Autoplay",
-                            severity="warning",
-                        )
+                # Playwright TODO
+                autoplay.set_autoplay()
             self.app.pop_screen()
         except Exception as e:
             logger.error("Settings are invalid, not saving")
@@ -1100,10 +1040,6 @@ class AkagiApp(App):
         Autoplay function to handle MJAI messages.
         """
         global autoplay, mitm_client, mjai_controller
-        if settings.mitm.type.value in ["amatsuki", "riichi_city", "tenhou"]:
-            # Amatsuki, Riichi City, Tenhou do not support autoplay
-            logger.warning("Autoplay is not supported for this MJAI type")
-            return
 
         if (not autoplay.check_window()):
             self.find_autoplay_window()
@@ -1192,7 +1128,6 @@ def main():
     global mitm_client, mjai_controller, mjai_bot, settings, autoplay
 
     logger.info("Starting Akagi...")
-    logger.info(f"MITM Proxy: {settings.mitm.host}:{settings.mitm.port} ({settings.mitm.type})")
     mitm_client = Client()
     logger.info(f"Starting MJAI controller")
     mjai_controller = Controller()

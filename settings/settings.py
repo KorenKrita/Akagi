@@ -10,21 +10,6 @@ from .logger import logger
 FILE_PATH = Path(__file__).resolve().parent
 
 
-class MITMType(Enum):
-    AMATSUKI = "amatsuki"
-    MAJSOUL = "majsoul"
-    RIICHI_CITY = "riichi_city"
-    TENHOU = "tenhou"
-
-@dataclasses.dataclass
-class ServiceConfig:
-    host: str
-    port: int
-
-@dataclasses.dataclass
-class MITMConfig(ServiceConfig):
-    type: MITMType
-
 @dataclasses.dataclass
 class OTConfig:
     server: str
@@ -33,7 +18,6 @@ class OTConfig:
 
 @dataclasses.dataclass
 class Settings:
-    mitm: MITMConfig
     theme: str
     model: str
     ot: OTConfig
@@ -46,9 +30,6 @@ class Settings:
         Args:
             settings (dict): Dictionary with settings to update
         """
-        self.mitm.host = settings["mitm"]["host"]
-        self.mitm.port = settings["mitm"]["port"]
-        self.mitm.type = MITMType(settings["mitm"]["type"])
         self.theme = settings["theme"]
         self.model = settings["model"]
         self.ot.server = settings["ot_server"]["server"]
@@ -92,11 +73,6 @@ class Settings:
         """
         with open(FILE_PATH / "settings.json", "w") as f:
             json.dump({
-                "mitm": {
-                    "type": self.mitm.type.value,
-                    "host": self.mitm.host,
-                    "port": self.mitm.port
-                },
                 "model": self.model,
                 "theme": self.theme,
                 "ot_server": {
@@ -140,11 +116,6 @@ def load_settings() -> Settings:
         logger.warning("Creating new settings.json")
         with open(FILE_PATH / "settings.json", "w") as f:
             json.dump({
-                "mitm": {
-                    "type": "majsoul",
-                    "host": "127.0.0.1",
-                    "port": 7880
-                },
                 "model": "mortal",
                 "theme": "textual-dark",
                 "ot_server": {
@@ -170,11 +141,6 @@ def load_settings() -> Settings:
 
     # Parse settings
     return Settings(
-        mitm=MITMConfig(
-            host=settings["mitm"]["host"],
-            port=settings["mitm"]["port"],
-            type=MITMType(settings["mitm"]["type"])
-        ),
         theme=settings["theme"],
         model=settings["model"],
         ot=OTConfig(

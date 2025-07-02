@@ -14,7 +14,7 @@ import time
 import queue
 import asyncio
 import threading
-from settings.settings import settings, MITMType
+from settings.settings import settings
 
 
 class Client(object):
@@ -26,49 +26,18 @@ class Client(object):
     def start(self):
         if self.running:
             return
-        match settings.mitm.type:
-            case MITMType.AMATSUKI:
-                from mitm.amatsuki import start_proxy, mjai_messages
-                self._thread = threading.Thread(target=lambda: asyncio.run(start_proxy(settings.mitm.host, settings.mitm.port)))
-                self._thread.start()
-                self.messages = mjai_messages
-            case MITMType.MAJSOUL:
-                from mitm.majsoul import start_proxy, mjai_messages
-                self._thread = threading.Thread(target=lambda: asyncio.run(start_proxy(settings.mitm.host, settings.mitm.port)))
-                self._thread.start()
-                self.messages = mjai_messages
-            case MITMType.RIICHI_CITY:
-                from mitm.riichi_city import start_proxy, mjai_messages
-                self._thread = threading.Thread(target=lambda: asyncio.run(start_proxy(settings.mitm.host, settings.mitm.port)))
-                self._thread.start()
-                self.messages = mjai_messages
-            case MITMType.TENHOU:
-                from mitm.tenhou import start_proxy, mjai_messages
-                self._thread = threading.Thread(target=lambda: asyncio.run(start_proxy(settings.mitm.host, settings.mitm.port)))
-                self._thread.start()
-                self.messages = mjai_messages
-            case _:
-                raise ValueError(f"Unknown MITM type: {settings.mitm.type}")
+        # Playwright TODO
+        # from mitm.majsoul import start_proxy, mjai_messages
+        # self._thread = threading.Thread(target=lambda: asyncio.run(start_proxy(settings.mitm.host, settings.mitm.port)))
+        # self._thread.start()
+        # self.messages = mjai_messages
         self.running = True
 
     def stop(self):
         if not self.running:
             return
-        match settings.mitm.type:
-            case MITMType.AMATSUKI:
-                from mitm.amatsuki import stop_proxy
-                stop_proxy()
-            case MITMType.MAJSOUL:
-                from mitm.majsoul import stop_proxy
-                stop_proxy()
-            case MITMType.RIICHI_CITY:
-                from mitm.riichi_city import stop_proxy
-                stop_proxy()
-            case MITMType.TENHOU:
-                from mitm.tenhou import stop_proxy
-                stop_proxy()
-            case _:
-                raise ValueError(f"Unknown MITM type: {settings.mitm.type}")
+        from mitm.majsoul import stop_proxy
+        stop_proxy()
         self.messages = None
         self.running = False
         self._thread.join()

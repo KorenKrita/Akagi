@@ -1,5 +1,5 @@
 from .logger import logger
-from settings.settings import settings, MITMType
+from settings.settings import settings
     
 class AutoPlay(object):
     def __init__(self):
@@ -31,18 +31,7 @@ class AutoPlay(object):
         Returns:
             None: No return value.
         """
-        match settings.mitm.type:
-            case MITMType.AMATSUKI:
-                return
-            case MITMType.MAJSOUL:
-                return
-            case MITMType.RIICHI_CITY:
-                return
-            case MITMType.TENHOU:
-                return
-            case _:
-                logger.error(f"Unknown MITM type: {settings.mitm.type}")
-                return
+        return None
 
     def get_windows(self) -> list:
         """

@@ -2,29 +2,6 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "mitm": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "description": "The type of MITM service to use.",
-          "enum": ["amatsuki", "majsoul", "riichi_city", "tenhou"]
-        },
-        "host": {
-          "type": "string",
-          "description": "The hostname for the MITM service.",
-          "format": "hostname"
-        },
-        "port": {
-          "type": "integer",
-          "description": "The port number for the MITM service.",
-          "minimum": 1,
-          "maximum": 65535
-        }
-      },
-      "required": ["type", "host", "port"],
-      "additionalProperties": false
-    },
     "model": {
       "type": "string",
       "description": "The model to use for analyzing the game."
