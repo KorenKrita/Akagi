@@ -36,7 +36,7 @@ class Client(object):
     def stop(self):
         if not self.running:
             return
-        from mitm.majsoul import stop_proxy
+        from playwright.majsoul import stop_proxy
         stop_proxy()
         self.messages = None
         self.running = False

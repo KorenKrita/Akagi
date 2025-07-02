@@ -35,14 +35,14 @@ from textual.widgets import (Button, Checkbox, Footer, Header, Input, Label, Sel
 from .logger import logger
 from .misc import TILE_2_UNICODE_ART_RICH, VERTICAL_RULE, EMPTY_VERTICAL_RULE, ADDITIONAL_THEMES
 from .libriichi_helper import meta_to_recommend
-from mitm.client import Client
+from playwright.client import Client
 from mjai_bot.bot import AkagiBot
 from mjai_bot.controller import Controller
 from autoplay.autoplay import AutoPlay
 from settings import Settings, load_settings, get_settings, get_schema, verify_settings, save_settings
 from settings.settings import settings
 
-mitm_client: Client = None
+playwright_client: Client = None
 mjai_controller: Controller = None
 mjai_bot: AkagiBot = None
 autoplay: AutoPlay = None
@@ -190,7 +190,7 @@ class SettingsScreen(Screen):
     @on(Button.Pressed, "#settings_save_button")
     def settings_save_button_clicked(self) -> None:
         """Handle Button.Pressed message sent by Save button."""
-        global settings, mjai_controller, mitm_client, autoplay
+        global settings, mjai_controller, playwright_client, autoplay
         local_settings = self.get_settings()["settings"]
         logger.info(f"Verifying settings: {local_settings}")
         try:
@@ -619,12 +619,12 @@ class Recommandation(Horizontal):
         #   - send reach action back to MJAI
         # 2. Kan_select:
         #   - TODO
-        global mitm_client
+        global playwright_client
         recommandation_button: Button = self.query_one("#recommandation_button")
         if recommandation_button.label == "Reach":
             # I think Mortal can tolerate getting multiple reach
             # https://github.com/Equim-chan/Mortal/blob/3ec7a80f0f34446e9fd51c5df4a2940706874fe7/libriichi/src/state/update.rs#L665
-            mitm_client.messages.put({
+            playwright_client.messages.put({
                 "type": "reach",
                 "actor": mjai_controller.bot.player_id,
             })
@@ -736,12 +736,12 @@ class BestAction(Horizontal):
         #   - send reach action back to MJAI
         # 2. Kan_select:
         #   - TODO
-        global mitm_client
+        global playwright_client
         best_action_button_action: Button = self.query_one("#best_action_button_action")
         if best_action_button_action.label == "Reach":
             # I think Mortal can tolerate getting multiple reach
             # https://github.com/Equim-chan/Mortal/blob/3ec7a80f0f34446e9fd51c5df4a2940706874fe7/libriichi/src/state/update.rs#L665
-            mitm_client.messages.put({
+            playwright_client.messages.put({
                 "type": "reach",
                 "actor": mjai_controller.bot.player_id,
             })
@@ -923,10 +923,10 @@ class AkagiApp(App):
             logger.error("No bot selected, please make sure you have bots installed in ./mjai_bot directory")
 
         # ============================================= #
-        #                    MITM                       #
+        #                 Playwright                    #
         # ============================================= #
-        if not mitm_client.running:
-            self.mitm_start_button_clicked()
+        if not playwright_client.running:
+            self.playwright_start_button_clicked()
 
     def compose(self) -> ComposeResult:
         """
@@ -956,7 +956,7 @@ class AkagiApp(App):
         # yield BestAction(id="best_action")
         yield Horizontal(
             Horizontal(
-                Button("MITM\n\nStopped", id="option1_button", variant="default"),
+                Button("Playwright\n\nStopped", id="option1_button", variant="default"),
                 Button("Settings", id="option2_button"),
                 Button("Model\n&\nAutoplay", id="option3_button"),
                 Button("Logs", id="option4_button"),
@@ -972,10 +972,10 @@ class AkagiApp(App):
         Main loop for the application.
         """
         try:
-            global mitm_client, mjai_controller, mjai_bot, settings
-            if not mitm_client.running:
+            global playwright_client, mjai_controller, mjai_bot, settings
+            if not playwright_client.running:
                 return
-            mjai_msgs = mitm_client.dump_messages()
+            mjai_msgs = playwright_client.dump_messages()
             if mjai_msgs:
                 # ============================================= #
                 #                React to MJAI                  #
@@ -1017,7 +1017,7 @@ class AkagiApp(App):
             logger.error(f"Error in main loop: {traceback.format_exc()}")
 
     def find_autoplay_window(self) -> None:
-        global settings, autoplay, mitm_client
+        global settings, autoplay, playwright_client
         if settings.autoplay:
             window = autoplay.auto_select_window()
             if window is not None:
@@ -1039,7 +1039,7 @@ class AkagiApp(App):
         """
         Autoplay function to handle MJAI messages.
         """
-        global autoplay, mitm_client, mjai_controller
+        global autoplay, playwright_client, mjai_controller
 
         if (not autoplay.check_window()):
             self.find_autoplay_window()
@@ -1061,7 +1061,7 @@ class AkagiApp(App):
             )
             return
         if mjai_response["type"] == "reach":
-            mitm_client.messages.put({
+            playwright_client.messages.put({
                 "type": "reach",
                 "actor": mjai_controller.bot.player_id,
             })
@@ -1087,17 +1087,17 @@ class AkagiApp(App):
         self.push_screen(HelpScreenZH())
 
     @on(Button.Pressed, "#option1_button")
-    def mitm_start_button_clicked(self) -> None:
-        global mitm_client, autoplay, settings
+    def playwright_start_button_clicked(self) -> None:
+        global playwright_client, autoplay, settings
 
         option1_button: Button = self.query_one("#option1_button")
-        if mitm_client.running:
-            mitm_client.stop()
-            option1_button.label = "MITM\n\nStopped"
+        if playwright_client.running:
+            playwright_client.stop()
+            option1_button.label = "Playwright\n\nStopped"
             option1_button.variant = "default"
         else:
-            mitm_client.start()
-            option1_button.label = "MITM\n\nRunning"
+            playwright_client.start()
+            option1_button.label = "Playwright\n\nRunning"
             option1_button.variant = "success"
 
     @on(Button.Pressed, "#option2_button")
@@ -1125,10 +1125,10 @@ def main():
     """
     Main entry point for Akagi.
     """
-    global mitm_client, mjai_controller, mjai_bot, settings, autoplay
+    global playwright_client, mjai_controller, mjai_bot, settings, autoplay
 
     logger.info("Starting Akagi...")
-    mitm_client = Client()
+    playwright_client = Client()
     logger.info(f"Starting MJAI controller")
     mjai_controller = Controller()
     mjai_bot = AkagiBot()
@@ -1142,6 +1142,6 @@ def main():
         app.run()
     except KeyboardInterrupt:
         logger.info("Stopping Akagi...")
-    mitm_client.stop()
+    playwright_client.stop()
     logger.info("Akagi stopped")
     sys.exit(0)
