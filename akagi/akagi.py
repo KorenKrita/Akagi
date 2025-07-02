@@ -36,9 +36,9 @@ from .logger import logger
 from .misc import TILE_2_UNICODE_ART_RICH, VERTICAL_RULE, EMPTY_VERTICAL_RULE, ADDITIONAL_THEMES
 from .libriichi_helper import meta_to_recommend
 from playwright.client import Client
+from playwright.autoplay.autoplay import AutoPlay
 from mjai_bot.bot import AkagiBot
 from mjai_bot.controller import Controller
-from autoplay.autoplay import AutoPlay
 from settings import Settings, load_settings, get_settings, get_schema, verify_settings, save_settings
 from settings.settings import settings
 
