@@ -7,6 +7,7 @@ import mitmproxy.http
 import mitmproxy.log
 import mitmproxy.tcp
 import mitmproxy.websocket
+from pathlib import Path
 from mitmproxy import proxy, options, ctx
 from mitmproxy.tools.dump import DumpMaster
 from playwright.sync_api import sync_playwright, Playwright, Browser, Page, WebSocket
@@ -20,6 +21,15 @@ majsoul_bridges: dict[str, MajsoulBridge] = {} # store all flow.id -> MajsoulBri
 mjai_messages: queue.Queue[dict] = queue.Queue() # store all messages
 
 
+def custom_on_websocket_start(ws: WebSocket):
+    """
+    Custom callback for WebSocket connections. This is used to track WebSocket connections
+    and associate them with a MajsoulBridge instance.
+    """
+    logger.info(f"[WebSocket] Connection opened: {ws.url}")
+
+def intercepted_request(route, request):
+    logger.info(f"Intercepted request: {request.method} {request.url}")
 
 class PlaywrightController:
     """
@@ -52,6 +62,7 @@ class PlaywrightController:
         Callback for new WebSocket connections. Equivalent to `websocket_start`.
         """
         global majsoul_bridges
+        logger.info(f"[WebSocket] Connection opened")
         logger.info(f"[WebSocket] Connection opened: {ws.url}")
         
         # Create and store a bridge for this new WebSocket flow
@@ -159,7 +170,7 @@ class PlaywrightController:
         while not self._stop_event.is_set():
             try:
                 # Wait for a command, with a timeout to allow checking the stop event
-                command_data = self.command_queue.get(timeout=0.1)
+                command_data = self.command_queue.get_nowait()
 
                 command = command_data.get("command")
                 if command == "click":
@@ -183,6 +194,7 @@ class PlaywrightController:
 
             except queue.Empty:
                 # Queue was empty, loop continues to check the stop event
+                time.sleep(0.002)
                 continue
             except Exception as e:
                 logger.error(f"An error occurred in the command processing loop: {e}")
@@ -201,15 +213,43 @@ class PlaywrightController:
         try:
             with sync_playwright() as p:
                 self.playwright = p
-                self.browser = self.playwright.chromium.launch(headless=False)
-                self.page = self.browser.new_page()
+                self.browser = self.playwright.chromium.launch_persistent_context(
+                    user_data_dir=Path().cwd() / "playwright_data",
+                    headless=False,
+                    ignore_default_args=['--enable-automation'],
+                    args=["--noerrdialogs", "--no-sandbox"],
+                )
+                # List all pages in the browser context
+                pages: list[Page] = self.browser.pages
+                if not pages:
+                    logger.error("No pages found in the browser context.")
+                    return
+                if len(pages) > 1:
+                    for page in pages[1:]:
+                        logger.info(f"Closing extra page: {page.url}")
+                        page.close()
+                self.page = pages[0]
 
                 # Set up the WebSocket event listener
+                self.page.on("request", lambda request: logger.info(">>", request.method, request.url))
+                self.page.on("response", lambda response: logger.info("<<", response.status, response.url))
+                self.page.route("**/*", lambda route, request: intercepted_request(route, request))
+                def handle_route(route, request):
+                    logger.info(f"ROUTING: {request.method} {request.url}")
+                    # Your custom logic for 'intercepted_request' would go here.
+                    # But you MUST ensure route.continue_() is called.
+                    route.continue_()
+
+                # Route all network requests through our handler.
+                self.page.route("**/*", handle_route)
                 self.page.on("websocket", self._on_web_socket)
+                self.page.on("websocket", custom_on_websocket_start)
+                time.sleep(1)  # Give some time for the WebSocket listener to be set up
 
                 logger.info(f"Navigating to {self.url}...")
-                self.page.goto(self.url, wait_until="domcontentloaded")
+                self.page.goto(self.url)
                 logger.info("Page loaded. Ready for commands.")
+
 
                 # Start processing commands
                 self._process_commands()
