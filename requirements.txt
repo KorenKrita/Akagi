@@ -12,3 +12,6 @@ protobuf==5.29.3
 # PyTorch
 torch==2.5.1
 numpy==2.1.2
+
+# Playwright
+playwright==1.53.0
