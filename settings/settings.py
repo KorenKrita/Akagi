@@ -18,6 +18,7 @@ class OTConfig:
 
 @dataclasses.dataclass
 class Settings:
+    majsoul_url: str
     theme: str
     model: str
     ot: OTConfig
@@ -30,6 +31,7 @@ class Settings:
         Args:
             settings (dict): Dictionary with settings to update
         """
+        self.majsoul_url = settings["majsoul_url"]
         self.theme = settings["theme"]
         self.model = settings["model"]
         self.ot.server = settings["ot_server"]["server"]
@@ -73,6 +75,7 @@ class Settings:
         """
         with open(FILE_PATH / "settings.json", "w") as f:
             json.dump({
+                "majsoul_url": self.majsoul_url,
                 "model": self.model,
                 "theme": self.theme,
                 "ot_server": {
@@ -116,6 +119,7 @@ def load_settings() -> Settings:
         logger.warning("Creating new settings.json")
         with open(FILE_PATH / "settings.json", "w") as f:
             json.dump({
+                "majsoul_url": "https://game.maj-soul.com/1/",
                 "model": "mortal",
                 "theme": "textual-dark",
                 "ot_server": {

@@ -2,6 +2,11 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "majsoul_url": {
+      "type": "string",
+      "description": "The URL for the Majsoul game.",
+      "format": "uri"
+    },
     "model": {
       "type": "string",
       "description": "The model to use for analyzing the game."

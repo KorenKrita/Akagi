@@ -21,7 +21,7 @@ class Client(object):
     def __init__(self):
         self.messages: queue.Queue[dict] = None
         self.running = False
-        self._thread = None
+        self._thread: threading.Thread = None
 
     def start(self):
         if self.running:
