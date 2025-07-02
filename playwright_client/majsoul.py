@@ -21,16 +21,6 @@ majsoul_bridges: dict[str, MajsoulBridge] = {} # store all flow.id -> MajsoulBri
 mjai_messages: queue.Queue[dict] = queue.Queue() # store all messages
 
 
-def custom_on_websocket_start(ws: WebSocket):
-    """
-    Custom callback for WebSocket connections. This is used to track WebSocket connections
-    and associate them with a MajsoulBridge instance.
-    """
-    logger.info(f"[WebSocket] Connection opened: {ws.url}")
-
-def intercepted_request(route, request):
-    logger.info(f"Intercepted request: {request.method} {request.url}")
-
 class PlaywrightController:
     """
     A controller for a Playwright browser instance that runs in a separate thread.
@@ -182,11 +172,13 @@ class PlaywrightController:
                 elif command == "stop":
                     # Exit loop on stop command
                     break
+                # The 'delay' command must also use the non-blocking wait.
                 elif command == "delay":
                     delay = command_data.get("delay", 0)
                     if isinstance(delay, (int, float)) and delay >= 0:
                         logger.info(f"Delaying for {delay} seconds.")
-                        time.sleep(delay)
+                        if self.page:
+                            self.page.wait_for_timeout(delay * 1000)
                     else:
                         logger.error(f"Invalid 'delay' command data: {command_data}")
                 else:
@@ -194,7 +186,8 @@ class PlaywrightController:
 
             except queue.Empty:
                 # Queue was empty, loop continues to check the stop event
-                time.sleep(0.002)
+                if self.page:
+                    self.page.wait_for_timeout(20) # Use a small timeout (in ms)
                 continue
             except Exception as e:
                 logger.error(f"An error occurred in the command processing loop: {e}")
@@ -231,20 +224,7 @@ class PlaywrightController:
                 self.page = pages[0]
 
                 # Set up the WebSocket event listener
-                self.page.on("request", lambda request: logger.info(">>", request.method, request.url))
-                self.page.on("response", lambda response: logger.info("<<", response.status, response.url))
-                self.page.route("**/*", lambda route, request: intercepted_request(route, request))
-                def handle_route(route, request):
-                    logger.info(f"ROUTING: {request.method} {request.url}")
-                    # Your custom logic for 'intercepted_request' would go here.
-                    # But you MUST ensure route.continue_() is called.
-                    route.continue_()
-
-                # Route all network requests through our handler.
-                self.page.route("**/*", handle_route)
                 self.page.on("websocket", self._on_web_socket)
-                self.page.on("websocket", custom_on_websocket_start)
-                time.sleep(1)  # Give some time for the WebSocket listener to be set up
 
                 logger.info(f"Navigating to {self.url}...")
                 self.page.goto(self.url)
