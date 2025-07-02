@@ -15,6 +15,7 @@ import queue
 import asyncio
 import threading
 from settings.settings import settings
+from .majsoul import PlaywrightController, mjai_messages
 
 
 class Client(object):
@@ -22,26 +23,34 @@ class Client(object):
         self.messages: queue.Queue[dict] = None
         self.running = False
         self._thread: threading.Thread = None
+        self.controller: PlaywrightController = PlaywrightController(settings.majsoul_url)
 
     def start(self):
         if self.running:
             return
-        # Playwright TODO
-        # from mitm.majsoul import start_proxy, mjai_messages
-        # self._thread = threading.Thread(target=lambda: asyncio.run(start_proxy(settings.mitm.host, settings.mitm.port)))
-        # self._thread.start()
-        # self.messages = mjai_messages
+        self.messages = mjai_messages
+        self._thread = threading.Thread(target=self.controller.start, daemon=True)
+        self._thread.start()
         self.running = True
 
     def stop(self):
         if not self.running:
             return
-        from playwright.majsoul import stop_proxy
-        stop_proxy()
+        if not self.controller.running:
+            return
+        self.controller.stop()
         self.messages = None
         self.running = False
         self._thread.join()
         self._thread = None
+
+    def send_command(self, command: dict):
+        if not self.running:
+            raise RuntimeError("Client is not running.")
+        if not self.controller.running:
+            raise RuntimeError("Controller is not running.")
+        logger.debug(f"Sending command: {command}")
+        self.controller.command_queue.put(command)
 
     def dump_messages(self) -> list[dict]:
         ans: list[dict] = []

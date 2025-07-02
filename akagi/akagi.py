@@ -35,8 +35,8 @@ from textual.widgets import (Button, Checkbox, Footer, Header, Input, Label, Sel
 from .logger import logger
 from .misc import TILE_2_UNICODE_ART_RICH, VERTICAL_RULE, EMPTY_VERTICAL_RULE, ADDITIONAL_THEMES
 from .libriichi_helper import meta_to_recommend
-from playwright.client import Client
-from playwright.autoplay.autoplay import AutoPlay
+from playwright_client.client import Client
+from playwright_client.autoplay.autoplay import AutoPlay
 from mjai_bot.bot import AkagiBot
 from mjai_bot.controller import Controller
 from settings import Settings, load_settings, get_settings, get_schema, verify_settings, save_settings
@@ -190,7 +190,7 @@ class SettingsScreen(Screen):
     @on(Button.Pressed, "#settings_save_button")
     def settings_save_button_clicked(self) -> None:
         """Handle Button.Pressed message sent by Save button."""
-        global settings, mjai_controller, playwright_client, autoplay
+        global settings, mjai_controller, playwright_client
         local_settings = self.get_settings()["settings"]
         logger.info(f"Verifying settings: {local_settings}")
         try:
@@ -217,9 +217,6 @@ class SettingsScreen(Screen):
                         title="Model Error",
                         severity="error",
                     )
-            if settings.autoplay:
-                # Playwright TODO
-                autoplay.set_autoplay()
             self.app.pop_screen()
         except Exception as e:
             logger.error("Settings are invalid, not saving")
@@ -250,16 +247,12 @@ class ModelsScreen(Screen):
         pass
 
     def compose(self) -> ComposeResult:
-        global mjai_controller, autoplay, settings
-        self.windows = autoplay.get_windows()
-        windows_names = [window.name for window in self.windows]
+        global mjai_controller, settings
         yield ScrollableContainer(
             Static("Models", id="models_label"),
             Select.from_values(mjai_controller.available_bots_names, id="models_select"),
             Static("Warning: This will restart the bot, do not change model during a match!", id="models_warning"),
             Static("Warning: To play 3P Mahjong, a 3P model is needed.", id="models_warning2"),
-            Static("Autoplay Window", id="autoplay_window_label"),
-            Select.from_values(windows_names, id="models_window_select"),
             Button("Select", variant="primary", id="models_select_button"),
             id="models_select_container",
         )
@@ -267,7 +260,7 @@ class ModelsScreen(Screen):
     @on(Button.Pressed, "#models_select_button")
     def models_select_button_clicked(self) -> None:
         """Handle Button.Pressed message sent by Select button."""
-        global mjai_controller, settings, autoplay
+        global mjai_controller, settings
 
         models_select: Select = self.query_one("#models_select")
         selected_model = models_select.value
@@ -279,14 +272,6 @@ class ModelsScreen(Screen):
                 settings.save()
             else:
                 logger.error(f"Failed to select model: {selected_model}")
-        
-        selected_window: Select = self.query_one("#models_window_select")
-        selected_window_name = selected_window.value
-        if selected_window_name != Select.BLANK:
-            for i, window in enumerate(self.windows):
-                if window.name == selected_window_name:
-                    autoplay.select_window(window.hwnd)
-                    break
 
         self.app.pop_screen()
 
@@ -1016,33 +1001,12 @@ class AkagiApp(App):
         except Exception as e:
             logger.error(f"Error in main loop: {traceback.format_exc()}")
 
-    def find_autoplay_window(self) -> None:
-        global settings, autoplay, playwright_client
-        if settings.autoplay:
-            window = autoplay.auto_select_window()
-            if window is not None:
-                logger.info(f"Autoplay window found: {window.name}")
-                self.app.notify(
-                    f"Autoplay window found: {window.name}",
-                    title="Autoplay",
-                    severity="information",
-                )
-            else:
-                logger.warning("No autoplay window found")
-                self.app.notify(
-                    "No autoplay window found, select a target window manually",
-                    title="Autoplay",
-                    severity="warning",
-                )
-
     def autoplay(self, mjai_response: dict) -> None:
         """
         Autoplay function to handle MJAI messages.
         """
         global autoplay, playwright_client, mjai_controller
 
-        if (not autoplay.check_window()):
-            self.find_autoplay_window()
         try:
             act_result = autoplay.act(mjai_response)
             if not act_result:
@@ -1088,7 +1052,7 @@ class AkagiApp(App):
 
     @on(Button.Pressed, "#option1_button")
     def playwright_start_button_clicked(self) -> None:
-        global playwright_client, autoplay, settings
+        global playwright_client, settings
 
         option1_button: Button = self.query_one("#option1_button")
         if playwright_client.running:
@@ -1134,7 +1098,7 @@ def main():
     mjai_bot = AkagiBot()
     autoplay = AutoPlay()
     autoplay.set_bot(mjai_bot)
-    autoplay.set_autoplay()
+    autoplay.set_client(playwright_client)
 
     logger.info("Starting App...")
     app = AkagiApp()

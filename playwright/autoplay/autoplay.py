@@ -1,17 +1,13 @@
+from .util import Point
 from .logger import logger
+from .autoplay_majsoul import AutoPlayMajsoul
 from settings.settings import settings
+from playwright_client.client import Client
     
 class AutoPlay(object):
     def __init__(self):
-        pass
-        
-    @property
-    def target_window(self) -> None:
-        """
-        Returns the target window object.
-        The target window is the first visible window in the list of windows.
-        """
-        return None
+        self.autoplay: AutoPlayMajsoul = AutoPlayMajsoul()
+        self.client: Client = None
 
     def set_bot(self, bot):
         """
@@ -21,43 +17,17 @@ class AutoPlay(object):
         Returns:
             None: No return value.
         """
-        pass
+        self.autoplay.bot = bot
 
-    def set_autoplay(self):
+    def set_client(self, client: Client):
         """
         Args:
-            autoplay (AutoPlayBase): The AutoPlayBase instance to be used.
+            client (Client): The Client instance to be used.
 
         Returns:
             None: No return value.
         """
-        return None
-
-    def get_windows(self) -> list:
-        """
-        Returns a list of WindowObject instances for all visible windows.
-        Each WindowObject contains the window handle (hwnd) and window name.
-        """
-        return []
-    
-    def select_window(self, hwnd: int) -> None:
-        """
-        Selects a window by its handle (hwnd).
-        """
-        pass
-
-    def check_window(self) -> bool:
-        """
-        Checks if the target window is valid and visible.
-        Returns True if the target window is valid, False otherwise.
-        """
-        return False
-    
-    def auto_select_window(self) -> None:
-        """
-        Automatically selects the window based on the current settings.
-        """
-        pass
+        self.client = client
 
     def act(self, mjai_msg: dict) -> bool:
         """
@@ -69,4 +39,17 @@ class AutoPlay(object):
         Returns:
             bool: True if the action was performed, False otherwise.
         """
-        return False
+        if not self.client.running:
+            logger.error("Client is not running.")
+            return False
+        points: list[Point] = self.autoplay.act(mjai_msg)
+        if not points:
+            return False
+        for point in points:
+            command = {"command": "delay", "delay": point.delay}
+            self.client.send_command(command)
+            command = {"command": "click", "point": [point.x, point.y]}
+            self.client.send_command(command)
+        logger.debug(f"Processed MJAI message: {mjai_msg}")
+        logger.debug(f"Points to click: {points}")
+        return True
