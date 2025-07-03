@@ -44,7 +44,8 @@ class AutoPlay(object):
             return False
         points: list[Point] = self.autoplay.act(mjai_msg)
         if not points:
-            return False
+            # Maybe under riichi condition
+            return True
         for point in points:
             command = {"command": "delay", "delay": point.delay}
             self.client.send_command(command)
