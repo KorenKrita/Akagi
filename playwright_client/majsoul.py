@@ -244,7 +244,7 @@ class PlaywrightController:
                     user_data_dir=Path().cwd() / "playwright_data",
                     headless=False,
                     ignore_default_args=['--enable-automation'],
-                    args=["--noerrdialogs", "--no-sandbox"],
+                    args=["--noerrdialogs"],
                 )
                 # List all pages in the browser context
                 pages: list[Page] = self.browser.pages
