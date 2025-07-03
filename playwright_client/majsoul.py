@@ -103,7 +103,68 @@ class PlaywrightController:
         else:
             logger.warning(f"[WebSocket] Untracked WebSocket connection closed: {ws.url}")
 
-    def _click_at_grid_point(self, x: float, y: float):
+    def _get_clickxy(self, x: float, y: float) -> tuple[float, float]:
+        """
+        Converts normalized grid coordinates (0-16 for x, 0-9 for y)
+        to pixel coordinates based on the current viewport size.
+        """
+        if not self.page:
+            logger.error("Page is not available to get click coordinates.")
+            return (None, None)
+
+        viewport_size = self.page.viewport_size
+        if not viewport_size:
+            logger.error("Could not get viewport size.")
+            return (None, None)
+
+        viewport_width = viewport_size['width']
+        viewport_height = viewport_size['height']
+
+        target_aspect_ratio = 16 / 9
+        viewport_aspect_ratio = viewport_width / viewport_height
+
+        rect_width = viewport_width
+        rect_height = viewport_height
+        offset_x = 0
+        offset_y = 0
+
+        # Determine the dimensions of the 16:9 inscribed rectangle
+        if viewport_aspect_ratio > target_aspect_ratio:
+            # Viewport is wider than 16:9 (letterboxed)
+            rect_width = viewport_height * target_aspect_ratio
+            offset_x = (viewport_width - rect_width) / 2
+        else:
+            # Viewport is taller than 16:9 (pillarboxed)
+            rect_height = viewport_width / target_aspect_ratio
+            offset_y = (viewport_height - rect_height) / 2
+
+        # Normalize grid coordinates (0-16 for x, 0-9 for y)
+        if not (0 <= x <= 16 and 0 <= y <= 9):
+            logger.warning(f"Click coordinates ({x}, {y}) are outside the 0-16, 0-9 grid.")
+            return (None, None)
+        
+        # Calculate the absolute pixel coordinates
+        click_x = offset_x + (x / 16) * rect_width
+        click_y = offset_y + (y / 9) * rect_height
+        return (click_x, click_y)
+
+    def _move_mouse(self, click_x: float, click_y: float):
+        """
+        Moves the mouse to the specified pixel coordinates.
+        This is a helper function for debugging purposes.
+        """
+        if not self.page:
+            logger.error("Page is not available to move mouse.")
+            return
+
+        try:
+            logger.info(f"Moving mouse to pixel ({click_x:.2f}, {click_y:.2f})")
+            self.page.mouse.move(click_x, click_y)
+
+        except Exception as e:
+            logger.error(f"Failed to move mouse: {e}")
+
+    def _click(self, click_x: float, click_y: float):
         """
         Calculates pixel coordinates from a 16x9 grid and clicks there.
         It handles different browser aspect ratios by centering a 16:9
@@ -114,41 +175,7 @@ class PlaywrightController:
             return
 
         try:
-            viewport_size = self.page.viewport_size
-            if not viewport_size:
-                logger.error("Could not get viewport size.")
-                return
-
-            viewport_width = viewport_size['width']
-            viewport_height = viewport_size['height']
-
-            target_aspect_ratio = 16 / 9
-            viewport_aspect_ratio = viewport_width / viewport_height
-
-            rect_width = viewport_width
-            rect_height = viewport_height
-            offset_x = 0
-            offset_y = 0
-
-            # Determine the dimensions of the 16:9 inscribed rectangle
-            if viewport_aspect_ratio > target_aspect_ratio:
-                # Viewport is wider than 16:9 (letterboxed)
-                rect_width = viewport_height * target_aspect_ratio
-                offset_x = (viewport_width - rect_width) / 2
-            else:
-                # Viewport is taller than 16:9 (pillarboxed)
-                rect_height = viewport_width / target_aspect_ratio
-                offset_y = (viewport_height - rect_height) / 2
-
-            # Normalize grid coordinates (0-16 for x, 0-9 for y)
-            if not (0 <= x <= 16 and 0 <= y <= 9):
-                logger.warning(f"Click coordinates ({x}, {y}) are outside the 0-16, 0-9 grid.")
-
-            # Calculate the absolute pixel coordinates
-            click_x = offset_x + (x / 16) * rect_width
-            click_y = offset_y + (y / 9) * rect_height
-
-            logger.info(f"Clicking at grid ({x}, {y}) -> pixel ({click_x:.2f}, {click_y:.2f})")
+            logger.info(f"Clicking at pixel ({click_x:.2f}, {click_y:.2f})")
             self.page.mouse.click(click_x, click_y)
 
         except Exception as e:
@@ -166,7 +193,14 @@ class PlaywrightController:
                 if command == "click":
                     point = command_data.get("point")
                     if point and len(point) == 2:
-                        self._click_at_grid_point(point[0], point[1])
+                        click_x, click_y = self._get_clickxy(point[0], point[1])
+                        if click_x is None or click_y is None:
+                            logger.error(f"Invalid click coordinates: {point}")
+                            continue
+                        self._move_mouse(click_x, click_y)  # Optional: move mouse for debugging
+                        self.page.wait_for_timeout(100)  # Wait for a short time to ensure mouse move is registered
+                        logger.info(f"Clicking at normalized grid point {point} -> pixel ({click_x:.2f}, {click_y:.2f})")
+                        self._click(click_x, click_y)
                     else:
                         logger.error(f"Invalid 'click' command data: {command_data}")
                 elif command == "stop":
