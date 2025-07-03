@@ -278,6 +278,7 @@ class AutoPlayMajsoul(object):
                             )
                         )
                         return return_points
+        return return_points
 
     def get_pai_coord(self, idx: int, tehais: list[str]):
         tehai_count = len(tehais)
