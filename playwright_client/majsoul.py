@@ -278,6 +278,7 @@ class PlaywrightController:
             if self.browser:
                 self.browser.close()
             self.running = False
+            self._stop_event.clear()
             logger.info("Controller Stopped.")
 
     def stop(self):
