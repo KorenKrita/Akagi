@@ -40,7 +40,6 @@ class PlaywrightController:
         self.width = width
         self.height = height
         self.command_queue: queue.Queue[dict] = queue.Queue()
-        self._stop_event = threading.Event()
         self.running = False
 
         self.playwright: Playwright | None = None
@@ -186,7 +185,7 @@ class PlaywrightController:
 
     def _process_commands(self):
         """The main loop to process commands from the queue."""
-        while not self._stop_event.is_set():
+        while True:
             try:
                 # Wait for a command, with a timeout to allow checking the stop event
                 command_data = self.command_queue.get_nowait()
@@ -207,6 +206,9 @@ class PlaywrightController:
                         logger.error(f"Invalid 'click' command data: {command_data}")
                 elif command == "stop":
                     # Exit loop on stop command
+                    # Clear the command queue to prevent further processing
+                    while not self.command_queue.empty():
+                        self.command_queue.get_nowait()
                     break
                 # The 'delay' command must also use the non-blocking wait.
                 elif command == "delay":
@@ -228,7 +230,6 @@ class PlaywrightController:
             except Exception as e:
                 logger.error(f"An error occurred in the command processing loop: {e}")
 
-
     def start(self):
         """
         Starts the Playwright instance, opens the browser, and begins
@@ -237,7 +238,6 @@ class PlaywrightController:
         """
         logger.info("Controller Starting...")
         self.running = True
-        self._stop_event.clear()
 
         try:
             with sync_playwright() as p:
@@ -276,7 +276,6 @@ class PlaywrightController:
         finally:
             logger.info("Shutting down...")
             self.running = False
-            self._stop_event.clear()
             logger.info("Controller Stopped.")
 
     def stop(self):
@@ -286,8 +285,6 @@ class PlaywrightController:
         """
         if self.running:
             logger.info("Sending stop signal...")
-            self._stop_event.set()
-            # Add a stop command to unblock the queue.get() if it's waiting
             self.command_queue.put({"command": "stop"})
         else:
             logger.info("Controller already stopped.")
