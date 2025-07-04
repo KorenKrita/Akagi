@@ -28,6 +28,15 @@
   <a href="https://deepwiki.com/shinkuan/Akagi"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
+# Playwright
+
+This branch leverages **Playwright** to provide a robust and streamlined automation experience. A key advantage of this implementation is the elimination of complex proxy configurations; you **no longer need to set up tools like mitmproxy or Proxifier**. Furthermore, this branch features **built-in autoplay** functionality, **allowing automated tasks to run seamlessly in the background**.
+
+TL;DR
+- **No need for mitmproxy or Proxifier**.
+- **Built-in autoplay**.
+- **Can run in the background**.
+
 # About
 
 ## "The purpose of this project is to provide people with a convenient way to real-time understand their performance in Mahjong game matches and to learn and improve from it. This project is intended for educational purposes only, and the author is not responsible for any actions taken by users using this project. Game developers and publishers have the right to take action against users who violate their terms of service, any consequences such as account suspension are not related to the author."
@@ -70,6 +79,10 @@
   
 # Before You Start
 
+> [!WARNING]  
+> This branch does not require any proxy tools like mitmproxy or Proxifier.
+> Video below is for the main branch, which requires mitmproxy and Proxifier.
+
 🎥[YouTube Video for you to follow.](https://youtu.be/Z88Ncxbe2nw)
 
 ### You will need:
@@ -83,12 +96,6 @@
       - You can get the API key from [Discord](https://discord.gg/Z2wjXUK8bN).
    2. Or make your own one, check [Developer setcion](#developer).
 2. Use Windows Terminal to open akagi for a nice looking TUI.
-3. Proxifier or similar tools to redirect game client to the MITM port.
-
-> [!TIP]
-> Some people have wrote a __keygen__ for __Proxifier__, you can find it using __Google__.
-> 
-> Authors of this project are not responsible for any illegal actions taken by users.
 
 > [!WARNING]  
 > __Windows Terminal__ is required for user interface to work properly.
@@ -96,27 +103,31 @@
 
 ### Supported Mahjong Games:
 
+**This branch only supports Majsoul.**
+**For other games, please use the main branch.**
+
 | Platform       | Four Player   | Three Player   | AutoPlay |
 | -------------- | ------------- | -------------- | -------- |
-| __Majsoul__    | &check;       | &check;        | *&check; |
-| __Tenhou__     | &check;       | &check;        |  &cross; |
-| __RiichiCity__ | &check;       | &check;        |  &cross; |
-| __Amatsuki__   | &check;       | &check;        |  &cross; |
+| __Majsoul__    | &check;       | &check;        |  &check; |
+| __Tenhou__     | &cross;       | &cross;        |  &cross; |
+| __RiichiCity__ | &cross;       | &cross;        |  &cross; |
+| __Amatsuki__   | &cross;       | &cross;        |  &cross; |
 
-*AutoPlay only avaliable on [Windows Release version](https://github.com/shinkuan/Akagi/releases) when ot_server is running.
 
 # Installation
 
 - For User:
   - Go to [release page](https://github.com/shinkuan/Akagi/releases)
-  - Download the latest release.
+  - Download the latest release of the Playwright version.
   - Extract the zip file.
-  - Put MJAI bots in `./Akagi/mjai_bot`.
+  - (Optional) Put MJAI bots in `./Akagi/mjai_bot`.
   - Run `run_akagi.exe`
+  - (Optional) Setup your API Key in the settings for Online Model.
 - For Developer:
   - Clone the repository.
   - Use Python 3.12
   - Install the dependencies using `pip install -r requirements.txt`.
+  - Install Playwright browsers using `python -m playwright install`.
   - Put MJAI bots in `./Akagi/mjai_bot`.
     - For the builtin model, move `./mjai_bot/mortal/libriichi/libriichi-<version>-<platform>.<extension>` to `./mjai_bot/mortal/libriichi.<extension>`.
     - Same for 3p model.
@@ -135,10 +146,6 @@
    2. Check your settings.
       - By clicking on the "Settings" button in the bottom left corner.
       - Check your settings and make sure they are correct.
-      - Set the MITM type to the game you are playing.
-      - Set the MITM host and port to the correct values.
-      - If you don't know what to set, leave it as default.
-      - Default: (host: 127.0.0.1) (port: 7880)
       - If you have got a Online server API key, set it in the settings.
       - Online server provides a stronger AI model.
       - You can get the API key from [Discord](https://discord.gg/Z2wjXUK8bN).
@@ -148,40 +155,8 @@
    4. Restart Akagi.
       - Close Akagi and open it again.
       - This will apply the settings.
-   5. Start MITM.
-      - By clicking on the "MITM Stopped" button in the bottom left corner.
-      - This will start the MITM proxy server.
-2. **Install MITM Proxy Certificate.**
-   1. Open File Explorer (press `Windows key + E`)
-   2. In the address bar at the top, type: `%USERPROFILE%\.mitmproxy` and press Enter.
-   3. Look for a file called `mitmproxy-ca-cert.cer`.
-   4. Double-click on the `mitmproxy-ca-cert.cer` file.
-   5. Click the "__Install Certificate__" button.
-   6. If you see a choice, select "__Local Machine__" and click "Next".
-   7. Choose "__Place all certificates in the following store__", then click "__Browse...__"
-   8. Select "__Trusted Root Certification Authorities__", click OK, then click "Next" and "Finish".
-   9. If you're asked for permission, click "Yes".
-3. **Proxifier Setup**
-   1. Open Proxifier and go to "Profile" > "Proxy Servers..."
-   2. Click "Add..." and enter the following:
-      - Address: The host you set in Akagi settings (default: `127.0.0.1`)
-      - Port: The port you set in Akagi settings (default: `7880`)
-      - Protocol: HTTPS
-   3. Click "OK" to save the proxy settings.
-   4. Go to "Profile" > "Proxification Rules..."
-   5. Add a new rule by clicking "Add..."
-   6. In the "Applications" tab, click "Browse..." and select the game executable.
-      - This is usually located in the game installation folder.
-      - For example, for Mahjong Soul Steam version:
-        - Browse to your game in Steam library.
-        - Click the manage button (gear icon) and select "Browse local files..."
-        - This will open the game installation folder.
-        - You should see the game executable file (e.g., `Jantama_MahjongSoul.exe`).
-      - For web version, you can use the browser executable (e.g., `chrome.exe` or `firefox.exe`).
-   7. In the "Target Hosts" tab, you can leave it default.
-   8. In the "Action" tab, select the proxy server you just added.
-   9. Click "OK" to save the rule.
 4. **Start the game client.**
+   - You can change the game client URL in the settings.
    - Launch the game client (e.g., Mahjong Soul) and log in.
 5. **Join a game.**
    - Join a game as you normally would.
@@ -195,6 +170,9 @@
 ### Akagi
 
 #### Starting MITM Proxy Server:
+> [!IMPORTANT]
+> The MITM text here is for the main branch, you will see Playwright instead.
+
 ![image](./docs/gifs/start_mitm.gif)
 
 #### Selecting AI Model:
@@ -219,9 +197,6 @@ Click on the MJAI Info window to change kind of info you want to see.
 ![image](./docs/gifs/change_window.gif)
 
 #### AutoPlay:
-> [!NOTE]
-> AutoPlay is only available on Windows Release version when ot_server is running.
-
 Make sure you have set the display of the game client to 16:9 aspect ratio.
 ![image](./docs/images/autoplay_example/good.png)
 ![image](./docs/images/autoplay_example/bad_1.png)
@@ -234,19 +209,6 @@ Make sure you have set the display of the game client to 16:9 aspect ratio.
 The recommandation window does not show which tile to discard for riichi?
 You have to click on the "Reach" button to show the call reach recommendation.
 ![image](./docs/gifs/call_reach.gif)
-
-### Proxifier
-
-> [!NOTE]  
-> [Proxifier](https://www.proxifier.com/) is a tool that allows you to redirect network traffic through a proxy server. You can use it to redirect the game client traffic to the MITM proxy server.
-
-#### Example Proxifier proxy settings:
-![image](./docs/images/proxifier/open_proxy_setting.png)
-![image](./docs/images/proxifier/proxy_setting.png)
-
-#### Example Proxifier proxy rules:
-![image](./docs/images/proxifier/open_proxy_rule.png)
-![image](./docs/images/proxifier/proxy_rule_setting.png)
 
 # Troubleshooting
 
@@ -262,13 +224,6 @@ You can ask for help in the [Discord](https://discord.gg/Z2wjXUK8bN) server.
 > You can also report it in the Discord server.
 > If you have a feature request, please report it in the GitHub Issues.
 
-- MITM Proxy server not working?
-  - Make sure you have installed the MITM proxy certificate.
-  - Make sure you have set the correct host and port in the settings.
-  - Make sure you have set the correct proxy settings in Proxifier.
-  - Make sure you have started the MITM proxy server.
-  - If above does not work, please [check this issue](https://github.com/shinkuan/Akagi/issues/57).
-
 # Developer
 
 ## File Structure
@@ -276,11 +231,9 @@ You can ask for help in the [Discord](https://discord.gg/Z2wjXUK8bN) server.
 - `./Akagi/` - The main folder of the project.
   - `akagi/` - Contains the Textual UI for Akagi.
   - `logs/` - Contains the logs of the game.
-  - `mitm/` - Contains the MITM proxy server.
+  - `playwright_client/` - Contains the Playwright logics.
     - `bridge/` - Contains the bridge between the game client and the server. This is for converting the game client protocol to MJAI protocol. You can make your own bridge here.
       - `majsoul/` - Contains the bridge for Majsoul.
-      - `tenhou/` - Contains the bridge for Tenhou.
-      - `amatsuki/` - Contains the bridge for Amatsuki.
   - `mjai_bot/` - Contains the MJAI bots.
     - `base/` - Base class for MJAI bots. Check it out if you want to make your own bot.
     - `*/` - MJAI bots. This is your mjai_bot. For example, `mortal/`.
@@ -289,15 +242,10 @@ You can ask for help in the [Discord](https://discord.gg/Z2wjXUK8bN) server.
 
 ## Bridge
 
-To make a bridge, you need to implement two things:
-
-1. `ClientWebSocketABC` in `mitm/bridge/mitm_abc.py`.
-2. `Bridge` in `mitm/bridge/bridge_base.py`.
-
-For `ClientWebSocketABC`, this is an mitmproxy addon, main goal is to convert the game client protocol to MJAI protocol, and push it in to `mjai_messages: queue.Queue[dict] = queue.Queue()`.
-You can check the `mitm/majsoul/` for the example.
-
-For `Bridge`, this is the main class for the bridge. You need to implement the `parse()` method to parse the byte content from the game client into `None | list[dict]`, you can check the `mitm/bridge/amatsuki/bridge.py` for the example.
+> [!WARNING] 
+> I don't recommend you to make your own bridge on this branch.
+> This branch is designed to work with Majsoul only.
+> If you want to make your own bridge, please use the main branch.
 
 ## MJAI Bot
 

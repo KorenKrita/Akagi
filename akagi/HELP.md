@@ -29,10 +29,6 @@ https://youtu.be/Z88Ncxbe2nw
    2. Check your settings.
       - By clicking on the "Settings" button in the bottom left corner.
       - Check your settings and make sure they are correct.
-      - Set the MITM type to the game you are playing.
-      - Set the MITM host and port to the correct values.
-      - If you don't know what to set, leave it as default.
-      - Default: (host: 127.0.0.1) (port: 7880)
       - If you have got a Online server API key, set it in the settings.
       - Online server provides a stronger AI model.
       - You can get the API key from [Discord](https://discord.gg/Z2wjXUK8bN).
@@ -42,39 +38,7 @@ https://youtu.be/Z88Ncxbe2nw
    4. Restart Akagi.
       - Close Akagi and open it again.
       - This will apply the settings.
-   5. Start MITM.
-      - By clicking on the "MITM Stopped" button in the bottom left corner.
-      - This will start the MITM proxy server.
-2. **Install MITM Proxy Certificate.**
-   1. Open File Explorer (press `Windows key + E`)
-   2. In the address bar at the top, type: `%USERPROFILE%\.mitmproxy` and press Enter.
-   3. Look for a file called `mitmproxy-ca-cert.cer`.
-   4. Double-click on the `mitmproxy-ca-cert.cer` file.
-   5. Click the "__Install Certificate__" button.
-   6. If you see a choice, select "__Local Machine__" and click "Next".
-   7. Choose "__Place all certificates in the following store__", then click "__Browse...__"
-   8. Select "__Trusted Root Certification Authorities__", click OK, then click "Next" and "Finish".
-   9. If you're asked for permission, click "Yes".
-3. **Proxifier Setup**
-   1. Open Proxifier and go to "Profile" > "Proxy Servers..."
-   2. Click "Add..." and enter the following:
-      - Address: The host you set in Akagi settings (default: `127.0.0.1`)
-      - Port: The port you set in Akagi settings (default: `7880`)
-      - Protocol: HTTPS
-   3. Click "OK" to save the proxy settings.
-   4. Go to "Profile" > "Proxification Rules..."
-   5. Add a new rule by clicking "Add..."
-   6. In the "Applications" tab, click "Browse..." and select the game executable.
-      - This is usually located in the game installation folder.
-      - For example, for Mahjong Soul Steam version:
-        - Browse to your game in Steam library.
-        - Click the manage button (gear icon) and select "Browse local files..."
-        - This will open the game installation folder.
-        - You should see the game executable file (e.g., `Jantama_MahjongSoul.exe`).
-      - For web version, you can use the browser executable (e.g., `chrome.exe` or `firefox.exe`).
-   7. In the "Target Hosts" tab, you can leave it default.
-   8. In the "Action" tab, select the proxy server you just added.
-   9. Click "OK" to save the rule.
+   5. Start Playwright.
 4. **Start the game client.**
    - Launch the game client (e.g., Mahjong Soul) and log in.
 5. **Join a game.**
