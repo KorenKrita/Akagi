@@ -3,16 +3,9 @@ import traceback
 import asyncio
 import queue
 import time
-import mitmproxy.http
-import mitmproxy.log
-import mitmproxy.tcp
-import mitmproxy.websocket
 from pathlib import Path
-from mitmproxy import proxy, options, ctx
-from mitmproxy.tools.dump import DumpMaster
 from playwright.sync_api import sync_playwright, Playwright, Browser, Page, WebSocket
 from .bridge import MajsoulBridge
-from .mitm_abc import ClientWebSocketABC
 from .logger import logger
 
 # Because in Majsouls, every flow's message has an id, we need to use one bridge for each flow
