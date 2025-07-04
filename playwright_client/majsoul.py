@@ -275,8 +275,6 @@ class PlaywrightController:
             logger.error(f"A critical error occurred during Playwright startup or operation: {e}")
         finally:
             logger.info("Shutting down...")
-            if self.browser:
-                self.browser.close()
             self.running = False
             self._stop_event.clear()
             logger.info("Controller Stopped.")
