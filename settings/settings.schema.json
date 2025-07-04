@@ -2,10 +2,32 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "majsoul_url": {
-      "type": "string",
-      "description": "The URL for the Majsoul game.",
-      "format": "uri"
+    "playwright": {
+      "type": "object",
+      "properties": {
+        "majsoul_url": {
+          "type": "string",
+          "description": "The URL for the Majsoul game.",
+          "format": "uri"
+        },
+        "viewport": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "description": "The width of the viewport."
+            },
+            "height": {
+              "type": "integer",
+              "description": "The height of the viewport."
+            }
+          },
+          "required": ["width", "height"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["majsoul_url", "viewport"],
+      "additionalProperties": false
     },
     "model": {
       "type": "string",
@@ -44,7 +66,7 @@
       "description": "Whether to automatically switch the model based on the game."
     }
   },
-  "required": ["majsoul_url", "model", "theme", "ot_server", "autoplay", "auto_switch_model"],
+  "required": ["playwright", "model", "theme", "ot_server", "autoplay", "auto_switch_model"],
   "description": "Settings for the application.",
   "additionalProperties": false
 }

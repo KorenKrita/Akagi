@@ -1,5 +1,11 @@
 {
-    "majsoul_url": "https://game.maj-soul.com/1/",
+    "playwright": {
+        "majsoul_url": "https://game.maj-soul.com/1/",
+        "viewport": {
+            "width": 1920,
+            "height": 1080
+        }
+    },
     "model": "mortal",
     "theme": "textual-dark",
     "ot_server": {
@@ -7,6 +13,6 @@
         "online": false,
         "api_key": "your_api_key"
     },
-    "autoplay": false,
+    "autoplay": true,
     "auto_switch_model": true
 }

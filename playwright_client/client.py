@@ -23,7 +23,11 @@ class Client(object):
         self.messages: queue.Queue[dict] = None
         self.running = False
         self._thread: threading.Thread = None
-        self.controller: PlaywrightController = PlaywrightController(settings.majsoul_url)
+        self.controller: PlaywrightController = PlaywrightController(
+            settings.playwright.majsoul_url, 
+            settings.playwright.viewport.width,
+            settings.playwright.viewport.height
+        )
 
     def start(self):
         if self.running:

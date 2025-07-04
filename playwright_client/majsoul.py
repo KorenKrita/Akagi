@@ -28,7 +28,7 @@ class PlaywrightController:
     and handles clicking based on a normalized 16x9 grid.
     """
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, width: int = 1280, height: int = 720):
         """
         Initializes the controller.
 
@@ -37,6 +37,8 @@ class PlaywrightController:
             mjai_queue (queue.Queue): The queue to put parsed MJAI messages into.
         """
         self.url = url
+        self.width = width
+        self.height = height
         self.command_queue: queue.Queue[dict] = queue.Queue()
         self._stop_event = threading.Event()
         self.running = False
@@ -243,6 +245,7 @@ class PlaywrightController:
                 self.browser = self.playwright.chromium.launch_persistent_context(
                     user_data_dir=Path().cwd() / "playwright_data",
                     headless=False,
+                    viewport={"width": self.width, "height": self.height},
                     ignore_default_args=['--enable-automation'],
                     args=["--noerrdialogs"],
                 )

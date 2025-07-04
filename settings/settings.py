@@ -11,14 +11,27 @@ FILE_PATH = Path(__file__).resolve().parent
 
 
 @dataclasses.dataclass
+class Viewport:
+    width: int
+    height: int
+
+
+@dataclasses.dataclass
+class PlaywrightConfig:
+    majsoul_url: str
+    viewport: Viewport
+
+
+@dataclasses.dataclass
 class OTConfig:
     server: str
     online: bool
     api_key: str
 
+
 @dataclasses.dataclass
 class Settings:
-    majsoul_url: str
+    playwright: PlaywrightConfig
     theme: str
     model: str
     ot: OTConfig
@@ -31,7 +44,9 @@ class Settings:
         Args:
             settings (dict): Dictionary with settings to update
         """
-        self.majsoul_url = settings["majsoul_url"]
+        self.playwright.majsoul_url = settings["playwright"]["majsoul_url"]
+        self.playwright.viewport.width = settings["playwright"]["viewport"]["width"]
+        self.playwright.viewport.height = settings["playwright"]["viewport"]["height"]
         self.theme = settings["theme"]
         self.model = settings["model"]
         self.ot.server = settings["ot_server"]["server"]
@@ -75,7 +90,13 @@ class Settings:
         """
         with open(FILE_PATH / "settings.json", "w") as f:
             json.dump({
-                "majsoul_url": self.majsoul_url,
+                "playwright": {
+                    "majsoul_url": self.playwright.majsoul_url,
+                    "viewport": {
+                        "width": self.playwright.viewport.width,
+                        "height": self.playwright.viewport.height
+                    }
+                },
                 "model": self.model,
                 "theme": self.theme,
                 "ot_server": {
@@ -119,7 +140,13 @@ def load_settings() -> Settings:
         logger.warning("Creating new settings.json")
         with open(FILE_PATH / "settings.json", "w") as f:
             json.dump({
-                "majsoul_url": "https://game.maj-soul.com/1/",
+                "playwright": {
+                    "majsoul_url": "https://game.maj-soul.com/1/",
+                    "viewport": {
+                        "width": 1280,
+                        "height": 720
+                    }
+                },
                 "model": "mortal",
                 "theme": "textual-dark",
                 "ot_server": {
@@ -145,7 +172,13 @@ def load_settings() -> Settings:
 
     # Parse settings
     return Settings(
-        majsoul_url=settings["majsoul_url"],
+        playwright=PlaywrightConfig(
+            majsoul_url=settings["playwright"]["majsoul_url"],
+            viewport=Viewport(
+                width=settings["playwright"]["viewport"]["width"],
+                height=settings["playwright"]["viewport"]["height"]
+            )
+        ),
         theme=settings["theme"],
         model=settings["model"],
         ot=OTConfig(
