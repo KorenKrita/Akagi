@@ -1090,7 +1090,8 @@ class AkagiApp(App):
                 # ============================================= #
                 if (
                     ((mjai_response["type"] != "none" or mjai_bot.can_act   ) and (not mjai_bot.is_3p)) or
-                    ((mjai_response["type"] != "none" or mjai_bot.can_act_3p) and (    mjai_bot.is_3p))
+                    ((mjai_response["type"] != "none" or mjai_bot.can_act_3p) and (    mjai_bot.is_3p)) or
+                    ((mjai_response["type"] == "nukidora") or (mjai_response["type"] == "ankan"))
                 ):
                     if settings.autoplay:
                         delay = autoplay.get_last_mjai_delay()
