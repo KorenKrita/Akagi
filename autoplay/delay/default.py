@@ -2,6 +2,7 @@ import random
 import numpy as np
 from .base import ThinkerBase
 from .logger import logger
+from settings.settings import settings
 
 def softmax(xs: list[float], temperature: float = 0.3) -> list[float]:
     """Compute softmax values for each set of scores in xs with temperature scaling."""
@@ -60,19 +61,20 @@ class Thinker(ThinkerBase):
                     sorted_q = sorted(q_values, reverse=True)
                     softmax_q = softmax(sorted_q)
 
-        max_delay = 8.0
+        max_delay = settings.default_thinker.max_delay
+        min_delay = settings.default_thinker.min_delay
         total_delay = 0.0
 
-        ADD_RANDOM_DELAY = True
-        ADD_RANDOM_DELAY_MAX = 3.0
-        ADD_RANDOM_DELAY_MIN = 1.0
-        FIRST_TILE_DISCARD = 4.0
-        CAN_RIICHI_THINK = 2.0
-        CLOSE_Q_THRESHOLD = 0.005
-        TWO_CLOSE_Q_THINK = 2.0
-        CONFIDENT_Q_THRESHOLD = 0.995
-        CONFIDENT_Q_MAX_DELAY = 2.0
-        KAN_THINK = 0.5
+        ADD_RANDOM_DELAY = settings.default_thinker.add_random_delay
+        ADD_RANDOM_DELAY_MAX = settings.default_thinker.add_random_delay_max
+        ADD_RANDOM_DELAY_MIN = settings.default_thinker.add_random_delay_min
+        FIRST_TILE_DISCARD = settings.default_thinker.first_tile_discard
+        CAN_RIICHI_THINK = settings.default_thinker.can_riichi_think
+        CLOSE_Q_THRESHOLD = settings.default_thinker.close_q_threshold
+        TWO_CLOSE_Q_THINK = settings.default_thinker.two_close_q_think
+        CONFIDENT_Q_THRESHOLD = settings.default_thinker.confident_q_threshold
+        CONFIDENT_Q_MAX_DELAY = settings.default_thinker.confident_q_max_delay
+        KAN_THINK = settings.default_thinker.kan_think
 
         # ==========================================
         # Example 1: No delay after riichi accepted
@@ -124,7 +126,7 @@ class Thinker(ThinkerBase):
         if ADD_RANDOM_DELAY:
             total_delay += random.uniform(ADD_RANDOM_DELAY_MIN, ADD_RANDOM_DELAY_MAX)
 
-        # Clamp the total delay to be within [0, max_delay]
-        total_delay = min(max(total_delay, 0.0), max_delay)
+        # Clamp the total delay to be within [min_delay, max_delay]
+        total_delay = min(max(total_delay, min_delay), max_delay)
 
         return total_delay

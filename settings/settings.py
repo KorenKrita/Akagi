@@ -33,6 +33,21 @@ class OTConfig:
     api_key: str
 
 @dataclasses.dataclass
+class DefaultThinkerConfig:
+    max_delay: float
+    min_delay: float
+    add_random_delay: bool
+    add_random_delay_min: float
+    add_random_delay_max: float
+    first_tile_discard: float
+    can_riichi_think: float
+    close_q_threshold: float
+    two_close_q_think: float
+    confident_q_threshold: float
+    confident_q_max_delay: float
+    kan_think: float
+
+@dataclasses.dataclass
 class Settings:
     mitm: MITMConfig
     theme: str
@@ -41,6 +56,7 @@ class Settings:
     autoplay: bool
     auto_switch_model: bool
     autoplay_thinker: str
+    default_thinker: DefaultThinkerConfig
     recommendation_temperature: float
     def update(self, settings: dict) -> None:
         """
@@ -60,6 +76,20 @@ class Settings:
         self.autoplay = settings["autoplay"]
         self.auto_switch_model = settings["auto_switch_model"]
         self.autoplay_thinker = settings["autoplay_thinker"]
+        self.default_thinker = DefaultThinkerConfig(
+            max_delay=settings["default_thinker"]["max_delay"],
+            min_delay=settings["default_thinker"]["min_delay"],
+            add_random_delay=settings["default_thinker"]["add_random_delay"],
+            add_random_delay_min=settings["default_thinker"]["add_random_delay_min"],
+            add_random_delay_max=settings["default_thinker"]["add_random_delay_max"],
+            first_tile_discard=settings["default_thinker"]["first_tile_discard"],
+            can_riichi_think=settings["default_thinker"]["can_riichi_think"],
+            close_q_threshold=settings["default_thinker"]["close_q_threshold"],
+            two_close_q_think=settings["default_thinker"]["two_close_q_think"],
+            confident_q_threshold=settings["default_thinker"]["confident_q_threshold"],
+            confident_q_max_delay=settings["default_thinker"]["confident_q_max_delay"],
+            kan_think=settings["default_thinker"]["kan_think"]
+        )
         self.recommendation_temperature = settings["recommendation_temperature"]
         self.save_ot_settings()
 
@@ -112,6 +142,20 @@ class Settings:
                 "autoplay": self.autoplay,
                 "auto_switch_model": self.auto_switch_model,
                 "autoplay_thinker": self.autoplay_thinker,
+                "default_thinker": {
+                    "max_delay": self.default_thinker.max_delay,
+                    "min_delay": self.default_thinker.min_delay,
+                    "add_random_delay": self.default_thinker.add_random_delay,
+                    "add_random_delay_min": self.default_thinker.add_random_delay_min,
+                    "add_random_delay_max": self.default_thinker.add_random_delay_max,
+                    "first_tile_discard": self.default_thinker.first_tile_discard,
+                    "can_riichi_think": self.default_thinker.can_riichi_think,
+                    "close_q_threshold": self.default_thinker.close_q_threshold,
+                    "two_close_q_think": self.default_thinker.two_close_q_think,
+                    "confident_q_threshold": self.default_thinker.confident_q_threshold,
+                    "confident_q_max_delay": self.default_thinker.confident_q_max_delay,
+                    "kan_think": self.default_thinker.kan_think
+                },
                 "recommendation_temperature": self.recommendation_temperature
             }, f, indent=4)
         # Save the settings to the file
@@ -162,6 +206,20 @@ def load_settings() -> Settings:
                 "autoplay": False,
                 "auto_switch_model": True,
                 "autoplay_thinker": "default",
+                "default_thinker": {
+                    "max_delay": 8.0,
+                    "min_delay": 1.0,
+                    "add_random_delay": True,
+                    "add_random_delay_min": 1.0,
+                    "add_random_delay_max": 3.0,
+                    "first_tile_discard": 4.0,
+                    "can_riichi_think": 2.0,
+                    "close_q_threshold": 0.005,
+                    "two_close_q_think": 2.0,
+                    "confident_q_threshold": 0.995,
+                    "confident_q_max_delay": 2.0,
+                    "kan_think": 0.5
+                },
                 "recommendation_temperature": 0.3
             }, f, indent=4)
         logger.info(f"Created new settings.json with default values")
@@ -194,6 +252,20 @@ def load_settings() -> Settings:
         autoplay=settings["autoplay"],
         auto_switch_model=settings["auto_switch_model"],
         autoplay_thinker=settings["autoplay_thinker"],
+        default_thinker=DefaultThinkerConfig(
+            max_delay=settings["default_thinker"]["max_delay"],
+            min_delay=settings["default_thinker"]["min_delay"],
+            add_random_delay=settings["default_thinker"]["add_random_delay"],
+            add_random_delay_min=settings["default_thinker"]["add_random_delay_min"],
+            add_random_delay_max=settings["default_thinker"]["add_random_delay_max"],
+            first_tile_discard=settings["default_thinker"]["first_tile_discard"],
+            can_riichi_think=settings["default_thinker"]["can_riichi_think"],
+            close_q_threshold=settings["default_thinker"]["close_q_threshold"],
+            two_close_q_think=settings["default_thinker"]["two_close_q_think"],
+            confident_q_threshold=settings["default_thinker"]["confident_q_threshold"],
+            confident_q_max_delay=settings["default_thinker"]["confident_q_max_delay"],
+            kan_think=settings["default_thinker"]["kan_think"]
+        ),
         recommendation_temperature=settings["recommendation_temperature"]
     )
 

@@ -14,5 +14,19 @@
     "autoplay": false,
     "auto_switch_model": true,
     "autoplay_thinker": "default",
+    "default_thinker": {
+        "max_delay": 8.0,
+        "min_delay": 1.0,
+        "add_random_delay": true,
+        "add_random_delay_min": 1.0,
+        "add_random_delay_max": 3.0,
+        "first_tile_discard": 4.0,
+        "can_riichi_think": 2.0,
+        "close_q_threshold": 0.005,
+        "two_close_q_think": 2.0,
+        "confident_q_threshold": 0.995,
+        "confident_q_max_delay": 2.0,
+        "kan_think": 0.5
+    },
     "recommendation_temperature": 0.1
 }

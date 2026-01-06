@@ -423,7 +423,7 @@ SettingsScreen {
 }
 
 #settings__scrollable_container {
-    width: 60;
+    width: 80;
     height: 80vh;
     border: round $accent;
     border-title-align: center;

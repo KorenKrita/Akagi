@@ -65,12 +65,67 @@
       "type": "string",
       "description": "Simulates human-like decision-making delays for an autoplay bot. Input `thinker` will use the thinker.py file in the autoplay/delay directory."
     },
+    "default_thinker": {
+      "type": "object",
+      "properties": {
+        "max_delay": {
+          "type": "number",
+          "description": "Maximum delay in seconds."
+        },
+        "min_delay": {
+          "type": "number",
+          "description": "Minimum delay in seconds."
+        },
+        "add_random_delay": {
+          "type": "boolean",
+          "description": "Whether to add random delays."
+        },
+        "add_random_delay_min": {
+          "type": "number",
+          "description": "Minimum random delay in seconds."
+        },
+        "add_random_delay_max": {
+          "type": "number",
+          "description": "Maximum random delay in seconds."
+        },
+        "first_tile_discard": {
+          "type": "number",
+          "description": "Delay for first tile discard."
+        },
+        "can_riichi_think": {
+          "type": "number",
+          "description": "Thinking time for riichi decision."
+        },
+        "close_q_threshold": {
+          "type": "number",
+          "description": "Threshold for close qvalue."
+        },
+        "two_close_q_think": {
+          "type": "number",
+          "description": "Thinking time for two close qvalue."
+        },
+        "confident_q_threshold": {
+          "type": "number",
+          "description": "Threshold for confident qvalue."
+        },
+        "confident_q_max_delay": {
+          "type": "number",
+          "description": "Maximum delay for confident qvalue."
+        },
+        "kan_think": {
+          "type": "number",
+          "description": "Thinking time for kan."
+        }
+      },
+      "required": ["max_delay", "min_delay", "add_random_delay", "add_random_delay_min", "add_random_delay_max", "first_tile_discard", "can_riichi_think", "close_q_threshold", "two_close_q_think", "confident_q_threshold", "confident_q_max_delay", "kan_think"],
+      "additionalProperties": false
+    },
     "recommendation_temperature": {
       "type": "number",
       "description": "Temperature setting for recommendation softmax scaling."
     }
   },
-  "required": ["mitm", "model", "theme", "ot_server", "autoplay", "auto_switch_model", "recommendation_temperature"],
+  "required": ["mitm", "model", "theme", "ot_server", "autoplay", "auto_switch_model", "autoplay_thinker", "default_thinker", "recommendation_temperature"],
   "description": "Settings for the application.",
   "additionalProperties": false
 }
