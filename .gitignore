@@ -1,8 +1,17 @@
-venv
-__pycache__
+.DS_Store
+Thumbs.db
 
-dist
-logs/*.log
+.idea/
+.venv/
+build/
+config/
+dist/
+lib/*
+logs/
+models/*
+node_modules/
+playwright_data/
 
-docker
-compile
+__pycache__/
+*.py[cod]
+*$py.class
