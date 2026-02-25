@@ -2,9 +2,9 @@ name: Test
 
 on:
   push:
-    branches: [main, master]
+    branches: [ng]
   pull_request:
-    branches: [main, master]
+    branches: [ng]
   workflow_dispatch:
 
 # 并发控制：PR 更新时取消旧的运行

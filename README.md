@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://gcore.jsdelivr.net/gh/Xe-Persistent/CDN-source/image/assets/akagi.png" width="50%" alt="Akagi Shigeru">
+  <img src="https://github.com/shinkuan/RandomStuff/assets/35415788/db94b436-c3d4-4c57-893e-8db2074d2d22" width="50%" alt="Akagi Shigeru">
   <h1>Akagi-NG</h1>
 
   <p>
@@ -9,9 +9,9 @@
 <p><i>「死ねば助かるのに……」— 赤木しげる</i></p>
 
 <p>
-<a href="https://github.com/Xe-Persistent/Akagi-NG/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/Xe-Persistent/Akagi-NG/test.yml?branch=master&label=CI&labelColor=181717&logo=github" alt="CI Status"></a>
-<a href="https://github.com/Xe-Persistent/Akagi-NG/releases"><img src="https://img.shields.io/github/v/release/Xe-Persistent/Akagi-NG?labelColor=181717&logo=github&display_name=tag" alt="GitHub release"></a>
-<a href="https://github.com/Xe-Persistent/Akagi-NG/stargazers"><img src="https://img.shields.io/github/stars/Xe-Persistent/Akagi-NG?style=social" alt="GitHub stars"></a>
+<a href="https://github.com/shinkuan/Akagi/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/shinkuan/Akagi/test.yml?branch=ng&label=CI&labelColor=181717&logo=github" alt="CI Status"></a>
+<a href="https://github.com/shinkuan/Akagi/releases"><img src="https://img.shields.io/github/v/release/shinkuan/Akagi?labelColor=181717&logo=github&display_name=tag" alt="GitHub release"></a>
+<a href="https://github.com/shinkuan/Akagi/stargazers"><img src="https://img.shields.io/github/stars/shinkuan/Akagi?style=social" alt="GitHub stars"></a>
 <br>
 <img src="https://img.shields.io/badge/Electron-47848F?logo=electron&logoColor=white" alt="Electron">
 <img src="https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB" alt="React">
@@ -21,9 +21,9 @@
 <img src="https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white" alt="Python">
 <img src="https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch">
 <br>
-<img src="https://img.shields.io/github/license/Xe-Persistent/Akagi-NG?labelColor=808080&color=663366" alt="License">
+<img src="https://img.shields.io/github/license/shinkuan/Akagi?labelColor=808080&color=663366" alt="License">
 <a href="https://discord.gg/Z2wjXUK8bN"><img src="https://img.shields.io/discord/1192792431364673577?label=Discord&labelColor=5865F2&logo=discord&logoColor=white" alt="Discord"></a>
-<a href="https://codecov.io/gh/Xe-Persistent/Akagi-NG"><img src="https://img.shields.io/codecov/c/github/Xe-Persistent/Akagi-NG?labelColor=F01F7A&logo=Codecov&logoColor=white" alt="Codecov"></a>
+<a href="https://codecov.io/gh/shinkuan/Akagi"><img src="https://img.shields.io/codecov/c/github/shinkuan/Akagi?branch=ng&labelColor=F01F7A&logo=Codecov&logoColor=white" alt="Codecov"></a>
 </p>
 
 <p align="center">
@@ -451,8 +451,8 @@ This scheme is suitable for **PC/Steam Client** players. Since the client cannot
 Clone the repository and initialize the project:
 
 ```bash
-git clone https://github.com/Xe-Persistent/Akagi-NG.git
-cd Akagi-NG
+git clone -b ng https://github.com/shinkuan/Akagi.git
+cd Akagi
 ```
 
 #### Backend Setup
@@ -510,4 +510,4 @@ The build artifacts will be generated in the `dist/release` directory.
 
 ## Open Source License
 
-This software follows the [GNU Affero General Public License version 3 (AGPLv3)](LICENSE) open source protocol.
+This software follows the [GNU Affero General Public License version 3 with Commons Clause](LICENSE.txt) open source protocol.

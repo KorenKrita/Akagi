@@ -12,10 +12,10 @@ export const Footer: FC = memo(() => {
           <span className='opacity-40'>v{AKAGI_VERSION}</span>
           <div className='footer-divider' />
           <a
-            href='https://github.com/Xe-Persistent/Akagi-NG'
+            href='https://github.com/shinkuan/Akagi'
             onClick={(e) => {
               e.preventDefault();
-              window.electron.invoke('open-external', 'https://github.com/Xe-Persistent/Akagi-NG');
+              window.electron.invoke('open-external', 'https://github.com/shinkuan/Akagi');
             }}
             className='footer-link'
           >
@@ -23,18 +23,18 @@ export const Footer: FC = memo(() => {
             <span>GitHub</span>
           </a>
           <a
-            href='https://github.com/Xe-Persistent/Akagi-NG/blob/master/LICENSE'
+            href='https://github.com/shinkuan/Akagi/blob/ng/LICENSE'
             onClick={(e) => {
               e.preventDefault();
               window.electron.invoke(
                 'open-external',
-                'https://github.com/Xe-Persistent/Akagi-NG/blob/master/LICENSE',
+                'https://github.com/shinkuan/Akagi/blob/ng/LICENSE',
               );
             }}
             className='footer-link'
           >
             <Scale className='h-3.5 w-3.5' />
-            <span>AGPLv3</span>
+            <span>License</span>
           </a>
           <div className='footer-divider' />
           <span className='text-[0.625rem] opacity-30'>

@@ -44,10 +44,10 @@ VSVersionInfo(
       StringTable(
         u'040904B0',
         [StringStruct(u'CompanyName', u'Akagi-NG Contributors'),
-        StringStruct(u'FileDescription', u'Akagi-NG Client'),
+        StringStruct(u'FileDescription', u'Akagi-NG Service'),
         StringStruct(u'FileVersion', u'0.0.0'),
         StringStruct(u'InternalName', u'akagi-ng'),
-        StringStruct(u'LegalCopyright', u'AGPL-3.0-only'),
+        StringStruct(u'LegalCopyright', u'Copyright (C) 2026 Akagi-NG Contributors'),
         StringStruct(u'OriginalFilename', u'akagi-ng.exe'),
         StringStruct(u'ProductName', u'Akagi-NG'),
         StringStruct(u'ProductVersion', u'0.0.0')])

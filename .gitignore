@@ -7,12 +7,15 @@ build/
 /config/
 dist/
 lib/*
+!lib/*-*.so
+!lib/*-*.pyd
 logs/
 models/*
+!models/mortal.pth
+!models/mortal3p.pth
 node_modules/
 
 __pycache__/
-*.py[cod]
 *$py.class
 *.egg-info/
 

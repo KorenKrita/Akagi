@@ -8,7 +8,7 @@ version = "1.0.4"
 description = "Akagi-NG is a next-generation rewrite inspired by Akagi and MajsoulHelper, focusing on modern architecture and UI."
 readme = "README.md"
 requires-python = ">=3.12"
-license = "AGPL-3.0-only"
+license = {file = "LICENSE.txt"}
 authors = [{ name = "Akagi-NG Contributors" }]
 keywords = ["mahjong", "riichi", "majsoul", "ai", "bot"]
 classifiers = [
@@ -45,9 +45,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Xe-Persistent/Akagi-NG"
-"Bug Tracker" = "https://github.com/Xe-Persistent/Akagi-NG/issues"
-"Source Code" = "https://github.com/Xe-Persistent/Akagi-NG"
+Homepage = "https://github.com/shinkuan/Akagi"
+"Bug Tracker" = "https://github.com/shinkuan/Akagi/issues"
+"Source Code" = "https://github.com/shinkuan/Akagi"
 
 [project.scripts]
 akagi-ng = "akagi_ng.__main__:main"

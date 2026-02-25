@@ -3,9 +3,9 @@
 
 version: 2
 updates:
-  # GitHub Actions 版本更新
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "ng"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -18,9 +18,9 @@ updates:
       include: "scope"
     open-pull-requests-limit: 5
 
-  # Python 后端依赖更新
   - package-ecosystem: "pip"
     directory: "/akagi_backend"
+    target-branch: "ng"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -37,9 +37,9 @@ updates:
     allow:
       - dependency-type: "direct"
 
-  # Node.js 前端依赖更新
   - package-ecosystem: "npm"
     directory: "/akagi_frontend"
+    target-branch: "ng"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -72,9 +72,9 @@ updates:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
 
-  # Electron Desktop 依赖更新
   - package-ecosystem: "npm"
     directory: "/electron"
+    target-branch: "ng"
     schedule:
       interval: "weekly"
       day: "monday"

@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "ng-*"
 
 # 并发控制：确保同一标签只有一个 release 任务运行
 concurrency:
@@ -72,7 +72,7 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}"
           echo "VERSION=$version" >> $env:GITHUB_OUTPUT
-          $clean_version = $version -replace '^v', ''
+          $clean_version = $version -replace '^ng-?v?', ''
           echo "CLEAN_VERSION=$clean_version" >> $env:GITHUB_OUTPUT
 
       - name: Set up Python 3.12
