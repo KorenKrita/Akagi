@@ -26,6 +26,7 @@
   <a href="https://github.com/shinkuan/Akagi"><img src="https://img.shields.io/github/languages/top/shinkuan/Akagi?logo=python" alt="Top language" /></a>
   <a href="https://discord.gg/Z2wjXUK8bN"><img src="https://img.shields.io/discord/1192792431364673577?label=discord&logo=discord&color=7289DA" alt="Discord" /></a>
   <a href="https://deepwiki.com/shinkuan/Akagi"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://github.com/shinkuan/Akagi/tree/ng"><img src="https://img.shields.io/badge/Akagi-NG_branch-blue?logo=github" alt="Top language" /></a>
 </p>
 
 # About
@@ -61,6 +62,7 @@
 ### ⚠️ READ THE DOC BEFORE YOU START
 
 - [About](#about)
+- [New Generation Branch](#New-Generation-Branch)
 - [Before You Start](#before-you-start)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -68,6 +70,10 @@
 - [Developer](#developer)
 - [LICENSE](#license)
   
+# New-Generation Branch
+
+A community-driven version of this project is available on the [`ng` branch](https://github.com/shinkuan/Akagi/tree/ng). Contributed by [@Xe-Persistent](https://github.com/Xe-Persistent), this branch features a redesigned user interface and additional experimental functionalities.
+
 # Before You Start
 
 🎥[YouTube Video for you to follow.](https://youtu.be/Z88Ncxbe2nw)

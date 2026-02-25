@@ -26,6 +26,7 @@
   <a href="https://github.com/shinkuan/Akagi"><img src="https://img.shields.io/github/languages/top/shinkuan/Akagi?logo=python" alt="Top language" /></a>
   <a href="https://discord.gg/Z2wjXUK8bN"><img src="https://img.shields.io/discord/1192792431364673577?label=discord&logo=discord&color=7289DA" alt="Discord" /></a>
   <a href="https://deepwiki.com/shinkuan/Akagi"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://github.com/shinkuan/Akagi/tree/ng"><img src="https://img.shields.io/badge/Akagi-NG_branch-blue?logo=github" alt="Top language" /></a>
 </p>
 
 # 關於
@@ -55,12 +56,17 @@
 ### ⚠️ 仔細閱讀以下內容再開始使用 ⚠️
 
 - [關於](#關於)
+- [NG 分支](#new-generation-分支)
 - [開始前](#開始前)
 - [安裝](#安裝)
 - [使用方式](#使用方式)
 - [常見問題](#常見問題)
 - [開發者](#開發者)
 - [授權](#授權)
+
+# New-Generation 分支
+
+本專案由社群驅動的版本可到[`ng` 分支](https://github.com/shinkuan/Akagi/tree/ng)查看。該分支由 [@Xe-Persistent](https://github.com/Xe-Persistent) 貢獻，帶來了全新設計的使用者介面 (UI) 以及多項新增的實驗性功能。
 
 # 開始前
 
