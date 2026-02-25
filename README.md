@@ -23,7 +23,7 @@
 <br>
 <img src="https://img.shields.io/badge/License-AGPL--3.0%20+%20Commons%20Clause-663366?labelColor=808080" alt="License">
 <a href="https://discord.gg/Z2wjXUK8bN"><img src="https://img.shields.io/discord/1192792431364673577?label=Discord&labelColor=5865F2&logo=discord&logoColor=white" alt="Discord"></a>
-<a href="https://codecov.io/gh/shinkuan/Akagi"><img src="https://img.shields.io/codecov/c/github/shinkuan/Akagi?branch=ng&labelColor=F01F7A&logo=Codecov&logoColor=white" alt="Codecov"></a>
+<a href="https://codecov.io/gh/shinkuan/Akagi"><img src="https://img.shields.io/codecov/c/github/shinkuan/Akagi/ng?labelColor=F01F7A&logo=Codecov&logoColor=white" alt="Codecov"></a>
 </p>
 
 <p align="center">
