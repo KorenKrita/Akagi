@@ -16,6 +16,7 @@ from akagi_ng.mjai_bot.engine.mortal import (
 from akagi_ng.mjai_bot.engine.provider import EngineProvider
 from akagi_ng.mjai_bot.logger import logger
 from akagi_ng.mjai_bot.status import BotStatusContext
+from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.protocols import BotProtocol, EngineProtocol
 from akagi_ng.settings import local_settings
 
@@ -48,7 +49,7 @@ class NullEngine(BaseEngine):
     """
 
     def __init__(self, status: BotStatusContext, is_3p: bool):
-        super().__init__(status=status, is_3p=is_3p, version=4, name="NullEngine", is_oracle=False)
+        super().__init__(status=status, is_3p=is_3p, version=4, name="Null", is_oracle=False)
         self.engine_type = "null"
 
     def fork(self, status: BotStatusContext | None = None) -> Self:
@@ -72,7 +73,7 @@ class LazyLocalEngine(BaseEngine):
     """
 
     def __init__(self, status: BotStatusContext, model_path: Path, consts: ModuleType, is_3p: bool):
-        super().__init__(status=status, is_3p=is_3p, version=4, name="Mortal(Lazy)", is_oracle=False)
+        super().__init__(status=status, is_3p=is_3p, version=4, name="Local", is_oracle=False)
         self.model_path = model_path
         self.consts = consts
         self.engine_type = "mortal"
@@ -92,6 +93,7 @@ class LazyLocalEngine(BaseEngine):
             else:
                 logger.error(f"Failed to load local model at {self.model_path}. Using NullEngine as fallback.")
                 self._load_failed = True
+                self.status.set_flag(NotificationCode.MODEL_LOAD_FAILED)
                 self.engine_type = "null"
                 self._real_engine = NullEngine(self.status, self.is_3p)
 
@@ -109,7 +111,7 @@ class LazyLocalEngine(BaseEngine):
 
 
 def _get_or_load_model_resource(model_path: Path, consts: ModuleType, is_3p: bool) -> MortalModelResource | None:
-    """Helper to manage ModelResource cache"""
+    """获取或加载模型资源缓存。"""
     cache_key = f"model:{model_path}"
     with _CACHE_LOCK:
         if cache_key not in _RESOURCE_CACHE:
@@ -123,7 +125,7 @@ def _get_or_load_model_resource(model_path: Path, consts: ModuleType, is_3p: boo
 
 
 def _get_or_create_ot_client(url: str, api_key: str) -> AkagiOTClient:
-    """Helper to manage AkagiOTClient cache"""
+    """获取或创建 AkagiOTClient 缓存。"""
     cache_key = f"network:{url}"
     with _CACHE_LOCK:
         if cache_key not in _RESOURCE_CACHE:

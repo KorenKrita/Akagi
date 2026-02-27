@@ -62,11 +62,7 @@ class ReplayEngine(BaseEngine):
             is_sync = self.is_sync or self.replay_mode
 
         if is_sync:
-            logger.debug(
-                f"ReplayEngine({self.name}): Synchronous fast-forward "
-                f"(is_sync={self.is_sync}, replay_mode={self.replay_mode})"
-            )
-            # 复用基类的同步快进逻辑
+            # 使用基类的同步快进逻辑返回第一个合法动作
             return self._sync_fast_forward(masks)
 
         return self.delegate.react_batch(obs, masks, invisible_obs, is_sync=is_sync)

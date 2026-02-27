@@ -1,70 +1,16 @@
 import asyncio
-from typing import Literal, NotRequired, Self, TypedDict
+from dataclasses import dataclass
+from typing import Annotated, Literal, NamedTuple, NotRequired, Self, TypedDict
 
 from aiohttp import web
 
 from akagi_ng.schema.notifications import NotificationCode
 
+# ==========================================================
+# 业务类型
+
+
 EngineType = Literal["mortal", "akagiot", "replay", "unknown", "null"]
-
-
-class MJAIMetadata(TypedDict, total=False):
-    """MJAI 协议响应中的元数据字段 (meta)。"""
-
-    # 核心推理预测
-    q_values: list[float]
-    mask_bits: int
-    is_greedy: bool
-    batch_size: int
-    eval_time_ns: int
-
-    # C++ 注入数据 (来自 libriichi)
-    shanten: int
-    at_furiten: bool
-
-    # 业务层注入数据
-    engine_type: str
-    fallback_used: bool
-    online_service_reconnecting: bool
-    game_start: bool
-
-    # 嵌套前瞻结果
-    riichi_lookahead: Self
-
-
-class MJAIResponse(TypedDict, total=False):
-    """MJAI 协议响应格式"""
-
-    type: str
-    meta: MJAIMetadata
-    # 其他可能的响应字段
-    actor: int
-    pai: str
-    consumed: list[str]
-    target: int
-
-
-class NotificationFlags(TypedDict, total=False):
-    """Bot 与引擎通知标志 - 用于前端 Toast/Alert 显示"""
-
-    # 引擎层状态
-    fallback_used: bool  # 是否使用了回转引擎
-    online_service_reconnecting: bool  # 熔断器是否打开 (正在重连)
-    online_service_restored: bool  # 熔断器是否已恢复
-    no_bot_loaded: bool  # 是否无可用引擎
-    model_loaded_local: bool  # 本地模型已加载
-    model_loaded_online: bool  # 在线模型已加载
-    riichi_simulation_failed: bool  # 立直前瞻模拟是否失败
-
-    # 逻辑层与生命周期状态
-    bot_runtime_error: bool  # Bot 运行时发生未捕获异常
-    state_tracker_error: bool  # 状态跟踪器异常
-    bot_switch_failed: bool  # Bot 切换失败
-    model_load_failed: bool  # 模型加载失败
-
-    # 游戏生命周期与错误
-    game_connected: bool  # 游戏已连接
-    game_data_parse_failed: bool  # 解析错误
 
 
 class EngineAdditionalMeta(TypedDict, total=False):
@@ -73,39 +19,105 @@ class EngineAdditionalMeta(TypedDict, total=False):
     engine_type: EngineType
     online_service_reconnecting: bool
     fallback_used: bool
-    no_bot_loaded: bool
 
 
-type NotificationFlagKey = NotificationCode
+# --- 引擎与通知精确类型定义 ---
+# 根据逻辑分类：Flag (持久状态标志) vs Event (瞬时系统事件)
 
-type EngineAdditionalMetaKey = NotificationCode
+# 1. 标志类 (用于 NotificationFlags)
+type NotificationFlagKey = Literal[
+    NotificationCode.FALLBACK_USED,
+    NotificationCode.RECONNECTING,
+    NotificationCode.SERVICE_RESTORED,
+    NotificationCode.NO_BOT_LOADED,
+    NotificationCode.MODEL_LOADED_LOCAL,
+    NotificationCode.MODEL_LOADED_ONLINE,
+    NotificationCode.RIICHI_SIM_FAILED,
+    NotificationCode.BOT_RUNTIME_ERROR,
+    NotificationCode.STATE_TRACKER_ERROR,
+    NotificationCode.BOT_SWITCH_FAILED,
+    NotificationCode.MODEL_LOAD_FAILED,
+    NotificationCode.GAME_CONNECTED,
+    NotificationCode.JSON_DECODE_ERROR,
+]
+type NotificationFlags = set[NotificationFlagKey]
+
+# 2. 元数据键 (用于推理响应注入)
+type EngineAdditionalMetaKey = Literal[
+    NotificationCode.ENGINE_TYPE,
+    NotificationCode.RECONNECTING,
+    NotificationCode.FALLBACK_USED,
+]
+
+# 3. 系统事件类 (用于 SystemEvent.code)
+type SystemEventCode = Literal[
+    NotificationCode.CLIENT_CONNECTED,
+    NotificationCode.GAME_CONNECTED,
+    NotificationCode.GAME_SYNCING,
+    NotificationCode.GAME_DISCONNECTED,
+    NotificationCode.RETURN_LOBBY,
+    NotificationCode.PARSE_ERROR,
+    NotificationCode.JSON_DECODE_ERROR,
+    NotificationCode.MAJSOUL_PROTO_UPDATED,
+    NotificationCode.MAJSOUL_PROTO_UPDATE_FAILED,
+]
 
 
-class Notification(TypedDict):
-    """前端通知对象"""
+# --- 领域语义化类型别名 ---
+type Actor = Annotated[int, "Player index (0-3)"]
+type Tile = Annotated[str, "MJAI tile string (e.g., '1m', '5mr', 'E')"]
+type Score = Annotated[int, "Player score (e.g., 25000)"]
 
-    code: str
+
+class MJAIMetadata(TypedDict, total=False):
+    """MJAI 协议响应中的元数据字段 (meta)。"""
+
+    # 引擎层预测细节
+    q_values: list[float]
+    mask_bits: int
+    is_greedy: bool
+    batch_size: int
+    eval_time_ns: int
+
+    # C++ 状态导出 (来自 libriichi.PlayerState)
+    shanten: int
+    waits: list[int]
+    at_furiten: bool
+
+    # 业务逻辑注入
+    engine_type: EngineType
+    fallback_used: bool
+    online_service_reconnecting: bool  # 熔断器状态
+    is_sync: bool  # 是否为快进同步模式
+    game_start: bool
+
+    # 嵌套前瞻结果
+    riichi_lookahead: Self
+
+
+class MJAIResponse(TypedDict):
+    """MJAI 协议响应格式"""
+
+    type: str  # 动作类型 (如 dahai, reach, chi, etc.)
+    actor: NotRequired[Actor]  # 注意：none 动作可能没有 actor
+    pai: NotRequired[Tile]
+    tsumogiri: NotRequired[bool]
+    consumed: NotRequired[list[Tile]]
+    target: NotRequired[Actor]
+    meta: NotRequired[MJAIMetadata]
 
 
 class FuuroDetail(TypedDict):
     """副露详情 (吃、碰、杠)"""
 
-    tile: str
-    consumed: list[str]
-
-
-class ProcessResult(TypedDict):
-    """MJAI 单条消息处理结果"""
-
-    response: MJAIResponse | None
-    notifications: list[Notification]
-    is_sync: bool
+    tile: Tile
+    consumed: list[Tile]
 
 
 class SimCandidate(TypedDict):
     """立直模拟候选 (对应前端 SimCandidate)"""
 
-    tile: str
+    tile: Tile
     confidence: float
 
 
@@ -114,152 +126,205 @@ class Recommendation(TypedDict):
 
     action: str
     confidence: float
-    tile: NotRequired[str]
-    consumed: NotRequired[list[str]]
+    tile: NotRequired[Tile]
+    consumed: NotRequired[list[Tile]]
     sim_candidates: NotRequired[list[SimCandidate]]
 
 
-class FullRecommendationData(TypedDict, total=False):
+class FullRecommendationData(TypedDict):
     """完整推荐数据载荷 (对应前端 FullRecommendationData)"""
 
     recommendations: list[Recommendation]
-    engine_type: NotRequired[str | None]
-    fallback_used: NotRequired[bool | None]
-    circuit_open: NotRequired[bool | None]
+    engine_type: EngineType
+    fallback_used: bool
+    circuit_open: bool
 
 
-class SSEClientData(TypedDict):
+class Notification(TypedDict):
+    """前端通知对象"""
+
+    code: NotificationCode
+
+
+class ProcessResult(NamedTuple):
+    """MJAI 单条消息处理结果"""
+
+    response: MJAIResponse | None
+    notifications: list[Notification]
+    is_sync: bool
+
+
+class SSEClientData(NamedTuple):
     """SSE 客户端数据"""
 
-    # 由于 aiohttp.web.StreamResponse 和 asyncio.Queue 是运行时对象，
-    # 这里保持 TypedDict 的类型提示作用，但不强制类型检查
     response: web.StreamResponse
     queue: asyncio.Queue
 
 
 # ==========================================================
-# MJAI Protocol Events
+# MJAI 协议事件
 
 
-class MJAIEventBase(TypedDict):
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MJAIEventBase:
     """MJAI 协议事件基类"""
 
     type: str
-    sync: NotRequired[bool]
+    sync: bool = False
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StartGameEvent(MJAIEventBase):
-    type: Literal["start_game"]
-    id: int
+    id: Actor
     is_3p: bool
+    type: str = "start_game"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StartKyokuEvent(MJAIEventBase):
-    type: Literal["start_kyoku"]
-    bakaze: str
-    dora_marker: str
+    bakaze: Tile
+    dora_marker: Tile
     kyoku: int
     honba: int
     kyotaku: int
-    oya: int
-    scores: list[int]
-    tehais: list[list[str]]
+    oya: Actor
+    scores: list[Score]
+    tehais: list[list[Tile]]
+    type: str = "start_kyoku"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TsumoEvent(MJAIEventBase):
-    type: Literal["tsumo"]
-    actor: int
-    pai: str
+    actor: Actor
+    pai: Tile
+    type: str = "tsumo"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DahaiEvent(MJAIEventBase):
-    type: Literal["dahai"]
-    actor: int
-    pai: str
+    actor: Actor
+    pai: Tile
     tsumogiri: bool
+    type: str = "dahai"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ChiEvent(MJAIEventBase):
-    type: Literal["chi"]
-    actor: int
-    target: int
-    pai: str
-    consumed: list[str]
+    actor: Actor
+    target: Actor
+    pai: Tile
+    consumed: list[Tile]
+    type: str = "chi"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PonEvent(MJAIEventBase):
-    type: Literal["pon"]
-    actor: int
-    target: int
-    pai: str
-    consumed: list[str]
+    actor: Actor
+    target: Actor
+    pai: Tile
+    consumed: list[Tile]
+    type: str = "pon"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DaiminkanEvent(MJAIEventBase):
-    type: Literal["daiminkan"]
-    actor: int
-    target: int
-    pai: str
-    consumed: list[str]
+    actor: Actor
+    target: Actor
+    pai: Tile
+    consumed: list[Tile]
+    type: str = "daiminkan"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class AnkanEvent(MJAIEventBase):
-    type: Literal["ankan"]
-    actor: int
-    consumed: list[str]
+    actor: Actor
+    consumed: list[Tile]
+    type: str = "ankan"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class KakanEvent(MJAIEventBase):
-    type: Literal["kakan"]
-    actor: int
-    pai: str
-    consumed: list[str]
+    actor: Actor
+    pai: Tile
+    consumed: list[Tile]
+    type: str = "kakan"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ReachEvent(MJAIEventBase):
-    type: Literal["reach"]
-    actor: int
+    actor: Actor
+    type: str = "reach"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ReachAcceptedEvent(MJAIEventBase):
-    type: Literal["reach_accepted"]
-    actor: int
-    scores: NotRequired[list[int]]
-    deltas: NotRequired[list[int]]
+    actor: Actor
+    scores: list[Score] | None = None
+    deltas: list[Score] | None = None
+    type: str = "reach_accepted"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DoraEvent(MJAIEventBase):
-    type: Literal["dora"]
-    dora_marker: str
+    dora_marker: Tile
+    type: str = "dora"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class NukidoraEvent(MJAIEventBase):
-    type: Literal["nukidora"]
-    actor: int
-    pai: Literal["N"]
+    actor: Actor
+    pai: Literal["N"] = "N"
+    type: str = "nukidora"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class EndKyokuEvent(MJAIEventBase):
-    type: Literal["end_kyoku"]
+    type: str = "end_kyoku"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HoraEvent(MJAIEventBase):
+    actor: Actor
+    target: Actor
+    pai: Tile
+    scores: list[Score]
+    deltas: list[Score]
+    ba: int | None = None
+    kyoku: int | None = None
+    honba: int | None = None
+    kyotaku: int | None = None
+    ura_dora_markers: list[Tile] | None = None
+    hand: list[Tile] | None = None
+    fu: int | None = None
+    fan: int | None = None
+    yaku: list[str] | None = None
+    type: str = "hora"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RyukyokuEvent(MJAIEventBase):
-    type: Literal["ryukyoku"]
-    scores: list[int]
+    scores: list[Score]
+    reason: str | None = None
+    deltas: list[Score] | None = None
+    tehais: list[list[Tile]] | None = None
+    tenpais: list[bool] | None = None
+    type: str = "ryukyoku"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class EndGameEvent(MJAIEventBase):
-    type: Literal["end_game"]
+    type: str = "end_game"
 
 
-class SystemEvent(MJAIEventBase):
-    type: Literal["system_event"]
-    code: str
-    msg: NotRequired[str]
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SystemEvent:
+    code: SystemEventCode
+    type: str = "system_event"
 
 
-class SystemShutdownEvent(TypedDict):
-    type: Literal["system_shutdown"]
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SystemShutdownEvent:
+    type: str = "system_shutdown"
 
 
 type MJAIEvent = (
@@ -277,6 +342,7 @@ type MJAIEvent = (
     | DoraEvent
     | NukidoraEvent
     | EndKyokuEvent
+    | HoraEvent
     | RyukyokuEvent
     | EndGameEvent
 )
@@ -289,29 +355,34 @@ type AkagiEvent = MJAIEvent | SystemEvent | SystemShutdownEvent
 # Electron IPC 消息定义 (CDP / WebSocket 帧)
 
 
-class WebSocketCreatedMessage(TypedDict):
-    type: Literal["websocket_created"]
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WebSocketCreatedMessage:
     url: str
+    type: str = "websocket_created"
 
 
-class WebSocketClosedMessage(TypedDict):
-    type: Literal["websocket_closed"]
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WebSocketClosedMessage:
+    type: str = "websocket_closed"
 
 
-class WebSocketFrameMessage(TypedDict):
-    type: Literal["websocket"]
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WebSocketFrameMessage:
     direction: Literal["inbound", "outbound"]
     data: str
-    opcode: NotRequired[int]
+    opcode: int | None = None
+    type: str = "websocket"
 
 
-class LiqiDefinitionMessage(TypedDict):
-    type: Literal["liqi_definition"]
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LiqiDefinitionMessage:
     data: str
+    type: str = "liqi_definition"
 
 
-class DebuggerDetachedMessage(TypedDict):
-    type: Literal["debugger_detached"]
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DebuggerDetachedMessage:
+    type: str = "debugger_detached"
 
 
 type ElectronMessage = (

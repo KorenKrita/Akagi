@@ -77,10 +77,9 @@ class EngineProvider(BaseEngine):
         self.status.set_metadata(NotificationCode.ENGINE_TYPE, primary_engine.engine_type)
         self.status.set_metadata(NotificationCode.FALLBACK_USED, self.fallback_active)
 
-        # 如果最终激活的是空引擎，说明全线崩溃
+        # 3. 如果最终激活的是空引擎，说明全线崩溃
         if self.active_engine and self.active_engine.engine_type == "null":
             self.status.set_flag(NotificationCode.NO_BOT_LOADED)
-            self.status.set_metadata(NotificationCode.NO_BOT_LOADED, True)
 
         return res
 

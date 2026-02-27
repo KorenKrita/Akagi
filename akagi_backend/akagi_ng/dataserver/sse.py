@@ -22,12 +22,10 @@ def _format_sse_message(data: dict, event: str | None = None) -> bytes:
 
 
 class SSEManager:
-    """
-    Manages SSE connections, broadcasting, and keep-alive.
-    """
+    """管理 SSE 连接、广播与保活。"""
 
     def __init__(self):
-        self.clients: dict[str, SSEClientData] = {}  # {clientId: {"response": StreamResponse, "queue": asyncio.Queue}}
+        self.clients: dict[str, SSEClientData] = {}
         self.latest_recommendations: FullRecommendationData | None = None
         self.notification_history: deque[dict[str, list[Notification]]] = deque(
             maxlen=ServerConstants.SSE_MAX_NOTIFICATION_HISTORY
@@ -57,7 +55,7 @@ class SSEManager:
             if (
                 expected_response is not None
                 and client_data is not None
-                and client_data.get("response") is not expected_response
+                and client_data.response is not expected_response
             ):
                 return
 
@@ -66,7 +64,7 @@ class SSEManager:
         if not client_data:
             return
 
-        response = client_data.get("response")
+        response = client_data.response
         try:
             if response:
                 await response.write_eof()
@@ -96,12 +94,19 @@ class SSEManager:
         # 为每个客户端创建消息队列，使用常量定义的上限
         queue = asyncio.Queue(maxsize=ServerConstants.MESSAGE_QUEUE_MAXSIZE)
 
+        # 避免在持锁期间 await，防止与 _remove_client 形成死锁。
+        old_response: web.StreamResponse | None = None
         async with self.lock:
-            if client_id in self.clients:
-                logger.warning(f"Client {client_id} already connected. Closing old connection.")
-                await self._remove_client(client_id, expected_response=self.clients[client_id].get("response"))
+            existing = self.clients.get(client_id)
+            if existing:
+                old_response = existing.response
 
-            self.clients[client_id] = {"response": response, "queue": queue}
+        if old_response is not None:
+            logger.warning(f"Client {client_id} already connected. Closing old connection.")
+            await self._remove_client(client_id, expected_response=old_response)
+
+        async with self.lock:
+            self.clients[client_id] = SSEClientData(response=response, queue=queue)
 
         logger.info(f"SSE client {client_id} connected from {request.remote}")
 
@@ -145,7 +150,7 @@ class SSEManager:
             targets = list(self.clients.values())
 
         for client_data in targets:
-            queue = client_data.get("queue")
+            queue = client_data.queue
             if queue:
                 try:
                     queue.put_nowait(payload)
@@ -153,10 +158,7 @@ class SSEManager:
                     logger.warning("SSE client queue full, dropping message.")
 
     def broadcast_event(self, event: str, data: FullRecommendationData | dict[str, list[Notification]]):
-        """
-        Broadcast a named event to all clients.
-        Update the corresponding cache based on event type.
-        """
+        """广播指定事件，并按事件类型更新缓存。"""
         match event:
             case "recommendations":
                 self.latest_recommendations = data
@@ -181,7 +183,7 @@ class SSEManager:
 
             keepalive_payload = b": keep-alive\n\n"
             for client_data in targets:
-                queue = client_data.get("queue")
+                queue = client_data.queue
                 if queue:
                     with contextlib.suppress(asyncio.QueueFull):
                         queue.put_nowait(keepalive_payload)

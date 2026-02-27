@@ -17,6 +17,7 @@ from akagi_ng.mjai_bot.network import (
 )
 from akagi_ng.mjai_bot.status import BotStatusContext
 from akagi_ng.schema.constants import ModelConstants
+from akagi_ng.schema.notifications import NotificationCode
 
 
 @dataclass
@@ -74,7 +75,7 @@ class MortalEngine(BaseEngine):
             return self._sync_fast_forward(masks)
 
         try:
-            self.status.set_metadata("engine_type", self.engine_type)
+            self.status.set_metadata(NotificationCode.ENGINE_TYPE, self.engine_type)
             with torch.inference_mode():
                 return self._react_batch(obs, masks, invisible_obs)
         except Exception as ex:
@@ -193,10 +194,10 @@ def load_mortal_resource(
             dqn=dqn,
             version=control_version,
             device=device,
-            stochastic_latent=False,  # Default
-            boltzmann_epsilon=0,  # Default
-            boltzmann_temp=1,  # Default
-            top_p=1,  # Default
+            stochastic_latent=False,
+            boltzmann_epsilon=0,
+            boltzmann_temp=1,
+            top_p=1,
             engine_name=engine_name,
         )
 

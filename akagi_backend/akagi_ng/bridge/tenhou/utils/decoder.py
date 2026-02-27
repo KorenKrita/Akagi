@@ -1,7 +1,6 @@
-# http://tenhou.net/img/tehai.js
-# http://tenhou.net/img/mentsu136.txt
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Self
 
 from akagi_ng.bridge.tenhou.utils.converter import tenhou_to_mjai
 
@@ -40,22 +39,22 @@ class Meld:
             return self.tiles[0:1]
         return self.tiles[1:]
 
-    @staticmethod
-    def parse_meld(m: int) -> "Meld":
+    @classmethod
+    def parse_meld(cls, m: int) -> Self:
         if m & (1 << 2):
             # チー
-            return Meld.parse_chi(m)
+            return cls.parse_chi(m)
         if m & (1 << 3):
             # ポン
-            return Meld.parse_pon(m)
+            return cls.parse_pon(m)
         if m & (1 << 4):
             # 加槓
-            return Meld.parse_kakan(m)
+            return cls.parse_kakan(m)
         # 大明槓, 暗槓
-        return Meld.parse_daiminkan_ankan(m)
+        return cls.parse_daiminkan_ankan(m)
 
-    @staticmethod
-    def parse_chi(m: int) -> "Meld":
+    @classmethod
+    def parse_chi(cls, m: int) -> Self:
         t = m >> 10
         r = t % 3
         t //= 3
@@ -67,10 +66,10 @@ class Meld:
             t + 4 * 2 + ((m >> 7) & 0x3),
         ]
         h[0], h[r] = h[r], h[0]
-        return Meld(m & 3, MeldType.CHI, h, r=r)
+        return cls(m & 3, MeldType.CHI, h, r=r)
 
-    @staticmethod
-    def parse_pon(m: int) -> "Meld":
+    @classmethod
+    def parse_pon(cls, m: int) -> Self:
         unused = (m >> 5) & 0x3
         t = m >> 9
         r = t % 3
@@ -78,10 +77,10 @@ class Meld:
         h = [t, t + 1, t + 2, t + 3]
         unused = h.pop(unused)
         h[0], h[r] = h[r], h[0]
-        return Meld(m & 3, MeldType.PON, h, unused=unused)
+        return cls(m & 3, MeldType.PON, h, unused=unused)
 
-    @staticmethod
-    def parse_kakan(m: int) -> "Meld":
+    @classmethod
+    def parse_kakan(cls, m: int) -> Self:
         added = (m >> 5) & 0x3
         t = m >> 9
         r = t % 3
@@ -90,10 +89,10 @@ class Meld:
         added = h.pop(added)
         h[0], h[r] = h[r], h[0]
         h = [added, *h]
-        return Meld(m & 3, MeldType.KAKAN, h)
+        return cls(m & 3, MeldType.KAKAN, h)
 
-    @staticmethod
-    def parse_daiminkan_ankan(m: int) -> "Meld":
+    @classmethod
+    def parse_daiminkan_ankan(cls, m: int) -> Self:
         target = m & 3
         hai0 = m >> 8
         t = hai0 // 4 * 4
@@ -102,8 +101,8 @@ class Meld:
         h[0], h[r] = h[r], h[0]
 
         if target == 0:
-            return Meld(target, MeldType.ANKAN, h)
-        return Meld(target, MeldType.DAIMINKAN, h)
+            return cls(target, MeldType.ANKAN, h)
+        return cls(target, MeldType.DAIMINKAN, h)
 
 
 def parse_sc_tag(message: dict[str, str]) -> list[int]:

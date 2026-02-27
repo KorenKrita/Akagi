@@ -8,6 +8,8 @@ from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.types import (
     AkagiEvent,
     ElectronMessage,
+    EndGameEvent,
+    SystemEvent,
     WebSocketClosedMessage,
     WebSocketCreatedMessage,
     WebSocketFrameMessage,
@@ -27,22 +29,22 @@ class TenhouElectronClient(BaseElectronClient):
     WS_BINARY = 2
 
     def handle_message(self, message: ElectronMessage):
-        match message.get("type"):
-            case "websocket_created":
+        match message:
+            case WebSocketCreatedMessage():
                 self._handle_websocket_created(message)
-            case "websocket_closed":
+            case WebSocketClosedMessage():
                 self._handle_websocket_closed(message)
-            case "websocket":
+            case WebSocketFrameMessage():
                 self._handle_websocket_frame(message)
 
     def _handle_websocket_created(self, message: WebSocketCreatedMessage):
-        url = message.get("url", "")
-        # Only track Tenhou related WebSockets
+        url = message.url
+        # 仅跟踪天凤相关 WebSocket
         if "tenhou.net" in url or "nodocchi" in url:
             with self._lock:
                 self._active_connections += 1
                 if self._active_connections == 1:
-                    self.message_queue.put({"type": "system_event", "code": NotificationCode.CLIENT_CONNECTED})
+                    self._enqueue_event(SystemEvent(code=NotificationCode.CLIENT_CONNECTED))
                     logger.info(f"[Electron] Tenhou client connected (first connection): {url}")
 
             if self.bridge:
@@ -56,11 +58,11 @@ class TenhouElectronClient(BaseElectronClient):
 
             self._active_connections -= 1
             if self._active_connections == 0:
-                # Determine if we should send GAME_DISCONNECTED
+                # 根据游戏状态决定是否发送 GAME_DISCONNECTED
                 game_ended = getattr(self.bridge, "game_ended", False) if self.bridge else False
 
                 if not game_ended:
-                    self.message_queue.put({"type": "system_event", "code": NotificationCode.GAME_DISCONNECTED})
+                    self._enqueue_event(SystemEvent(code=NotificationCode.GAME_DISCONNECTED))
                     logger.info(
                         f"[Electron] All Tenhou connections closed, sending {NotificationCode.GAME_DISCONNECTED}"
                     )
@@ -74,23 +76,21 @@ class TenhouElectronClient(BaseElectronClient):
             return
 
         try:
-            # We ONLY process inbound messages from the server to avoid double-counting
-            # outbound actions (which will be echoed back as inbound confirmations).
-            # direction 'outbound' in CDP corresponds to client -> server.
-            # direction 'inbound' corresponds to server -> client.
-            if message.get("direction") == "outbound":
+            # 仅处理服务端下行消息，避免与回显确认重复计数。
+            # CDP 中 outbound=客户端->服务端，inbound=服务端->客户端。
+            if message.direction == "outbound":
                 return
 
-            data = message.get("data", "")
+            data = message.data
             if not data:
                 return
 
             logger.trace(f"[Electron] -> Message: {data}")
 
-            # Tenhou web client:
-            # - Text frames (opcode 1): raw string (e.g. HELO)
-            # - Binary frames (opcode 2): base64 encoded bytes
-            opcode = message.get("opcode", self.WS_TEXT)
+            # 天凤 Web 客户端：
+            # - 文本帧（opcode=1）：原始字符串（如 HELO）
+            # - 二进制帧（opcode=2）：base64 编码字节串
+            opcode = message.opcode or self.WS_TEXT
 
             if opcode == self.WS_BINARY:
                 raw_bytes = base64.b64decode(data)
@@ -99,15 +99,18 @@ class TenhouElectronClient(BaseElectronClient):
 
             mjai_messages = self.bridge.parse(raw_bytes)
 
-            if mjai_messages:
-                logger.debug(f"[Tenhou] Decoded {len(mjai_messages)} MJAI messages")
-                for msg in mjai_messages:
-                    self.message_queue.put(msg)
+            if not mjai_messages:
+                return
 
-                    # Check for game end to trigger notification
-                    if msg.get("type") == "end_game":
+            logger.debug(f"[Tenhou] Decoded {len(mjai_messages)} MJAI messages")
+            for msg in mjai_messages:
+                self._enqueue_event(msg)
+
+                # 结束对局时触发返回大厅通知
+                match msg:
+                    case EndGameEvent():
                         logger.info("[Electron] Detected end_game message in Tenhou, sending RETURN_LOBBY")
-                        self.message_queue.put({"type": "system_event", "code": NotificationCode.RETURN_LOBBY})
+                        self._enqueue_event(SystemEvent(code=NotificationCode.RETURN_LOBBY))
 
         except Exception as e:
             logger.exception(f"Error decoding Tenhou websocket frame: {e}")

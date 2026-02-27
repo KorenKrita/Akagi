@@ -1,6 +1,8 @@
 import json
+from dataclasses import asdict
 
 from akagi_ng.mjai_bot.logger import logger
+from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.protocols import EngineProtocol
 from akagi_ng.schema.types import MJAIEvent, MJAIMetadata, StartGameEvent
 
@@ -57,7 +59,7 @@ class LookaheadBot:
         all_events.extend(history_events)
 
         for e in all_events:
-            e_json = json.dumps(e, separators=(",", ":"))
+            e_json = json.dumps(asdict(e), separators=(",", ":"))
             try:
                 sim_bot.react(e_json)
             except Exception:
@@ -68,14 +70,18 @@ class LookaheadBot:
         # 停止回放模式，允许请求穿透到底层引擎 (Provider -> AkagiOT/Mortal)
         replay_engine.stop_replaying()
 
-        cand_json = json.dumps(candidate_event, separators=(",", ":"))
+        cand_json = json.dumps(asdict(candidate_event), separators=(",", ":"))
 
         try:
-            # 此时调用底层引擎，应该能正确获取完整元数据
             response_json = sim_bot.react(cand_json)
 
             if response_json:
-                response = json.loads(response_json)
+                try:
+                    response = json.loads(response_json)
+                except json.JSONDecodeError:
+                    logger.error(f"LookaheadBot: engine returned invalid JSON: {response_json}")
+                    self.engine.status.set_flag(NotificationCode.JSON_DECODE_ERROR)
+                    return None
                 meta: MJAIMetadata = response.get("meta", {})
                 if meta:
                     return meta

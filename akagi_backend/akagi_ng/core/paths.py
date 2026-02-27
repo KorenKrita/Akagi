@@ -15,19 +15,18 @@ def get_app_root() -> Path:
 @cache
 def get_runtime_root() -> Path:
     """
-    Returns the root directory where runtime data (config, logs, lib, models) lives.
-    - In Dev: Project Root
-    - In Prod (Frozen): The application root containing the main .exe (Akagi-NG/)
+    返回运行时数据目录（config、logs、lib、models）。
+    - 开发模式：项目根目录
+    - 生产模式（冻结包）：主程序所在根目录（Akagi-NG/）
     """
     if getattr(sys, "frozen", False):
-        # sys.executable is Akagi-NG/bin/akagi-ng.exe
-        # .parent.parent -> Akagi-NG/
+        # 可执行文件位于 Akagi-NG/bin/akagi-ng.exe，向上两级即运行根目录
         return Path(sys.executable).parent.parent
     return get_app_root()
 
 
 def get_assets_dir() -> Path:
-    # Assets are bundled WITH the binary via PyInstaller --datas
+    # assets 通过 PyInstaller --datas 与二进制一同打包
     return get_app_root() / "assets"
 
 

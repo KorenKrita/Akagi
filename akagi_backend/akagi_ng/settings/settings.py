@@ -18,7 +18,7 @@ SETTINGS_JSON_PATH: Path = CONFIG_DIR / "settings.json"
 
 SCHEMA_PATH: Path = get_assets_dir() / "settings.schema.json"
 
-# Windows Locale IDs (LCID)
+# Windows 语言区域 ID（LCID）
 LCID_ZH_CN = 2052  # 简体中文 (0x0804)
 LCID_ZH_TW = 1028  # 繁体中文-台湾 (0x0404)
 LCID_ZH_HK = 3076  # 繁体中文-香港 (0x0C04)
@@ -26,14 +26,14 @@ LCID_ZH_MO = 5124  # 繁体中文-澳门 (0x1404)
 LCID_JA_JP = 1041  # 日文 (0x0411)
 
 
-@dataclass
+@dataclass(slots=True)
 class OTConfig:
     online: bool
     server: str = ""
     api_key: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class MITMConfig:
     enabled: bool
     host: str
@@ -41,13 +41,13 @@ class MITMConfig:
     upstream: str
 
 
-@dataclass
+@dataclass(slots=True)
 class ServerConfig:
     host: str
     port: int
 
 
-@dataclass
+@dataclass(slots=True)
 class ModelConfig:
     temperature: float
     rule_based_agari_guard: bool
@@ -55,7 +55,7 @@ class ModelConfig:
     model_3p: str = "mortal3p.pth"
 
 
-@dataclass
+@dataclass(slots=True)
 class Settings:
     log_level: str
     locale: str

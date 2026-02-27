@@ -1,4 +1,5 @@
 import json
+from dataclasses import asdict
 
 from akagi_ng.mjai_bot.engine.factory import load_bot_and_engine
 from akagi_ng.mjai_bot.logger import logger
@@ -8,10 +9,14 @@ from akagi_ng.mjai_bot.utils import meta_to_recommend
 from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.protocols import BotProtocol, EngineProtocol
 from akagi_ng.schema.types import (
+    EndGameEvent,
     MJAIEvent,
+    MJAIEventBase,
     MJAIMetadata,
     MJAIResponse,
+    ReachEvent,
     StartGameEvent,
+    StartKyokuEvent,
 )
 
 
@@ -44,8 +49,7 @@ class MortalBot:
 
             # 2. 决策：调用模型/引擎
             response = self._think(event) if not is_game_end else None
-
-            if response is None:
+            if not response:
                 return None
 
             # 3. 增强：注入元数据与执行前瞻逻辑
@@ -53,7 +57,12 @@ class MortalBot:
             self._post_react(meta, is_game_start)
 
             # 4. 收尾：业务规则应用与响应组装
-            self._finalize_response(response, meta)
+            if meta:
+                response["meta"] = meta
+
+            # 三麻抑制单一选项的 meta 显示
+            if self.is_3p and response.get("type") == "none":
+                response.pop("meta", None)
 
             return response
 
@@ -64,17 +73,16 @@ class MortalBot:
 
     def _pre_react(self, event: MJAIEvent) -> tuple[bool, bool]:
         """维护历史、处理生命周期事件。返回 (is_game_start, is_game_end)"""
-        e_type = event["type"]
         is_game_start = False
         is_game_end = False
 
-        match e_type:
-            case "start_game":
+        match event:
+            case StartGameEvent():
                 self._handle_start_game(event)
                 is_game_start = True
-            case "start_kyoku":
+            case StartKyokuEvent():
                 self.history = []
-            case "end_game":
+            case EndGameEvent():
                 self._handle_end_game()
                 is_game_end = True
 
@@ -89,21 +97,26 @@ class MortalBot:
             return None
 
         if self.engine:
-            self.engine.is_sync = event.get("sync", False)
+            match event:
+                case MJAIEventBase(sync=is_sync):
+                    self.engine.is_sync = is_sync
+                case _:
+                    self.engine.is_sync = False
 
         try:
             # MJAI 协议底层 C++ Bot (mjai-python) 接受并返回 JSON 字符串
-            res = self.model.react(json.dumps(event, separators=(",", ":")))
-            if res is None:
+            res = self.model.react(json.dumps(asdict(event), separators=(",", ":")))
+            if not res:
                 return None
-            return json.loads(res)
-        except Exception as e:
+            try:
+                return json.loads(res)
+            except json.JSONDecodeError:
+                self.logger.error(f"MortalBot: engine returned invalid JSON: {res}")
+                self.status.set_flag(NotificationCode.JSON_DECODE_ERROR)
+                return None
+        except Exception:
             self.logger.exception("MortalBot engine error")
-            match e:
-                case json.JSONDecodeError():
-                    self.status.set_flag(NotificationCode.JSON_DECODE_ERROR)
-                case _:
-                    self.status.set_flag(NotificationCode.BOT_RUNTIME_ERROR)
+            self.status.set_flag(NotificationCode.BOT_RUNTIME_ERROR)
             return None
         finally:
             if self.engine:
@@ -120,20 +133,9 @@ class MortalBot:
         # 2. 立直前瞻逻辑
         self._handle_riichi_lookahead(meta)
 
-    def _finalize_response(self, response: MJAIResponse, meta: MJAIMetadata):
-        """最终业务逻辑修正"""
-        # 三麻抑制单一选项的 meta 显示
-        if self.is_3p and "mask_bits" in meta and meta["mask_bits"].bit_count() == 1:
-            response.pop("meta", None)
-            return
-
-        # 挂载 meta
-        if meta:
-            response["meta"] = meta
-
     def _handle_start_game(self, e: StartGameEvent):
         """处理游戏开始事件，初始化模型和引擎"""
-        self.player_id = e["id"]
+        self.player_id = e.id
         self.model, self.engine = load_bot_and_engine(self.status, self.player_id, self.is_3p)
         self.history = []
         self.game_start_event = e
@@ -193,7 +195,7 @@ class MortalBot:
             sim_engine = self.engine.fork(status=sim_status)
             lookahead_bot = LookaheadBot(sim_engine, self.player_id, is_3p=self.is_3p)
 
-            reach_event = {"type": "reach", "actor": self.player_id}
+            reach_event = ReachEvent(actor=self.player_id)
             sim_meta: MJAIMetadata | None = lookahead_bot.simulate_reach(
                 self.history,
                 reach_event,

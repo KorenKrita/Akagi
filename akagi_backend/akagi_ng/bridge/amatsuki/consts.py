@@ -14,7 +14,7 @@ class AmatsukiTopic(StrEnum):
 
 
 class AmatsukiAction(StrEnum):
-    # Tehai Actions
+    # 手牌动作
     KIRI = "KIRI"
     ANKAN = "ANNKAN"
     KAKAN = "KAKAN"
@@ -22,7 +22,7 @@ class AmatsukiAction(StrEnum):
     WREACH = "WREACH"
     KITA = "KITA"
 
-    # River Actions
+    # 牌河动作
     CHII = "CHII"
     PON = "PON"
     MINKAN = "MINKAN"
@@ -33,11 +33,11 @@ RED_FIVE_NUM = 5
 
 def _generate_id_to_mjai_pai() -> list[str]:
     pais = []
-    # Manzu, Pinzu, Souzu
+    # 万子、筒子、索子
     for suit in ["m", "p", "s"]:
         for i in range(1, 10):
             if i == RED_FIVE_NUM:
-                # Red 5 is first
+                # 赤宝牌靠前
                 pais.extend([f"5{suit}r", f"5{suit}", f"5{suit}", f"5{suit}"])
             else:
                 pais.extend([f"{i}{suit}"] * 4)

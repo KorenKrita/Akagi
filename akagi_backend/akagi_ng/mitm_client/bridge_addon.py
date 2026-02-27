@@ -15,10 +15,10 @@ from akagi_ng.bridge import (
 from akagi_ng.mitm_client.logger import logger
 from akagi_ng.schema.constants import Platform
 from akagi_ng.schema.notifications import NotificationCode
-from akagi_ng.schema.types import AkagiEvent
+from akagi_ng.schema.types import AkagiEvent, SystemEvent
 from akagi_ng.settings import local_settings
 
-# Mapping of platforms to URL patterns for detection
+# 平台与 URL 识别模式 Mapping
 PLATFORM_URL_PATTERNS = {
     Platform.MAJSOUL: ["majsoul", "maj-soul"],
     Platform.TENHOU: ["tenhou.net", "nodocchi"],
@@ -36,11 +36,17 @@ class BridgeAddon:
         # 存储活动的流及其对应的 Bridge
         self.activated_flows: list[str] = []
         self.bridges: dict[str, BaseBridge] = {}
-        self.last_activity: dict[str, float] = {}  # flow_id -> timestamp
+        self.last_activity: dict[str, float] = {}  # flow_id -> 最近活动时间戳
         self.bridge_lock = threading.Lock()
 
         # 连接状态跟踪
         self._active_connections = 0
+
+    def _enqueue_event(self, event: AkagiEvent):
+        try:
+            self.mjai_messages.put(event, block=False)
+        except queue.Full:
+            logger.warning(f"[MITM] MJAI message queue is full, dropping event: {event}")
 
     def _get_platform_for_flow(self, flow: mitmproxy.http.HTTPFlow) -> Platform | None:
         url = flow.request.url.lower()
@@ -142,10 +148,7 @@ class BridgeAddon:
 
             if msgs:
                 for m in msgs:
-                    try:
-                        self.mjai_messages.put(m, block=False)
-                    except queue.Full:
-                        logger.warning("[MITM] MJAI message queue is full, dropping message.")
+                    self._enqueue_event(m)
 
         except Exception:
             logger.exception("[MITM] Error parsing message")
@@ -157,7 +160,7 @@ class BridgeAddon:
 
         # 只在第一个连接建立时发送通知
         if is_first_connection:
-            self.mjai_messages.put({"type": "system_event", "code": NotificationCode.CLIENT_CONNECTED})
+            self._enqueue_event(SystemEvent(code=NotificationCode.CLIENT_CONNECTED))
             logger.info("[MITM] Client connected (first connection)")
 
     def websocket_end(self, flow: mitmproxy.http.HTTPFlow):
@@ -181,10 +184,8 @@ class BridgeAddon:
 
         # 只在所有连接都关闭时发送断线通知
         if all_connections_closed:
-            from akagi_ng.schema.notifications import NotificationCode
-
             code = NotificationCode.RETURN_LOBBY if game_ended else NotificationCode.GAME_DISCONNECTED
-            self.mjai_messages.put({"type": "system_event", "code": code})
+            self._enqueue_event(SystemEvent(code=code))
             logger.info(f"[MITM] All connections closed, sending {code}")
 
     def _cleanup_stale_bridges(self, max_age_seconds: int = 300):

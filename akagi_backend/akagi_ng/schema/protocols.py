@@ -55,10 +55,16 @@ class BotStatusContext(Protocol):
 
 
 class ActionCandidatesProtocol(Protocol):
+    can_discard: bool
+    can_riichi: bool
+    can_chi: bool
     can_chi_low: bool
     can_chi_mid: bool
     can_chi_high: bool
     can_pon: bool
+    can_kan: bool
+    can_ankan: bool
+    can_kakan: bool
     can_daiminkan: bool
     can_tsumo_agari: bool
     can_ron_agari: bool
@@ -70,6 +76,8 @@ class PlayerStateProtocol(Protocol):
     last_cans: ActionCandidatesProtocol
     tehai: Sequence[int]
     akas_in_hand: list[bool]
+    shanten: int
+    waits: list[int]
 
     def last_self_tsumo(self) -> str | None: ...
     def last_kawa_tile(self) -> str | None: ...
@@ -115,11 +123,34 @@ class EngineProtocol(Protocol):
 class BotProtocol(Protocol):
     """MJAI Bot 协议接口。"""
 
+    is_3p: bool
     status: BotStatusContext
 
     def react(self, event: MJAIEvent) -> MJAIResponse | None:
         """处理单个事件并返回响应。"""
         ...
+
+
+class StateTrackerProtocol(BotProtocol):
+    """状态追踪器协议接口。"""
+
+    player_state: PlayerStateProtocol | None
+    discardable_tiles_riichi_declaration: list[str]
+
+    @property
+    def last_self_tsumo(self) -> str | None: ...
+
+    @property
+    def last_kawa_tile(self) -> str | None: ...
+
+    @property
+    def self_riichi_accepted(self) -> bool: ...
+
+    @property
+    def can_tsumo_agari(self) -> bool: ...
+
+    @property
+    def tehai_mjai_with_aka(self) -> list[str]: ...
 
 
 class GameBridge(Protocol):
@@ -169,6 +200,8 @@ class ControllerProtocol(Protocol):
     负责管理 Bot 生命周期和事件分发。
     """
 
-    def react(self, event: AkagiEvent) -> MJAIResponse | None:
+    last_response: MJAIResponse | None
+
+    def react(self, event: AkagiEvent):
         """响应 MJAI 或 系统事件。"""
         ...

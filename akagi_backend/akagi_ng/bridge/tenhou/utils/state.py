@@ -5,7 +5,7 @@ from akagi_ng.bridge.tenhou.utils.decoder import Meld
 
 @dataclass
 class State:
-    """Tenhou Bridge State"""
+    """Tenhou 桥接状态。"""
 
     game_active: bool = False
     seat: int = 0

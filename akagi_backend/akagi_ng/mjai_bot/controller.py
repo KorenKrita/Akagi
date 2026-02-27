@@ -1,81 +1,73 @@
+from dataclasses import dataclass, field
+
 from akagi_ng.mjai_bot.logger import logger
 from akagi_ng.mjai_bot.status import BotStatusContext
 from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.protocols import BotProtocol
 from akagi_ng.schema.types import (
     AkagiEvent,
+    MJAIEventBase,
     MJAIResponse,
     StartGameEvent,
+    SystemEvent,
+    SystemShutdownEvent,
 )
 
 
+@dataclass
 class Controller:
-    def __init__(self, status: BotStatusContext | None = None):
-        self.bot: BotProtocol | None = None
-        self.status = status or BotStatusContext()
-        # Bot 将在收到第一个 start_game 事件时初始化
-        self.pending_start_game_event: StartGameEvent | None = None
+    status: BotStatusContext = field(default_factory=BotStatusContext)
+    bot: BotProtocol | None = None
+    pending_start_game_event: StartGameEvent | None = None  # Bot 将在收到第一个 start_game 事件时初始化
+    last_response: MJAIResponse | None = None  # 存储最近一次 Bot 的决策结果
 
-    def react(self, event: AkagiEvent) -> MJAIResponse | None:
+    def react(self, event: AkagiEvent):
         """
         处理来自 Bridge 的事件序列。
         """
         try:
-            # 清除本轮的通知标志
+            # 清除本轮的通知标志和响应结果
             self.status.clear_flags()
-            return self._handle_event(event)
+            self.last_response = None
+            self._handle_event(event)
 
         except Exception as e:
             logger.exception(f"Controller error: {e}")
-            return None
+            self.status.set_flag(NotificationCode.BOT_RUNTIME_ERROR)
 
-    def _handle_event(self, event: AkagiEvent) -> MJAIResponse | None:
+    def _handle_event(self, event: AkagiEvent):
         """分发单个事件并确保 Bot 已就绪"""
-        e_type = event["type"]
-
-        # 1. 拦截并处理特殊的管理事件
-        match e_type:
-            case "start_game":
-                return self._handle_start_game_event(event)
-            case "system_event":
-                return None
-            case _:
-                pass
-
-        # 2. 安全检查：如果从未收到过 start_game 或 bot 激活失败
-        if self.bot is None:
-            if e_type not in ("start_game", "start_kyoku"):
-                logger.error(f"Received event {e_type} before bot activation. Bot is not active.")
-            return None
+        match event:
+            # 1. 拦截并处理特殊的管理事件
+            case SystemEvent() | SystemShutdownEvent():
+                return
+            case StartGameEvent():
+                self._handle_start_game_event(event)
+                return
+            # 2. 安全检查：如果从未收到过 start_game 或 bot 激活失败，则报错
+            case MJAIEventBase():
+                if self.bot is None:
+                    logger.error(f"Received event {event.type} before bot activation. Bot is not active.")
+                    return
 
         # 3. 正常执行决策
         try:
-            result = self.bot.react(event)
-            match result:
-                case None | {"type": _}:
-                    logger.trace(f"<- {result}")
-                    return result
-                case _:
-                    logger.error(f"Bot returned invalid response type: {type(result)}")
-                    self.status.set_flag(NotificationCode.BOT_RUNTIME_ERROR)
-                    return None
+            self.last_response = self.bot.react(event)
+            if self.last_response:
+                logger.trace(f"<- {self.last_response}")
         except Exception as e:
             logger.exception(f"Error calling bot.react: {e}")
             self.status.set_flag(NotificationCode.BOT_RUNTIME_ERROR)
-            return None
 
-    def _handle_start_game_event(self, event: StartGameEvent) -> MJAIResponse | None:
+    def _handle_start_game_event(self, event: StartGameEvent):
         """处理 start_game 事件：重置状态并缓存上下文"""
         self.pending_start_game_event = event
-        # 重置当前 Bot
-        self.bot = None
-
-        # 模式信息（is_3p）现在是强制的，立即确定并激活 Bot
-        is_3p = event["is_3p"]
-        logger.info(f"StartGame event mode: is_3p={is_3p}. Activating bot immediately.")
+        is_3p = event.is_3p
+        logger.info(f"StartGame event mode: is_3p={is_3p}.")
         self._ensure_bot_activated(is_3p)
 
-        return None
+        if self.bot:
+            self.status.set_flag(NotificationCode.GAME_CONNECTED)
 
     def _ensure_bot_activated(self, is_3p: bool):
         """

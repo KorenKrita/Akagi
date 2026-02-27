@@ -32,7 +32,7 @@ class LiqiProto:
         self.last_heartbeat_time = 0.0
         self.res_type = {}
 
-        # Dynamic Protobuf setup
+        # 动态构建 Protobuf 描述池
         self.pool = _descriptor_pool.DescriptorPool()
 
         with open(get_assets_dir() / "liqi.json", encoding="utf-8") as f:
@@ -41,7 +41,7 @@ class LiqiProto:
         self._build_descriptors()
 
     def _build_descriptors(self):
-        """Build FileDescriptorProto from liqi.json and add to pool."""
+        """根据 liqi.json 构建 FileDescriptorProto 并注册到描述池。"""
         fd = _descriptor_pb2.FileDescriptorProto()
         fd.name = "protocol.proto"
         fd.package = "lq"
@@ -49,11 +49,11 @@ class LiqiProto:
 
         lq_data = self.jsonProto["nested"]["lq"]["nested"]
 
-        # Registry: full_name -> is_enum
+        # 类型注册表：full_name -> 是否为枚举
         type_info: dict[str, bool] = {}
         self._register_types(lq_data, ".lq", type_info)
 
-        # Root build
+        # 构建根级类型
         for name, obj in lq_data.items():
             self._build_type(fd, name, obj, type_info)
 
@@ -159,7 +159,7 @@ class LiqiProto:
             val.number = v_id
 
     def get_message_class(self, name: str) -> type[_message.Message] | None:
-        """Find specialized message class by name (e.g. 'ActionNewRound')."""
+        """按消息名查找动态生成的 Protobuf 消息类。"""
         try:
             desc = self.pool.FindMessageTypeByName(f"lq.{name}")
             return _message_factory.GetMessageClass(desc)
@@ -184,7 +184,7 @@ class LiqiProto:
         proto_obj = msg_cls.FromString(msg_block[1]["data"])
         dict_obj = MessageToDict(proto_obj, always_print_fields_with_no_presence=True)
 
-        # Handle Wrapper/ActionPrototype nested data
+        # 处理 Wrapper/ActionPrototype 的嵌套数据
         match dict_obj:
             case {"data": b64_data_str, "name": inner_name}:
                 inner_cls = self.get_message_class(inner_name)

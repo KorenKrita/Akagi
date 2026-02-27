@@ -31,10 +31,8 @@ class DataServer(threading.Thread):
         # 过滤空推荐以避免干扰
         if not recommendations_data.get("recommendations"):
             return
+        logger.debug(f"-> {recommendations_data}")
         self.broadcast_event("recommendations", recommendations_data)
-
-    def update_system_error(self, error_code: str, details: str = ""):
-        self.send_notifications([{"code": error_code, "msg": details}])
 
     def send_notifications(self, notifications: list[Notification]):
         """
@@ -43,6 +41,7 @@ class DataServer(threading.Thread):
         if not notifications:
             return
         data = {"list": notifications}
+        logger.debug(f"-> {data}")
         self.broadcast_event("notification", data)
 
     def stop(self):
@@ -66,7 +65,7 @@ class DataServer(threading.Thread):
         try:
             app = web.Application(middlewares=[cors_middleware])
 
-            # --- API / SSE ---
+            # --- API / SSE 路由 ---
             app.router.add_get("/sse", self.sse_manager.sse_handler)
             setup_routes(app)
 
@@ -79,7 +78,7 @@ class DataServer(threading.Thread):
             logger.info(f"DataServer listening on {self.host}:{self.external_port}")
             self.running = True
 
-            # Keep alive 任务由 SSEManager 管理，但需要 run_forever
+            # 保活任务由 SSEManager 管理，但事件循环仍需 run_forever
             self.loop.run_forever()
         except Exception as e:
             logger.error(f"DataServer runtime error: {e}")

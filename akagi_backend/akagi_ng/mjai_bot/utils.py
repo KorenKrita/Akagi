@@ -3,29 +3,6 @@ import numpy as np
 from akagi_ng.schema.constants import MahjongConstants
 from akagi_ng.schema.types import MJAIMetadata
 
-
-def decode_tile(tile: str) -> tuple[int, str]:
-    """
-    解码 MJAI 牌代码为 (数值, 类型)。
-    例如: "1m" -> (1, "m"), "5pr" -> (5, "p"), "E" -> (1, "z")
-    """
-    if not tile:
-        return 0, ""
-
-    # 字牌特殊处理
-    z_map = {"E": 1, "S": 2, "W": 3, "N": 4, "P": 5, "F": 6, "C": 7}
-    if tile in z_map:
-        return z_map[tile], "z"
-
-    # 数牌处理
-    try:
-        val_str = tile[0]
-        type_str = tile[1]
-        return int(val_str), type_str
-    except (ValueError, IndexError):
-        return 0, ""
-
-
 # fmt: off
 mask_unicode_4p = [
     *MahjongConstants.BASE_TILES,

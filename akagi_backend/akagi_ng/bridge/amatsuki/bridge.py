@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from enum import StrEnum
 from typing import Self
 
@@ -13,6 +14,7 @@ from akagi_ng.bridge.amatsuki.consts import (
 from akagi_ng.bridge.base import BaseBridge
 from akagi_ng.bridge.logger import logger
 from akagi_ng.schema.constants import MahjongConstants
+from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.types import AkagiEvent, MJAIEvent
 
 
@@ -34,19 +36,11 @@ class STOMP:
         self.subscription: str | None = None
         self.message_id: str | None = None
         self.content: str | None = None
+        self._cached_dict: dict | None = None
 
     def parse(self, content: bytes) -> Self:
-        """解析内容并返回 STOMP 对象。
-
-        Args:
-            content (bytes): 待解析的内容。
-
-        Returns:
-            STOMP: STOMP 对象。
-        """
         # 将字节转换为字符串
         content_str = content.decode("utf-8")
-        logger.debug(f"{content_str}")
         # 按换行符分割
         content_lines = content_str.split("\n")
         # 解析帧
@@ -68,33 +62,26 @@ class STOMP:
                     self.subscription = value
                 case "message-id":
                     self.message_id = value
-                case _:
-                    logger.warning(f"Unknown header: {key}")
 
         # 解析内容
         self.content = content_lines[-1] if content_lines else ""
         # 如果末尾是空字符则去除
         if self.content.endswith("\x00"):
             self.content = self.content[:-1]
+        self._cached_dict = None
         return self
 
     def content_dict(self) -> dict | None:
-        """以字典形式返回内容。
-
-        如果内容是 JSON，将转换为字典。
-        否则返回 None。
-
-        Returns:
-            dict: 内容字典。
-        """
-        try:
-            if self.content:
-                self.content.strip()
-                return json.loads(self.content)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON: {self.content}, Error: {e}")
+        """以字典形式返回内容（带缓存）。"""
+        if self._cached_dict is not None:
+            return self._cached_dict
+        if not self.content:
             return None
-        return None
+        try:
+            self._cached_dict = json.loads(self.content)
+            return self._cached_dict
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse JSON: {self.content}")
 
 
 class AmatsukiBridge(BaseBridge):
@@ -183,70 +170,65 @@ class AmatsukiBridge(BaseBridge):
         self.is_3p = False
         self.hand_ids = []
 
-    def parse(self, content: bytes) -> list[AkagiEvent] | None:
+    def parse(self, content: bytes) -> list[AkagiEvent]:
         """解析内容并返回 MJAI 指令。
 
         Args:
             content (bytes): 待解析的内容。
 
         Returns:
-            None | list[MJAIEvent]: MJAI 指令。
+            list[MJAIEvent]: MJAI 指令
         """
         try:
             stomp = STOMP().parse(content)
             if stomp.frame == STOMPFrame.MESSAGE:
                 logger.debug(f"Destination: {stomp.destination}")
+                logger.trace(f"<- {stomp.content_dict()}")
 
+                parsed = []
                 if handler := self.handlers.get(stomp.destination):
-                    return handler(stomp)
+                    parsed = handler(stomp)
+                else:
+                    for prefix, handler in self.prefix_handlers:
+                        if stomp.destination.startswith(prefix):
+                            parsed = handler(stomp)
+                            break
 
-                for prefix, handler in self.prefix_handlers:
-                    if stomp.destination.startswith(prefix):
-                        return handler(stomp)
-
-            return None
+                if parsed:
+                    logger.trace(f"-> {parsed}")
+                return parsed
+            return []
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode Amatsuki JSON: {e}")
+            return [self.make_system_event(NotificationCode.JSON_DECODE_ERROR)]
         except Exception as e:
             logger.error(f"Failed to parse STOMP message: {e}")
-            return None
+            return [self.make_system_event(NotificationCode.PARSE_ERROR)]
 
-    def _handle_join_desk_callback(self, stomp: STOMP):
+    def _handle_join_desk_callback(self, stomp: STOMP) -> list[MJAIEvent]:
         content_dict = stomp.content_dict()
-        if not self._validate_content(content_dict, stomp):
-            return
+        if content_dict is None:
+            return []
 
-        required_keys = ["status", "errorCode", "gameType", "gameMode", "roomType", "currentPlayerCount", "maxCount"]
-        if "gameType" in content_dict and content_dict["gameType"] != 0:
-            logger.warning(f"Unsupported gameType: {content_dict['gameType']}")
-            return
+        if content_dict.get("gameType") != 0:
+            logger.warning(f"Unsupported gameType: {content_dict.get('gameType')}")
+            return []
 
         match content_dict:
-            # 必须字段检查及状态码校验
-            case {
-                "status": 0,
-                "errorCode": 0,
-                "gameType": 0,
-                "gameMode": mode,
-                "deskId": desk_id,
-            } if all(k in content_dict for k in required_keys):
-                match mode:
-                    case 0:
-                        self.is_3p = False
-                    case 1:
-                        self.is_3p = True
-                    case _:
-                        logger.warning(f"Unsupported gameMode: {mode}")
-                        return
-
+            case {"status": 0, "errorCode": 0, "gameMode": mode, "deskId": desk_id}:
+                if mode not in (0, 1):
+                    logger.warning(f"Unsupported gameMode: {mode}")
+                    return []
+                self.is_3p = mode == 1
                 self.valid_flow = True
                 self.desk_id = desk_id
-
-            # 错误处理分支
             case {"status": s} if s != 0:
                 logger.warning(f"status: {s}")
             case {"errorCode": e} if e != 0:
                 logger.warning(f"errorCode: {e}")
             case _:
                 logger.error(f"Invalid content or missing keys: {stomp.content}")
+        return []
 
     def _parse_tehais(self, player_tiles: list[dict]) -> list[list[str]]:
         tehais = []
@@ -259,8 +241,7 @@ class AmatsukiBridge(BaseBridge):
                 logger.error("Invalid content: missing keys in player_tile['tehai']")
                 return []
             if player_tile["tehai"]["hand"][0]["id"] == -1:
-                tehai = ["?"] * MahjongConstants.TEHAI_SIZE
-                tehais.append(tehai)
+                tehais.append(["?"] * MahjongConstants.TEHAI_SIZE)
                 continue
             self.seat = idx
             for tile in player_tile["tehai"]["hand"]:
@@ -269,19 +250,17 @@ class AmatsukiBridge(BaseBridge):
         return tehais
 
     def _validate_round_start(self, stomp: STOMP) -> dict | None:
-        if not self.valid_flow:
-            return None
         content_dict = stomp.content_dict()
-        if not self._validate_content(content_dict, stomp):
+        if not self.valid_flow or content_dict is None:
             return None
-        if not {"bakaze", "honba", "isAllLast", "oya", "playerPoints", "playerTiles"} <= content_dict.keys():
+        if not {"bakaze", "honba", "oya", "playerPoints", "playerTiles"}.issubset(content_dict):
             logger.error(f"Invalid content: {stomp.content}")
             return None
         return content_dict
 
-    def _handle_round_start(self, stomp: STOMP) -> list[MJAIEvent] | None:
+    def _handle_round_start(self, stomp: STOMP) -> list[MJAIEvent]:
         if not (content_dict := self._validate_round_start(stomp)):
-            return None
+            return []
 
         bakaze: int = content_dict["bakaze"]
         honba: int = content_dict["honba"]
@@ -292,13 +271,13 @@ class AmatsukiBridge(BaseBridge):
 
         tehais = self._parse_tehais(content_dict["playerTiles"])
         if not tehais:
-            return None
+            return []
 
         if self.is_3p:
             tehais.append(["?"] * MahjongConstants.TEHAI_SIZE)
         if self.seat is None:
             logger.error("Seat not found")
-            return None
+            return []
 
         self.current_dora_count = 1
         self.last_discard_actor = None
@@ -318,41 +297,41 @@ class AmatsukiBridge(BaseBridge):
         if not self.game_started:
             self.game_started = True
             return [self.make_start_game(self.seat, is_3p=self.is_3p)]
-        return None
+        return []
 
-    def _handle_sync_dora(self, stomp: STOMP) -> list[MJAIEvent] | None:
-        if not self.valid_flow:
-            return None
+    def _handle_sync_dora(self, stomp: STOMP) -> list[MJAIEvent]:
         content_dict = stomp.content_dict()
-        if not self._validate_content(content_dict, stomp):
-            return None
-        if not {"dora", "honba", "reachCount"} <= content_dict.keys():
+        if not self.valid_flow or content_dict is None:
+            return []
+        if not {"dora", "honba", "reachCount"}.issubset(content_dict):
             logger.error(f"Invalid content: {stomp.content}")
-            return None
+            return []
 
         if self.temp_start_round:
-            temp_start_round = self.temp_start_round
+            cmd = self.temp_start_round
             self.temp_start_round = None
-            dora_hai = ID_TO_MJAI_PAI[content_dict["dora"][0]["id"]]
-            temp_start_round["dora_marker"] = dora_hai
-            temp_start_round["kyotaku"] = content_dict["reachCount"]
-            return [temp_start_round]
+            return [
+                replace(
+                    cmd,
+                    dora_marker=ID_TO_MJAI_PAI[content_dict["dora"][0]["id"]],
+                    kyotaku=content_dict["reachCount"],
+                )
+            ]
 
         if len(content_dict["dora"]) > self.current_dora_count:
             dora_hai = ID_TO_MJAI_PAI[content_dict["dora"][-1]["id"]]
             self.current_dora_count = len(content_dict["dora"])
             return [self.make_dora(dora_hai)]
-        return None
 
-    def _handle_draw(self, stomp: STOMP) -> list[MJAIEvent] | None:
-        if not self.valid_flow:
-            return None
+        return []
+
+    def _handle_draw(self, stomp: STOMP) -> list[MJAIEvent]:
         content_dict = stomp.content_dict()
-        if not self._validate_content(content_dict, stomp):
-            return None
-        if not {"hai", "position"} <= content_dict.keys():
+        if not self.valid_flow or content_dict is None:
+            return []
+        if not {"hai", "position"}.issubset(content_dict):
             logger.error(f"Invalid content: {stomp.content}")
-            return None
+            return []
 
         actor: int = content_dict["position"]
         pai: str = "?"
@@ -417,15 +396,13 @@ class AmatsukiBridge(BaseBridge):
             raise ValueError("nukidora is only available in 3P")
         return [self.make_nukidora(actor)]
 
-    def _handle_tehai_action(self, stomp: STOMP) -> list[MJAIEvent] | None:
-        if not self.valid_flow:
-            return None
+    def _handle_tehai_action(self, stomp: STOMP) -> list[MJAIEvent]:
         content_dict = stomp.content_dict()
-        if not self._validate_content(content_dict, stomp):
-            return None
-        if not {"action", "haiList", "isKiri", "isReachDisplay", "position"} <= content_dict.keys():
+        if not self.valid_flow or content_dict is None:
+            return []
+        if not {"action", "haiList", "isKiri", "position"}.issubset(content_dict):
             logger.error(f"Invalid content: {stomp.content}")
-            return None
+            return []
 
         action = content_dict["action"]
         actor: int = content_dict["position"]
@@ -442,7 +419,7 @@ class AmatsukiBridge(BaseBridge):
         if handler := handlers.get(action):
             return handler(content_dict, actor)
 
-        return None
+        return []
 
     def _extract_consumed_from_menzu(self, menzu_list: list[dict], actor: int) -> list[str]:
         consumed: list[str] = []
@@ -461,15 +438,13 @@ class AmatsukiBridge(BaseBridge):
 
         return consumed
 
-    def _handle_river_action(self, stomp: STOMP) -> list[MJAIEvent] | None:
-        if not self.valid_flow:
-            return None
+    def _handle_river_action(self, stomp: STOMP) -> list[MJAIEvent]:
         content_dict = stomp.content_dict()
-        if not self._validate_content(content_dict, stomp):
-            return None
-        if not {"action", "menzu", "position"} <= content_dict.keys():
+        if not self.valid_flow or content_dict is None:
+            return []
+        if not {"action", "menzu", "position"}.issubset(content_dict):
             logger.error(f"Invalid content: {stomp.content}")
-            return None
+            return []
 
         action = content_dict["action"]
         actor: int = content_dict["position"]
@@ -491,44 +466,26 @@ class AmatsukiBridge(BaseBridge):
             case AmatsukiAction.MINKAN:
                 ret.append(self.make_daiminkan(actor, target, pai, consumed))
             case _:
-                return None
+                return []
         return ret
 
-    def _handle_ron_action(self, stomp: STOMP) -> list[MJAIEvent] | None:
-        if not self.valid_flow:
-            return None
-        content_dict = stomp.content_dict()
-        if not self._validate_content(content_dict, stomp):
-            return None
-        if not {"agariInfo", "increaseAndDecrease", "isTsumo"} <= content_dict.keys():
-            logger.error(f"Invalid content: {stomp.content}")
-            return None
+    def _handle_ron_action(self, stomp: STOMP) -> list[MJAIEvent]:
+        if not self.valid_flow or stomp.content_dict() is None:
+            return []
         if self.temp_reach_accepted:
             self.temp_reach_accepted = None
         return [self.make_end_kyoku()]
 
-    def _handle_ryukyoku_action(self, stomp: STOMP) -> list[MJAIEvent] | None:
-        if not self.valid_flow:
-            return None
-        content_dict = stomp.content_dict()
-        if not self._validate_content(content_dict, stomp):
-            return None
+    def _handle_ryukyoku_action(self, stomp: STOMP) -> list[MJAIEvent]:
+        if not self.valid_flow or stomp.content_dict() is None:
+            return []
         if self.temp_reach_accepted:
             self.temp_reach_accepted = None
         return [self.make_end_kyoku()]
 
-    def _handle_game_end(self, stomp: STOMP) -> list[MJAIEvent] | None:
-        if not self.valid_flow:
-            return None
-        content_dict = stomp.content_dict()
-        if not self._validate_content(content_dict, stomp):
-            return None
+    def _handle_game_end(self, stomp: STOMP) -> list[MJAIEvent]:
+        if not self.valid_flow or stomp.content_dict() is None:
+            return []
         if self.temp_reach_accepted:
             self.temp_reach_accepted = None
         return [self.make_end_game()]
-
-    def _validate_content(self, content_dict: dict | None, stomp: STOMP) -> bool:
-        if content_dict is None:
-            logger.error(f"Invalid content: {stomp.content}")
-            return False
-        return True

@@ -1,8 +1,10 @@
+import importlib
 import queue
 import signal
 import threading
 from types import FrameType
 
+from akagi_ng import AKAGI_VERSION
 from akagi_ng.core import (
     AppContext,
     configure_logging,
@@ -12,19 +14,23 @@ from akagi_ng.core import (
 )
 from akagi_ng.dataserver import DataServer
 from akagi_ng.dataserver.adapter import build_dataserver_payload
+from akagi_ng.electron_client import create_electron_client
 from akagi_ng.mitm_client import MitmClient
 from akagi_ng.mjai_bot import Controller, StateTracker
 from akagi_ng.mjai_bot.status import BotStatusContext
 from akagi_ng.schema.constants import ServerConstants
 from akagi_ng.schema.protocols import (
-    BotProtocol,
     ControllerProtocol,
+    StateTrackerProtocol,
 )
 from akagi_ng.schema.types import (
     AkagiEvent,
+    MJAIEventBase,
     MJAIResponse,
     Notification,
     ProcessResult,
+    SystemEvent,
+    SystemShutdownEvent,
 )
 from akagi_ng.settings import local_settings as loaded_settings
 
@@ -40,11 +46,6 @@ class AkagiApp:
         self.message_queue: queue.Queue[AkagiEvent] = queue.Queue(maxsize=ServerConstants.MESSAGE_QUEUE_MAXSIZE)
 
     def initialize(self):
-        import importlib
-
-        from akagi_ng import AKAGI_VERSION
-        from akagi_ng.electron_client import create_electron_client
-
         logger.info(f"Starting Akagi-NG {AKAGI_VERSION}...")
 
         settings = loaded_settings
@@ -56,22 +57,22 @@ class AkagiApp:
         target_host = "127.0.0.1" if host == "0.0.0.0" else host
         self.frontend_url = f"http://{target_host}:{port}/"
 
-        mjai_bot: StateTracker | None = None
-        mjai_controller: Controller | None = None
+        tracker: StateTracker | None = None
+        controller: Controller | None = None
         try:
             importlib.import_module("akagi_ng.core.lib_loader")
             status = BotStatusContext()
             self.status = status
-            mjai_controller = Controller(status=status)
-            mjai_bot = StateTracker(status=status)
+            controller = Controller(status=status)
+            tracker = StateTracker(status=status)
             logger.info("Bot components loaded successfully.")
         except ImportError:
             logger.exception("Failed to load bot components or native library")
 
         app_context = AppContext(
             settings=settings,
-            controller=mjai_controller,
-            bot=mjai_bot,
+            controller=controller,
+            state_tracker=tracker,
             mitm_client=MitmClient(shared_queue=self.message_queue),
             electron_client=create_electron_client(settings.platform, shared_queue=self.message_queue),
             shared_queue=self.message_queue,
@@ -111,32 +112,37 @@ class AkagiApp:
     def stop(self):
         self._stop_event.set()
 
-    def _handle_message_logic(
-        self, msg: AkagiEvent, bot: BotProtocol | None, controller: ControllerProtocol | None
-    ) -> tuple[MJAIResponse | None, Notification | None, bool]:
+    def _handle_message(
+        self, msg: AkagiEvent, tracker: StateTrackerProtocol | None, controller: ControllerProtocol | None
+    ) -> tuple[str | None, bool, bool]:
         """统一处理消息分发的 match-case 逻辑。
 
         Returns:
-            (response, notification, handled)
+            (notification, handled, is_sync)
         """
         match msg:
             # 1. 纯系统级别的管理事件 (不流向 Game Logic)
-            case {"type": "system_shutdown"}:
+            case SystemShutdownEvent():
                 logger.info("Received shutdown signal.")
                 self.stop()
-                return None, None, True
-            case {"type": "system_event", "code": code}:
-                return None, {"code": code}, True
+                return None, True, False
+            case SystemEvent(code=code):
+                return code, True, False
 
             # 2. 属于 Game Logic / MJAI 范畴的协议事件
+            case MJAIEventBase(sync=is_sync):
+                pass
             case _:
-                resp = controller.react(msg) if controller else None
-                if bot:
-                    bot.react(msg)
-                return resp, None, False
+                is_sync = False
+
+        if controller:
+            controller.react(msg)
+        if tracker:
+            tracker.react(msg)
+        return None, False, is_sync
 
     def _process_event(
-        self, msg: AkagiEvent, bot: BotProtocol | None, controller: ControllerProtocol | None
+        self, msg: AkagiEvent, tracker: StateTrackerProtocol | None, controller: ControllerProtocol | None
     ) -> ProcessResult:
         """
         处理单条 MJAI 消息
@@ -144,17 +150,21 @@ class AkagiApp:
         """
         response: MJAIResponse | None = None
         notifications: list[Notification] = []
+        is_sync = False
 
         try:
-            resp, sys_notif, handled = self._handle_message_logic(msg, bot, controller)
-            if resp:
-                response = resp
+            sys_notif, handled, is_sync = self._handle_message(msg, tracker, controller)
+
+            # 收集结果：决策响应（从 Controller 拉取）
+            if controller and not handled:
+                response = controller.last_response
+
             if sys_notif:
-                notifications.append(sys_notif)
+                notifications.append({"code": sys_notif})
 
             # 每一条消息处理后，统一从 Context 中采集当前累积的标志
             if not handled and self.status and self.status.flags:
-                notifications.extend({"code": k} for k, v in self.status.flags.items() if v)
+                notifications.extend({"code": code} for code in self.status.flags)
                 self.status.clear_flags()
 
         except Exception:
@@ -163,22 +173,22 @@ class AkagiApp:
         return ProcessResult(
             response=response,
             notifications=notifications,
-            is_sync=msg.get("sync", False),
+            is_sync=is_sync,
         )
 
-    def _emit_outputs(self, result: ProcessResult, bot: BotProtocol | None):
+    def _emit_outputs(self, result: ProcessResult, tracker: StateTrackerProtocol | None):
         """
         将处理结果发送到 DataServer
         这是 Reactor 模式的 OUTPUT 阶段
         """
-        response = result["response"] or MJAIResponse(type="none")
-        payload = build_dataserver_payload(response, bot)
+        response = result.response or MJAIResponse(type="none")
+        payload = build_dataserver_payload(response, tracker)
 
-        if notifications := result["notifications"]:
+        if notifications := result.notifications:
             self.ds.send_notifications(notifications)
 
         # 同步期间屏蔽推荐输出，仅保留通知
-        if payload and not result["is_sync"]:
+        if payload and not result.is_sync:
             self.ds.send_recommendations(payload)
 
     def run(self) -> int:
@@ -194,7 +204,7 @@ class AkagiApp:
         logger.info("Starting main loop...")
         # 捕获引用以减少全局上下文访问
         app = get_app_context()
-        bot = app.bot
+        tracker = app.state_tracker
         controller = app.controller
 
         try:
@@ -207,10 +217,10 @@ class AkagiApp:
 
                 try:
                     # 阶段 2：PROCESS - 处理事件
-                    result = self._process_event(msg, bot, controller)
+                    result = self._process_event(msg, tracker, controller)
 
                     # 阶段 3：OUTPUT - 分发结果
-                    self._emit_outputs(result, bot)
+                    self._emit_outputs(result, tracker)
 
                 except Exception as e:
                     logger.exception(f"Critical error in main loop dispatch: {e}")

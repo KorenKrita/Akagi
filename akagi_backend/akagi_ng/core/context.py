@@ -2,10 +2,10 @@ import queue
 from dataclasses import dataclass
 
 from akagi_ng.schema.protocols import (
-    BotProtocol,
     ControllerProtocol,
     ElectronClientProtocol,
     MessageSource,
+    StateTrackerProtocol,
 )
 from akagi_ng.schema.types import AkagiEvent
 from akagi_ng.settings import Settings
@@ -13,27 +13,22 @@ from akagi_ng.settings import Settings
 
 @dataclass
 class AppContext:
-    """Application context containing all core components."""
+    """应用上下文，聚合核心组件。"""
 
     settings: Settings
     shared_queue: queue.Queue[AkagiEvent]
     controller: ControllerProtocol | None
-    bot: BotProtocol | None
+    state_tracker: StateTrackerProtocol | None
     mitm_client: MessageSource | None
     electron_client: ElectronClientProtocol | None = None
 
 
-# Global variable for application context (shared across threads)
+# 全局应用上下文（跨线程共享）
 _app_context: AppContext | None = None
 
 
 def get_app_context() -> AppContext:
-    """
-    Get the current application context.
-
-    Raises:
-        RuntimeError: If context has not been initialized
-    """
+    """获取当前应用上下文。"""
     global _app_context
     if _app_context is None:
         raise RuntimeError("Application context not initialized. Call set_app_context() first.")
@@ -41,6 +36,6 @@ def get_app_context() -> AppContext:
 
 
 def set_app_context(context: AppContext):
-    """Set the application context."""
+    """设置应用上下文。"""
     global _app_context
     _app_context = context

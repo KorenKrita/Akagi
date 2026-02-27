@@ -1,5 +1,6 @@
 import json
 import re
+from dataclasses import replace
 
 from akagi_ng.bridge.base import BaseBridge
 from akagi_ng.bridge.logger import logger
@@ -13,6 +14,7 @@ from akagi_ng.bridge.tenhou.utils.decoder import Meld, MeldType, parse_sc_tag
 from akagi_ng.bridge.tenhou.utils.judrdy import isrh
 from akagi_ng.bridge.tenhou.utils.state import State
 from akagi_ng.schema.constants import MahjongConstants
+from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.types import AkagiEvent, MJAIEvent, RyukyokuEvent
 
 
@@ -36,39 +38,49 @@ class TenhouBridge(BaseBridge):
     def reset(self):
         self.state = State()
 
-    def parse(self, content: bytes) -> list[AkagiEvent] | None:
-        """
-        解析 Tenhou 消息并返回 MJAI 指令。
-        """
-        if not (message := self._decode_message(content)):
-            return None
+    def parse(self, content: bytes) -> list[AkagiEvent]:
+        """解析内容并返回 MJAI 指令。
 
-        return self._dispatch_message(message)
+        Args:
+            content (bytes): 待解析的内容。
+
+        Returns:
+            list[AkagiEvent]: MJAI 指令
+        """
+        try:
+            message = self._decode_message(content)
+            if not message:
+                return []
+
+            logger.trace(f"<- {message}")
+            parsed = self._dispatch_message(message)
+
+            if parsed:
+                logger.trace(f"-> {parsed}")
+            return parsed
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding Tenhou JSON: {e}")
+            return [self.make_system_event(NotificationCode.JSON_DECODE_ERROR)]
+        except Exception as e:
+            logger.error(f"Error parsing Tenhou message: {e}")
+            return [self.make_system_event(NotificationCode.PARSE_ERROR)]
 
     def _decode_message(self, content: bytes) -> dict | None:
         if content == b"<Z/>":
-            # Heartbeat
             return None
         try:
-            match json.loads(content):
-                case dict() as message:
-                    return message
-                case _:
-                    raise ValueError("JSON is not a dictionary")
+            return json.loads(content)
         except json.JSONDecodeError:
-            logger.warning(f"Failed to decode JSON: {content}")
-            return None
-        except ValueError:
-            logger.warning(f"Invalid JSON: {content}")
-            return None
+            logger.error(f"Failed to decode JSON: {content}")
+            raise
 
-    def _dispatch_message(self, message: dict) -> list[MJAIEvent] | None:
+    def _dispatch_message(self, message: dict) -> list[MJAIEvent]:
         if "owari" in message:
             return self._convert_end_game()
 
         tag = message.get("tag")
         if not tag:
-            return None
+            return []
 
         if handler := self.handlers.get(tag):
             return handler(message)
@@ -79,45 +91,45 @@ class TenhouBridge(BaseBridge):
             case _ if re.match(r"^[DEFGdefg]\d*$", tag):
                 return self._convert_dahai(message)
             case _:
-                return None
+                return []
 
-    def _dispatch_reach(self, message: dict) -> list[MJAIEvent] | None:
+    def _dispatch_reach(self, message: dict) -> list[MJAIEvent]:
         step = message.get("step")
         if step == "1":
             return self._convert_reach(message)
         if step == "2":
             return self._convert_reach_accepted(message)
-        return None
+        return []
 
-    def _dispatch_n(self, message: dict) -> list[MJAIEvent] | None:
+    def _dispatch_n(self, message: dict) -> list[MJAIEvent]:
         if "m" in message:
             return self._convert_meld(message)
-        return None
+        return []
 
-    def _convert_helo(self, _message: dict) -> list[MJAIEvent] | None:
+    def _convert_helo(self, _message: dict) -> list[MJAIEvent]:
         if self.state.game_active:
             logger.info("[Tenhou] Session re-initialized via HELO while game active. Sending end_game.")
             msgs = [self.make_end_game()]
             self.reset()
             return msgs
-        return None
+        return []
 
-    def _convert_rejoin(self, _message: dict) -> list[MJAIEvent] | None:
-        return None
+    def _convert_rejoin(self, _message: dict) -> list[MJAIEvent]:
+        return []
 
-    def _convert_un(self, message: dict) -> list[MJAIEvent] | None:
-        # Robust 3P detection: count non-empty names among n0, n1, n2, n3.
-        # In 3P, one of these will be missing or empty strings.
+    def _convert_un(self, message: dict) -> list[MJAIEvent]:
+        # 稳健的三麻检测：统计 n0~n3 中非空昵称数量。
+        # 三麻模式下四个位置会有一个为空。
         names = [message.get(f"n{i}", "") for i in range(4)]
         player_count = len([n for n in names if n])
         self.state.is_3p = player_count == MahjongConstants.SEATS_3P
         logger.debug(f"[Tenhou] UN tag: player_count={player_count}, is_3p={self.state.is_3p}")
-        return None
+        return []
 
-    def _convert_start_game(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_start_game(self, message: dict) -> list[MJAIEvent]:
         self.state.game_active = True
-        # oya in TAIKYOKU is the dealer's absolute seat.
-        # Legacy logic maps dealer to actor 0 by setting our seat to (4 - oya) % 4.
+        # TAIKYOKU 的 oya 是庄家绝对座位号。
+        # 兼容旧逻辑：通过 (4 - oya) % 4 将庄家映射到 actor 0。
         self.state.seat = (MahjongConstants.SEATS_4P - int(message["oya"])) % MahjongConstants.SEATS_4P
         msg = (
             f"[Tenhou] Game started. {'3P' if self.state.is_3p else '4P'} mode. "
@@ -126,7 +138,7 @@ class TenhouBridge(BaseBridge):
         logger.info(msg)
         return [self.make_start_game(self.state.seat, is_3p=self.state.is_3p)]
 
-    def _convert_start_kyoku(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_start_kyoku(self, message: dict) -> list[MJAIEvent]:
         self.state.hand = [int(s) for s in message["hai"].split(",")]
         self.state.in_riichi = False
         self.state.live_wall = 70
@@ -167,21 +179,21 @@ class TenhouBridge(BaseBridge):
             )
         ]
 
-    def _convert_tsumo(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_tsumo(self, message: dict) -> list[MJAIEvent]:
         self.state.live_wall -= 1
 
         tag = message["tag"]
         rel_seat = ord(tag[0]) - ord("T")
 
-        # In 3P mode, 'W' is not a player
+        # 三麻模式下 'W' 不是有效玩家位
         if self.state.is_3p and rel_seat >= MahjongConstants.SEATS_3P:
-            return None
+            return []
 
         actor = self.rel_to_abs(rel_seat)
         mjai_messages: list[MJAIEvent] = [self.make_tsumo(actor, "?")]
 
         if actor == self.state.seat:
-            # Handle potential tile index in tag (for non-JSON protocols) OR in 'p' field
+            # 牌索引可能在 tag（非 JSON 协议）或 p 字段中
             index_str = tag[1:]
             if index_str:
                 index = int(index_str)
@@ -191,13 +203,13 @@ class TenhouBridge(BaseBridge):
                 logger.warning(f"[Tenhou] Self tsumo tag '{tag}' missing index")
                 return mjai_messages
 
-            mjai_messages[0]["pai"] = tenhou_to_mjai_one(index)
+            mjai_messages[0] = replace(mjai_messages[0], pai=tenhou_to_mjai_one(index))
             self.state.hand.append(index)
             self.state.is_tsumo = True
             return mjai_messages
         return mjai_messages
 
-    def _convert_dahai(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_dahai(self, message: dict) -> list[MJAIEvent]:
         tag = message["tag"]
         rel_seat = ord(str.upper(tag[0])) - ord("D")
         actor = self.rel_to_abs(rel_seat)
@@ -207,13 +219,13 @@ class TenhouBridge(BaseBridge):
         elif len(tag) > 1:
             index = int(tag[1:])
         else:
-            # Fallback for tsumogiri if index is missing (should not happen in JSON)
+            # 兜底：索引缺失时按摸切处理（JSON 协议正常不会发生）
             index = self.state.hand[-1] if actor == self.state.seat and self.state.hand else -1
 
         pai = tenhou_to_mjai_one(index) if index != -1 else "?"
 
-        # Tenhou JSON: uppercase letter means discard (and might be tsumogiri),
-        # lowercase letter means tsumogiri? Actually legacy uses isupper check.
+        # Tenhou JSON 中，首字母大小写用于区分出牌语义；
+        # 这里保持旧逻辑，统一使用 isupper 判断。
         tsumogiri = (
             str.isupper(tag[0])
             if actor != self.state.seat
@@ -232,7 +244,7 @@ class TenhouBridge(BaseBridge):
 
         return mjai_messages
 
-    def _convert_meld(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_meld(self, message: dict) -> list[MJAIEvent]:
         actor = self.rel_to_abs(int(message["who"]))
         m = int(message["m"])
         if (m & TenhouConstants.BIT_MASK_M) == TenhouConstants.BIT_NUKIDORA:
@@ -286,19 +298,16 @@ class TenhouBridge(BaseBridge):
             else:
                 logger.warning(f"[Tenhou] Tile {i} in meld {meld.meld_type} not found in hand")
 
-    def _convert_reach(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_reach(self, message: dict) -> list[MJAIEvent]:
         actor = self.rel_to_abs(int(message["who"]))
-        mjai_messages: list[MJAIEvent] = [self.make_reach(actor)]
+        return [self.make_reach(actor)]
 
-        if actor == self.state.seat:
-            return mjai_messages
-        return mjai_messages
-
-    def _convert_reach_accepted(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_reach_accepted(self, message: dict) -> list[MJAIEvent]:
         actor = self.rel_to_abs(int(message["who"]))
         if actor == self.state.seat:
             self.state.in_riichi = True
-            self.state.wait = isrh(to_34_array(self.state.hand))
+            waiting_indices = isrh(to_34_array(self.state.hand))
+            self.state.wait = [MahjongConstants.BASE_TILES[i] for i in sorted(waiting_indices)]
 
         deltas = [0] * 4
         deltas[actor] = -1000
@@ -310,34 +319,31 @@ class TenhouBridge(BaseBridge):
 
         return [self.make_reach_accepted(actor, deltas, scores)]
 
-    def _convert_dora(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_dora(self, message: dict) -> list[MJAIEvent]:
         hai = int(message["hai"])
         dora_marker = tenhou_to_mjai_one(hai)
         return [self.make_dora(dora_marker)]
 
-    def _convert_hora(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_hora(self, message: dict) -> list[MJAIEvent]:
         self.state.is_new_round = False
-        # Rotate scores accordingly
+        # 按相对座位旋转分数
         raw_scores = parse_sc_tag(message)
         scores = [0] * 4
         for i in range(min(len(raw_scores), 4)):
             scores[self.rel_to_abs(i)] = raw_scores[i]
         return [self.make_end_kyoku()]
 
-    def _convert_ryukyoku(self, message: dict) -> list[MJAIEvent] | None:
+    def _convert_ryukyoku(self, message: dict) -> list[MJAIEvent]:
         raw_scores = parse_sc_tag(message)
         scores = [0] * 4
         for i in range(min(len(raw_scores), 4)):
             scores[self.rel_to_abs(i)] = raw_scores[i]
-        ryukyoku_event: RyukyokuEvent = {"type": "ryukyoku", "scores": scores}
+        ryukyoku_event = RyukyokuEvent(scores=scores)
         return [ryukyoku_event, self.make_end_kyoku()]
 
-    def _convert_end_game(self) -> list[MJAIEvent] | None:
+    def _convert_end_game(self) -> list[MJAIEvent]:
         self.state.game_active = False
         return [self.make_end_game()]
 
     def rel_to_abs(self, rel: int) -> int:
         return (rel + self.state.seat) % MahjongConstants.SEATS_4P
-
-    def abs_to_rel(self, abs_seat: int) -> int:
-        return (abs_seat - self.state.seat) % MahjongConstants.SEATS_4P

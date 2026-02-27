@@ -23,9 +23,7 @@ class MitmClient:
         self.shared_queue = shared_queue
 
     async def _start_proxy(self, host: str, port: int, upstream: str = ""):
-        """
-        Async task to start the proxy.
-        """
+        """启动代理服务的异步任务。"""
         opts = options.Options(listen_host=host, listen_port=port)
         if upstream:
             if upstream.startswith(("http://", "https://")):
@@ -43,20 +41,19 @@ class MitmClient:
 
         try:
             await self._master.run()
-        except Exception as e:
-            logger.error(f"MITM proxy error: {e}")
+        except Exception:
+            logger.exception("MITM proxy error")
         finally:
             logger.info("MITM proxy server stopped")
 
     def _run_in_thread(self, host: str, port: int, upstream: str = ""):
-        """
-        Thread target to run the asyncio loop.
-        """
+        """线程入口：运行独立 asyncio 事件循环。"""
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._start_proxy(host, port, upstream))
         finally:
+            self.running = False
             with contextlib.suppress(Exception):
                 pending = asyncio.all_tasks(self._loop)
                 if pending:

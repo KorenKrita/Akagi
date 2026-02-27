@@ -9,14 +9,7 @@ from akagi_ng.schema.types import AkagiEvent
 
 def create_electron_client(platform: Platform, shared_queue: queue.Queue[AkagiEvent]) -> BaseElectronClient | None:
     """
-    Factory function to create the appropriate ElectronClient based on the platform.
-
-    This allows for platform-specific handling of message ingestion from Electron,
-    such as decoding binary protocols (Majsoul) or parsing text protocols (Tenhou).
-
-    Args:
-        platform: The game platform
-        shared_queue: Shared queue for event-driven mode
+    按平台创建对应的 ElectronClient。
     """
     if platform == Platform.MAJSOUL:
         return MajsoulElectronClient(shared_queue=shared_queue)
@@ -24,11 +17,11 @@ def create_electron_client(platform: Platform, shared_queue: queue.Queue[AkagiEv
     if platform == Platform.TENHOU:
         return TenhouElectronClient(shared_queue=shared_queue)
 
-    # In AUTO mode, for now we default to Majsoul as it is the most common use case
+    # AUTO 模式默认走雀魂客户端
     if platform == Platform.AUTO:
         return MajsoulElectronClient(shared_queue=shared_queue)
 
-    # Generic or other platforms might return None if they only support MITM mode
+    # 其他平台仅支持 MITM，因此返回 None
     return None
 
 

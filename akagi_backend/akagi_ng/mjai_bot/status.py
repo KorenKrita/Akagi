@@ -1,3 +1,5 @@
+from dataclasses import dataclass, field
+
 from akagi_ng.schema.types import (
     EngineAdditionalMeta,
     EngineAdditionalMetaKey,
@@ -7,6 +9,7 @@ from akagi_ng.schema.types import (
 )
 
 
+@dataclass
 class BotStatusContext:
     """
     Bot 状态上下文。
@@ -14,13 +17,15 @@ class BotStatusContext:
     避免层层传递和聚合。
     """
 
-    def __init__(self):
-        self._flags: NotificationFlags = {}
-        self._metadata: EngineAdditionalMeta = {}
+    _flags: NotificationFlags = field(default_factory=set)
+    _metadata: EngineAdditionalMeta = field(default_factory=dict)
 
     def set_flag(self, key: NotificationFlagKey, value: bool = True):
         """设置通知标志位"""
-        self._flags[key] = value
+        if value:
+            self._flags.add(key)
+        else:
+            self._flags.discard(key)
 
     def update_flags(self, flags: NotificationFlags):
         """批量更新标志位"""

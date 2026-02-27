@@ -1,4 +1,3 @@
-from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.types import (
     AkagiEvent,
     AnkanEvent,
@@ -16,6 +15,7 @@ from akagi_ng.schema.types import (
     StartGameEvent,
     StartKyokuEvent,
     SystemEvent,
+    SystemEventCode,
     TsumoEvent,
 )
 
@@ -37,7 +37,7 @@ class BaseBridge:
         """
         pass
 
-    def parse(self, content: bytes) -> None | list[AkagiEvent]:
+    def parse(self, content: bytes) -> list[AkagiEvent]:
         """
         解析平台消息并返回 MJAI 指令列表。
 
@@ -45,7 +45,7 @@ class BaseBridge:
             content: 平台原始消息内容
 
         Returns:
-            MJAI 格式消息列表，或 None（如果无法解析/无需返回）
+            list[AkagiEvent]: MJAI 指令
         """
         raise NotImplementedError
 
@@ -53,7 +53,7 @@ class BaseBridge:
 
     def make_start_game(self, seat: int, is_3p: bool) -> StartGameEvent:
         """构建 start_game（游戏开始）消息"""
-        return {"type": "start_game", "id": seat, "is_3p": is_3p}
+        return StartGameEvent(id=seat, is_3p=is_3p)
 
     def make_start_kyoku(  # noqa: PLR0913
         self,
@@ -67,81 +67,71 @@ class BaseBridge:
         tehais: list[list[str]],
     ) -> StartKyokuEvent:
         """构建 start_kyoku（本局开始）消息"""
-        msg: StartKyokuEvent = {
-            "type": "start_kyoku",
-            "bakaze": bakaze,
-            "dora_marker": dora_marker,
-            "kyoku": kyoku,
-            "honba": honba,
-            "kyotaku": kyotaku,
-            "oya": oya,
-            "scores": scores,
-            "tehais": tehais,
-        }
-        return msg
+        return StartKyokuEvent(
+            bakaze=bakaze,
+            dora_marker=dora_marker,
+            kyoku=kyoku,
+            honba=honba,
+            kyotaku=kyotaku,
+            oya=oya,
+            scores=scores,
+            tehais=tehais,
+        )
 
     def make_tsumo(self, actor: int, pai: str) -> TsumoEvent:
         """构建 tsumo（摸牌）消息"""
-        return {"type": "tsumo", "actor": actor, "pai": pai}
+        return TsumoEvent(actor=actor, pai=pai)
 
     def make_dahai(self, actor: int, pai: str, tsumogiri: bool) -> DahaiEvent:
         """构建 dahai（弃牌）消息"""
-        return {"type": "dahai", "actor": actor, "pai": pai, "tsumogiri": tsumogiri}
+        return DahaiEvent(actor=actor, pai=pai, tsumogiri=tsumogiri)
 
     def make_chi(self, actor: int, target: int, pai: str, consumed: list[str]) -> ChiEvent:
         """构建 chi（吃）消息"""
-        return {"type": "chi", "actor": actor, "target": target, "pai": pai, "consumed": consumed}
+        return ChiEvent(actor=actor, target=target, pai=pai, consumed=consumed)
 
     def make_pon(self, actor: int, target: int, pai: str, consumed: list[str]) -> PonEvent:
         """构建 pon（碰）消息"""
-        return {"type": "pon", "actor": actor, "target": target, "pai": pai, "consumed": consumed}
+        return PonEvent(actor=actor, target=target, pai=pai, consumed=consumed)
 
     def make_daiminkan(self, actor: int, target: int, pai: str, consumed: list[str]) -> DaiminkanEvent:
         """构建 daiminkan（大明杠）消息"""
-        return {"type": "daiminkan", "actor": actor, "target": target, "pai": pai, "consumed": consumed}
+        return DaiminkanEvent(actor=actor, target=target, pai=pai, consumed=consumed)
 
     def make_ankan(self, actor: int, consumed: list[str]) -> AnkanEvent:
         """构建 ankan（暗杠）消息"""
-        return {"type": "ankan", "actor": actor, "consumed": consumed}
+        return AnkanEvent(actor=actor, consumed=consumed)
 
     def make_kakan(self, actor: int, pai: str, consumed: list[str]) -> KakanEvent:
         """构建 kakan（加杠）消息"""
-        return {"type": "kakan", "actor": actor, "pai": pai, "consumed": consumed}
+        return KakanEvent(actor=actor, pai=pai, consumed=consumed)
 
     def make_reach(self, actor: int) -> ReachEvent:
         """构建 reach（立直宣言）消息"""
-        return {"type": "reach", "actor": actor}
+        return ReachEvent(actor=actor)
 
     def make_reach_accepted(
         self, actor: int, deltas: list[int] | None = None, scores: list[int] | None = None
     ) -> ReachAcceptedEvent:
         """构建 reach_accepted（立直确认）消息"""
-        msg: ReachAcceptedEvent = {"type": "reach_accepted", "actor": actor}
-        if deltas is not None:
-            msg["deltas"] = deltas
-        if scores is not None:
-            msg["scores"] = scores
-        return msg
+        return ReachAcceptedEvent(actor=actor, deltas=deltas, scores=scores)
 
     def make_dora(self, dora_marker: str) -> DoraEvent:
         """构建 dora（新宝牌）消息"""
-        return {"type": "dora", "dora_marker": dora_marker}
+        return DoraEvent(dora_marker=dora_marker)
 
     def make_nukidora(self, actor: int) -> NukidoraEvent:
         """构建 nukidora（拔北）消息"""
-        return {"type": "nukidora", "actor": actor, "pai": "N"}
+        return NukidoraEvent(actor=actor, pai="N")
 
     def make_end_kyoku(self) -> EndKyokuEvent:
         """构建 end_kyoku（本局结束）消息"""
-        return {"type": "end_kyoku"}
+        return EndKyokuEvent()
 
     def make_end_game(self) -> EndGameEvent:
         """构建 end_game（游戏结束）消息"""
-        return {"type": "end_game"}
+        return EndGameEvent()
 
-    def make_system_event(self, code: str | NotificationCode, msg: str | None = None) -> SystemEvent:
+    def make_system_event(self, code: SystemEventCode) -> SystemEvent:
         """构建 system_event（系统消息）"""
-        event: SystemEvent = {"type": "system_event", "code": code}
-        if msg is not None:
-            event["msg"] = msg
-        return event
+        return SystemEvent(code=code)

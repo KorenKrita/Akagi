@@ -1,13 +1,21 @@
 import json
+import queue
 from collections.abc import Callable
 
 from aiohttp import web
 
-from akagi_ng.core import configure_logging
+from akagi_ng.core import configure_logging, get_app_context
 from akagi_ng.core.paths import get_models_dir
 from akagi_ng.dataserver.logger import logger
 from akagi_ng.mjai_bot.engine import clear_resource_cache
-from akagi_ng.schema.types import SystemShutdownEvent
+from akagi_ng.schema.types import (
+    DebuggerDetachedMessage,
+    LiqiDefinitionMessage,
+    SystemShutdownEvent,
+    WebSocketClosedMessage,
+    WebSocketCreatedMessage,
+    WebSocketFrameMessage,
+)
 from akagi_ng.settings import (
     get_default_settings_dict,
     get_settings_dict,
@@ -15,8 +23,8 @@ from akagi_ng.settings import (
     verify_settings,
 )
 
-# CORS Headers configuration
-# For Electron desktop app, restrict to localhost origins
+# CORS 响应头配置
+# 桌面端仅允许本机来源访问
 CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
@@ -24,23 +32,23 @@ CORS_HEADERS = {
 
 
 def _is_allowed_origin(origin: str | None) -> bool:
-    """Check if origin is from localhost/127.0.0.1"""
+    """检查来源是否为 localhost/127.0.0.1。"""
     if not origin:
-        return True  # Allow requests without Origin header (e.g., EventSource from local)
+        return True  # 允许无 Origin 的本地请求（如 EventSource）
     return "localhost" in origin or "127.0.0.1" in origin
 
 
 @web.middleware
 async def cors_middleware(request: web.Request, handler: Callable[[web.Request], web.StreamResponse]) -> web.Response:
-    """Add CORS headers to all responses, restricting to localhost origins."""
+    """为响应添加 CORS 头，仅允许本机来源。"""
     origin = request.headers.get("Origin")
 
-    # Only allow localhost/127.0.0.1 origins, or no origin (local requests)
+    # 仅允许 localhost/127.0.0.1 或无 Origin 的本地请求
     if not _is_allowed_origin(origin):
         logger.warning(f"Blocked CORS request from unauthorized origin: {origin}")
         return web.Response(status=403, text="Forbidden: Invalid origin")
 
-    # Set allowed origin (echo back the origin for credentials support, or * if no origin)
+    # 设置允许来源（有 Origin 时回显，否则使用 *）
     allow_origin = origin if origin else "*"
 
     if request.method == "OPTIONS":
@@ -54,7 +62,7 @@ async def cors_middleware(request: web.Request, handler: Callable[[web.Request],
 
 
 def _json_response(data: dict, status: int = 200) -> web.Response:
-    """Helper to create JSON response with ensure_ascii=False."""
+    """构造 ensure_ascii=False 的 JSON 响应。"""
     return web.json_response(
         data,
         status=status,
@@ -81,42 +89,48 @@ async def save_settings_handler(request: web.Request) -> web.Response:
     if not verify_settings(payload):
         return _json_response({"ok": False, "error": "Settings validation failed (schema mismatch)"}, status=400)
 
-    old_settings = get_settings_dict()
-    local_settings.update(payload)
-    local_settings.save()
+    try:
+        old_settings = get_settings_dict()
+        local_settings.update(payload)
+        local_settings.save()
 
-    restart_required = False
+        restart_required = False
 
-    if payload.get("log_level") != old_settings.get("log_level"):
-        new_level = payload.get("log_level", "INFO")
-        logger.info(f"Log level changed to {new_level}, updating...")
-        configure_logging(new_level)
+        if payload.get("log_level") != old_settings.get("log_level"):
+            new_level = payload.get("log_level", "INFO")
+            logger.info(f"Log level changed to {new_level}, updating...")
+            configure_logging(new_level)
 
-    if (
-        payload.get("game_url") != old_settings.get("game_url")
-        or payload.get("platform") != old_settings.get("platform")
-        or payload.get("mitm") != old_settings.get("mitm")
-        or payload.get("server") != old_settings.get("server")
-        or payload.get("ot") != old_settings.get("ot")
-        or payload.get("model_config", {}).get("device") != old_settings.get("model_config", {}).get("device")
-    ):
-        restart_required = True
+        if (
+            payload.get("game_url") != old_settings.get("game_url")
+            or payload.get("platform") != old_settings.get("platform")
+            or payload.get("mitm") != old_settings.get("mitm")
+            or payload.get("server") != old_settings.get("server")
+            or payload.get("ot") != old_settings.get("ot")
+            or payload.get("model_config", {}).get("device") != old_settings.get("model_config", {}).get("device")
+        ):
+            restart_required = True
 
-    clear_resource_cache()
-    logger.info("Resource cache cleared due to settings update.")
-
-    return _json_response({"ok": True, "restartRequired": restart_required})
+        clear_resource_cache()
+        logger.info("Resource cache cleared due to settings update.")
+        return _json_response({"ok": True, "restartRequired": restart_required})
+    except Exception:
+        logger.exception("Failed to save settings")
+        return _json_response({"ok": False, "error": "Internal server error"}, status=500)
 
 
 async def reset_settings_handler(_request: web.Request) -> web.Response:
-    default_settings = get_default_settings_dict()
-    local_settings.update(default_settings)
-    local_settings.save()
+    try:
+        default_settings = get_default_settings_dict()
+        local_settings.update(default_settings)
+        local_settings.save()
 
-    clear_resource_cache()
-    logger.info("Resource cache cleared due to settings reset.")
-
-    return _json_response({"ok": True, "data": default_settings, "restartRequired": True})
+        clear_resource_cache()
+        logger.info("Resource cache cleared due to settings reset.")
+        return _json_response({"ok": True, "data": default_settings, "restartRequired": True})
+    except Exception:
+        logger.exception("Failed to reset settings")
+        return _json_response({"ok": False, "error": "Internal server error"}, status=500)
 
 
 async def get_models_handler(_request: web.Request) -> web.Response:
@@ -136,20 +150,30 @@ async def ingest_mjai_handler(request: web.Request) -> web.Response:
         logger.error(f"Ingest JSON error: {e}")
         return _json_response({"ok": False, "error": "Invalid JSON"}, status=400)
 
-    # Basic structural validation
-    match payload:
-        case {"type": _}:
-            pass
-        case _:
-            logger.warning(f"Invalid MJAI ingest payload: {payload}")
-            return _json_response({"ok": False, "error": "Invalid MJAI payload structure"}, status=400)
+    msg = None
+    try:
+        match payload:
+            case {"type": "websocket_created", "url": url}:
+                msg = WebSocketCreatedMessage(url=url)
+            case {"type": "websocket_closed"}:
+                msg = WebSocketClosedMessage()
+            case {"type": "websocket", "direction": direction, "data": data}:
+                msg = WebSocketFrameMessage(direction=direction, data=data, opcode=payload.get("opcode"))
+            case {"type": "liqi_definition", "data": data}:
+                msg = LiqiDefinitionMessage(data=data)
+            case {"type": "debugger_detached"}:
+                msg = DebuggerDetachedMessage()
+            case _:
+                logger.warning(f"Invalid MJAI ingest payload: {payload}")
+                return _json_response({"ok": False, "error": "Invalid MJAI payload structure"}, status=400)
+    except (KeyError, TypeError) as e:
+        logger.warning(f"Error parsing ingest payload: {e}")
+        return _json_response({"ok": False, "error": f"Payload parsing error: {e}"}, status=400)
 
     try:
-        from akagi_ng.core import get_app_context
-
         app = get_app_context()
         if app.electron_client:
-            app.electron_client.push_message(payload)
+            app.electron_client.push_message(msg)
             return _json_response({"ok": True})
 
         logger.warning("ElectronClient is not active")
@@ -167,15 +191,15 @@ async def shutdown_handler(_request: web.Request) -> web.Response:
     logger.info("Received shutdown request from api.")
 
     try:
-        from akagi_ng.core import get_app_context
-
         app = get_app_context()
 
         if hasattr(app, "shared_queue") and app.shared_queue:
-            shutdown_message: SystemShutdownEvent = {
-                "type": "system_shutdown",
-            }
-            app.shared_queue.put(shutdown_message)
+            shutdown_message = SystemShutdownEvent()
+            try:
+                app.shared_queue.put(shutdown_message, block=False)
+            except queue.Full:
+                logger.warning("Message queue is full, shutdown request dropped")
+                return _json_response({"ok": False, "error": "Message queue is full"}, status=503)
             logger.info("Shutdown signal sent to message queue.")
             return _json_response({"ok": True, "message": "Shutdown initiated"})
 

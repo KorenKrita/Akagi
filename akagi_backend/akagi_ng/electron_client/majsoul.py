@@ -10,7 +10,9 @@ from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.types import (
     AkagiEvent,
     ElectronMessage,
+    EndGameEvent,
     LiqiDefinitionMessage,
+    SystemEvent,
     WebSocketClosedMessage,
     WebSocketCreatedMessage,
     WebSocketFrameMessage,
@@ -27,30 +29,30 @@ class MajsoulElectronClient(BaseElectronClient):
             self.bridge = None
 
     def handle_message(self, message: ElectronMessage):
-        match message["type"]:
-            case "websocket_created":
+        match message:
+            case WebSocketCreatedMessage():
                 self._handle_websocket_created(message)
-            case "websocket_closed":
+            case WebSocketClosedMessage():
                 self._handle_websocket_closed(message)
-            case "liqi_definition":
+            case LiqiDefinitionMessage():
                 self._handle_liqi_definition(message)
-            case "websocket":
+            case WebSocketFrameMessage():
                 self._handle_websocket_frame(message)
 
     def _handle_websocket_created(self, message: WebSocketCreatedMessage):
-        url = message.get("url", "")
-        # Track Majsoul related WebSockets (including regional variants like mahjongsoul, maj-soul)
+        url = message.url
+        # 跟踪雀魂相关 WebSocket（含不同域名变体）
         if any(keyword in url for keyword in ["maj-soul", "mahjongsoul", "majsoul"]):
             with self._lock:
                 self._active_connections += 1
                 if self._active_connections == 1:
-                    self.message_queue.put({"type": "system_event", "code": NotificationCode.CLIENT_CONNECTED})
+                    self._enqueue_event(SystemEvent(code=NotificationCode.CLIENT_CONNECTED))
                     logger.info(f"[Electron] Majsoul client connected (first connection): {url}")
         else:
             logger.debug(f"[Electron] Ignoring non-Majsoul WebSocket: {url}")
 
     def _handle_websocket_closed(self, _message: WebSocketClosedMessage):
-        # We don't have URL in closed event in CDP usually, but we track count
+        # CDP 的关闭事件通常不带 URL，这里通过连接计数跟踪
         with self._lock:
             if self._active_connections <= 0:
                 logger.warning("[Electron] Unexpected websocket close event with no active connections")
@@ -58,11 +60,11 @@ class MajsoulElectronClient(BaseElectronClient):
 
             self._active_connections -= 1
             if self._active_connections == 0:
-                # Determine if we should send GAME_DISCONNECTED
+                # 根据游戏状态决定是否发送 GAME_DISCONNECTED
                 game_ended = getattr(self.bridge, "game_ended", False) if self.bridge else False
 
                 if not game_ended:
-                    self.message_queue.put({"type": "system_event", "code": NotificationCode.GAME_DISCONNECTED})
+                    self._enqueue_event(SystemEvent(code=NotificationCode.GAME_DISCONNECTED))
                     logger.info(
                         f"[Electron] All Majsoul connections closed, sending {NotificationCode.GAME_DISCONNECTED}"
                     )
@@ -73,57 +75,57 @@ class MajsoulElectronClient(BaseElectronClient):
 
     def _handle_liqi_definition(self, message: LiqiDefinitionMessage):
         try:
-            data = message["data"]
+            data = message.data
             if not data:
                 return
 
             logger.info("Received liqi.json definition, updating...")
 
             try:
-                # 1. Validate JSON first
+                # 1. 先校验 JSON
                 json_obj = json.loads(data)
 
-                # 2. Ensure directory exists
+                # 2. 确保目录存在
                 assets_dir = get_assets_dir()
                 ensure_dir(assets_dir)
                 liqi_path = assets_dir / "liqi.json"
 
-                # 3. Write file
+                # 3. 写入文件
                 with open(liqi_path, "w", encoding="utf-8") as f:
                     json.dump(json_obj, f, indent=2, ensure_ascii=False)
 
-                # 4. Success handling
+                # 4. 成功后的处理
                 if self.bridge:
-                    # Re-init proto in bridge
+                    # 重新初始化桥接器中的 proto
                     self.bridge.liqi_proto = self.bridge.liqi_proto.__class__()
 
-                self.message_queue.put({"type": "system_event", "code": NotificationCode.MAJSOUL_PROTO_UPDATED})
+                self._enqueue_event(SystemEvent(code=NotificationCode.MAJSOUL_PROTO_UPDATED))
                 logger.info(f"Successfully updated liqi.json at {liqi_path}")
 
             except json.JSONDecodeError:
                 logger.warning("Received invalid JSON for liqi.json")
-                self.message_queue.put({"type": "system_event", "code": NotificationCode.MAJSOUL_PROTO_UPDATE_FAILED})
+                self._enqueue_event(SystemEvent(code=NotificationCode.MAJSOUL_PROTO_UPDATE_FAILED))
             except OSError as e:
                 logger.error(f"File system error updating liqi.json: {e}")
-                self.message_queue.put({"type": "system_event", "code": NotificationCode.MAJSOUL_PROTO_UPDATE_FAILED})
+                self._enqueue_event(SystemEvent(code=NotificationCode.MAJSOUL_PROTO_UPDATE_FAILED))
 
         except Exception as e:
             logger.error(f"Unexpected error in handle liqi definition: {e}")
-            self.message_queue.put({"type": "system_event", "code": NotificationCode.MAJSOUL_PROTO_UPDATE_FAILED})
+            self._enqueue_event(SystemEvent(code=NotificationCode.MAJSOUL_PROTO_UPDATE_FAILED))
 
     def _handle_websocket_frame(self, message: WebSocketFrameMessage):
         if not self.bridge:
             return
 
         try:
-            b64_data = message.get("data", "")
+            b64_data = message.data
             if not b64_data:
                 return
 
-            direction = "<-" if message.get("direction") == "outbound" else "->"
+            direction = "<-" if message.direction == "outbound" else "->"
             logger.trace(f"[Electron] {direction} Message: {b64_data}")
 
-            # Majsoul messages are always binary (opcode 2) and sent as base64 in CDP
+            # 雀魂消息固定为二进制帧（opcode=2），在 CDP 中以 base64 传输
             try:
                 raw_bytes = base64.b64decode(b64_data)
             except ValueError as e:
@@ -132,17 +134,18 @@ class MajsoulElectronClient(BaseElectronClient):
 
             mjai_messages = self.bridge.parse(raw_bytes)
 
-            if mjai_messages:
-                logger.debug(f"[Majsoul] Decoded {len(mjai_messages)} MJAI messages")
-                for msg in mjai_messages:
-                    self.message_queue.put(msg)
+            if not mjai_messages:
+                return
 
-                    # Check for game end to trigger notification
-                    if msg.get("type") == "end_game":
-                        from akagi_ng.schema.notifications import NotificationCode
+            logger.debug(f"[Majsoul] Decoded {len(mjai_messages)} MJAI messages")
+            for msg in mjai_messages:
+                self._enqueue_event(msg)
 
+                # 结束对局时触发返回大厅通知
+                match msg:
+                    case EndGameEvent():
                         logger.info("[Electron] Detected end_game message, sending RETURN_LOBBY")
-                        self.message_queue.put({"type": "system_event", "code": NotificationCode.RETURN_LOBBY})
+                        self._enqueue_event(SystemEvent(code=NotificationCode.RETURN_LOBBY))
 
         except Exception as e:
             logger.exception(f"Error decoding Majsoul websocket frame: {e}")

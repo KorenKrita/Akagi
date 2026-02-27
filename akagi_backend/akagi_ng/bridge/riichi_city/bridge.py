@@ -1,9 +1,11 @@
 import json
+from dataclasses import replace
 
 from akagi_ng.bridge.base import BaseBridge
 from akagi_ng.bridge.logger import logger
 from akagi_ng.bridge.riichi_city.consts import CARD2MJAI, RCAction, RCProtocol
 from akagi_ng.schema.constants import MahjongConstants
+from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.types import AkagiEvent, MJAIEvent
 
 
@@ -89,47 +91,65 @@ class RiichiCityBridge(BaseBridge):
             return None
         # 从剩余消息中加载 JSON 数据
         # 如果没有数据，将为空
-        msg_data = (
-            {}
-            if len(content) == RCProtocol.HEADER_LENGTH
-            else json.loads(content[RCProtocol.HEADER_LENGTH :].decode("utf-8"))
-        )
+        try:
+            msg_data = (
+                {}
+                if len(content) == RCProtocol.HEADER_LENGTH
+                else json.loads(content[RCProtocol.HEADER_LENGTH :].decode("utf-8"))
+            )
+        except json.JSONDecodeError:
+            logger.error(f"RiichiCityBridge: Failed to decode JSON: {content.hex(' ')}")
+            raise
         logger.debug({"msg_id": msg_id, "msg_type": msg_type, "msg_data": msg_data})
 
         return RCMessage(msg_id, msg_type, msg_data)
 
-    def parse(self, content: bytes) -> list[AkagiEvent] | None:
+    def parse(self, content: bytes) -> list[AkagiEvent]:
         """解析内容并返回 MJAI 指令。
 
         Args:
             content (bytes): 待解析的内容。
 
         Returns:
-            list[AkagiEvent] | None: MJAI 指令。
+            list[AkagiEvent]: MJAI 指令
         """
 
-        rc_msg = self.preprocess(content)
-        if rc_msg is None:
-            return None
+        try:
+            rc_msg = self.preprocess(content)
+            if rc_msg is None:
+                return []
 
-        if rc_msg.msg_type == 0x01:
-            if "uid" not in rc_msg.msg_data:
-                logger.error(f"Unknown login message: {rc_msg.msg_data}")
-                return None
-            self.uid = int(rc_msg.msg_data["uid"])
-            logger.info(f"Got uid: {self.uid}")
-            return None
-        if "cmd" in rc_msg.msg_data and (handler := self.handlers.get(rc_msg.msg_data["cmd"])):
-            return handler(rc_msg)
-        return None
+            logger.trace(f"<- {rc_msg.msg_data}")
 
-    def _handle_enter_room(self, rc_msg: RCMessage) -> list[MJAIEvent] | None:
+            if rc_msg.msg_type == 0x01:
+                if "uid" not in rc_msg.msg_data:
+                    logger.error(f"Unknown login message: {rc_msg.msg_data}")
+                    return []
+                self.uid = int(rc_msg.msg_data["uid"])
+                logger.info(f"Got uid: {self.uid}")
+                return []
+
+            parsed = []
+            if "cmd" in rc_msg.msg_data and (handler := self.handlers.get(rc_msg.msg_data["cmd"])):
+                parsed = handler(rc_msg)
+
+            if parsed:
+                logger.trace(f"-> {parsed}")
+            return parsed
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding Riichi City JSON: {e}")
+            return [self.make_system_event(NotificationCode.JSON_DECODE_ERROR)]
+        except Exception as e:
+            logger.error(f"Error parsing Riichi City message: {e}")
+            return [self.make_system_event(NotificationCode.PARSE_ERROR)]
+
+    def _handle_enter_room(self, rc_msg: RCMessage) -> list[MJAIEvent]:
         data = rc_msg.msg_data.get("data", {})
         is_reconnect = data.get("is_reconnect", False)
 
-        if self.game_status.classify_id is not None and self.game_status.classify_id == data["options"]["classify_id"]:
+        if self.game_status.classify_id == data["options"]["classify_id"]:
             logger.warning(f"Already in room {self.game_status.classify_id}")
-            return None
+            return []
 
         self.game_status = GameStatus()
         self.game_status.classify_id = data["options"]["classify_id"]
@@ -155,9 +175,7 @@ class RiichiCityBridge(BaseBridge):
         self._init_reconnect_seat(data)
 
         # 2. 生成 start_game
-        start_game = self.make_start_game(self.game_status.seat, is_3p=self.game_status.is_3p)
-        start_game["sync"] = True
-        mjai_msgs.append(start_game)
+        mjai_msgs.append(replace(self.make_start_game(self.game_status.seat, is_3p=self.game_status.is_3p), sync=True))
 
         # 3. 解析局信息
         bakaze, kyoku, honba, kyotaku, oya, dora_marker = self._parse_reconnect_kyoku_info(hand_status)
@@ -184,8 +202,7 @@ class RiichiCityBridge(BaseBridge):
             scores=scores,
             tehais=tehais,
         )
-        start_kyoku["sync"] = True
-        mjai_msgs.append(start_kyoku)
+        mjai_msgs.append(replace(start_kyoku, sync=True))
 
         # 6. 生成 tsumo（如果有摸牌）
         if my_tsumo:
@@ -241,33 +258,31 @@ class RiichiCityBridge(BaseBridge):
         tehais[self.game_status.seat] = my_tehai
         return tehais, my_tsumo
 
-    def _handle_game_start(self, rc_msg: RCMessage) -> list[MJAIEvent] | None:
+    def _handle_game_start(self, rc_msg: RCMessage) -> list[MJAIEvent]:
         mjai_msgs: list[MJAIEvent] = []
         bakaze = CARD2MJAI[rc_msg.msg_data["data"]["quan_feng"]]
         dora_marker = CARD2MJAI[rc_msg.msg_data["data"]["bao_pai_card"]]
+        msg_data = rc_msg.msg_data["data"]
+        seats = MahjongConstants.SEATS_3P if self.game_status.is_3p else MahjongConstants.SEATS_4P
+
         if self.game_status.game_start:
             # 根据 dealer_pos 旋转玩家列表
+            dealer_pos = msg_data["dealer_pos"]
             self.game_status.player_list = (
-                self.game_status.player_list[rc_msg.msg_data["data"]["dealer_pos"] :]
-                + self.game_status.player_list[: rc_msg.msg_data["data"]["dealer_pos"]]
+                self.game_status.player_list[dealer_pos:] + self.game_status.player_list[:dealer_pos]
             )
-            position_at = self.game_status.player_list.index(self.uid)
-            self.game_status.seat = position_at
-            self.game_status.shift = rc_msg.msg_data["data"]["dealer_pos"]
-            mjai_msgs.append(self.make_start_game(position_at, is_3p=self.game_status.is_3p))
+            self.game_status.seat = self.game_status.player_list.index(self.uid)
+            self.game_status.shift = dealer_pos
+            mjai_msgs.append(self.make_start_game(self.game_status.seat, is_3p=self.game_status.is_3p))
             if self.game_status.is_3p:
                 self.game_status.player_list.append(-1)
             self.game_status.game_start = False
-        if self.game_status.is_3p:
-            kyoku = ((rc_msg.msg_data["data"]["dealer_pos"] - self.game_status.shift) % MahjongConstants.SEATS_3P) + 1
-        else:
-            kyoku = ((rc_msg.msg_data["data"]["dealer_pos"] - self.game_status.shift) % MahjongConstants.SEATS_4P) + 1
-        honba = rc_msg.msg_data["data"]["ben_chang_num"]
-        kyotaku = rc_msg.msg_data["data"]["li_zhi_bang_num"]
-        if self.game_status.is_3p:
-            oya = (rc_msg.msg_data["data"]["dealer_pos"] - self.game_status.shift) % MahjongConstants.SEATS_3P
-        else:
-            oya = (rc_msg.msg_data["data"]["dealer_pos"] - self.game_status.shift) % MahjongConstants.SEATS_4P
+
+        relative_oya = (msg_data["dealer_pos"] - self.game_status.shift) % seats
+        kyoku = relative_oya + 1
+        honba = msg_data["ben_chang_num"]
+        kyotaku = msg_data["li_zhi_bang_num"]
+        oya = relative_oya
         scores = [player["hand_points"] for player in rc_msg.msg_data["data"]["user_info_list"]]
         if self.game_status.is_3p:
             scores.append(0)
@@ -295,17 +310,17 @@ class RiichiCityBridge(BaseBridge):
         )
         self.game_status.dora_markers = []
         self.game_status.tsumo = my_tsumo
-        if my_tsumo is not None:
+        if my_tsumo:
             my_tsumo = CARD2MJAI[my_tsumo]
             mjai_msgs.append(self.make_tsumo(self.game_status.seat, my_tsumo))
         else:
             mjai_msgs.append(self.make_tsumo(oya, "?"))
         return mjai_msgs
 
-    def _handle_in_card_brc(self, rc_msg: RCMessage) -> list[MJAIEvent] | None:
+    def _handle_in_card_brc(self, rc_msg: RCMessage) -> list[MJAIEvent]:
         mjai_msgs: list[MJAIEvent] = []
-        if self.game_status.accept_reach is not None:
-            mjai_msgs.append(self.game_status.accept_reach)
+        if accept_reach := self.game_status.accept_reach:
+            mjai_msgs.append(accept_reach)
             self.game_status.accept_reach = None
         actor = self.game_status.player_list.index(rc_msg.msg_data["data"]["user_id"])
         pai = CARD2MJAI[rc_msg.msg_data["data"]["card"]]
@@ -392,20 +407,20 @@ class RiichiCityBridge(BaseBridge):
             case _:
                 pass
 
-    def _handle_game_action_brc(self, rc_msg: RCMessage) -> list[MJAIEvent] | None:
+    def _handle_game_action_brc(self, rc_msg: RCMessage) -> list[MJAIEvent]:
         mjai_msgs: list[MJAIEvent] = []
         action_info = rc_msg.msg_data["data"]["action_info"]
-        if self.game_status.accept_reach is not None:
-            mjai_msgs.append(self.game_status.accept_reach)
+        if accept_reach := self.game_status.accept_reach:
+            mjai_msgs.append(accept_reach)
             self.game_status.accept_reach = None
         for action in action_info:
             self._handle_rc_action(action, mjai_msgs)
-        return mjai_msgs if mjai_msgs else None
+        return mjai_msgs
 
-    def _handle_send_current_action(self, rc_msg: RCMessage) -> list[MJAIEvent] | None:
+    def _handle_send_current_action(self, rc_msg: RCMessage) -> list[MJAIEvent]:
         mjai_msgs: list[MJAIEvent] = []
-        if self.game_status.accept_reach is not None:
-            mjai_msgs.append(self.game_status.accept_reach)
+        if accept_reach := self.game_status.accept_reach:
+            mjai_msgs.append(accept_reach)
             self.game_status.accept_reach = None
         pai = CARD2MJAI[rc_msg.msg_data["data"]["in_card"]]
         if pai != "?":
@@ -414,11 +429,11 @@ class RiichiCityBridge(BaseBridge):
             logger.warning(f"Unknown tsumo: {rc_msg.msg_data}")
         return mjai_msgs
 
-    def _handle_gang_bao_brc(self, rc_msg: RCMessage) -> list[MJAIEvent] | None:
+    def _handle_gang_bao_brc(self, rc_msg: RCMessage) -> list[MJAIEvent]:
         dora_marker = CARD2MJAI[rc_msg.msg_data["data"]["cards"][-1]]
         self.game_status.dora_markers.append(dora_marker)
-        return None
+        return []
 
-    def _handle_room_end(self, _rc_msg: RCMessage) -> list[MJAIEvent] | None:
+    def _handle_room_end(self, _rc_msg: RCMessage) -> list[MJAIEvent]:
         self.game_status = GameStatus()
         return [self.make_end_game()]
