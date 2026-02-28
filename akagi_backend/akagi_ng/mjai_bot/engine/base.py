@@ -24,7 +24,6 @@ class BaseEngine:
         # 核心状态信息
         self.engine_type: EngineType = "unknown"
         self.is_online = False
-        self.is_sync = False
 
         # quick_eval=True 会导致只有一个候选动作时跳过引擎推理，不返回 meta
         self.enable_quick_eval = False
@@ -52,30 +51,11 @@ class BaseEngine:
         """重置引擎内部状态（如回退标志）。默认不执行任何操作。"""
         pass
 
-    def _sync_fast_forward(
-        self,
-        masks: np.ndarray,
-    ) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
-        """
-        同步模式下的快进逻辑。
-        在同步/回放模式下，跳过实际推理，返回第一个合法动作。
-        """
-        batch_size = masks.shape[0]
-        action_space = masks.shape[1]
-        # np.argmax 返回第一个 True 的索引，符合最低合法动作原则
-        actions = np.argmax(masks, axis=1).tolist()
-        q_out = [[0.0] * action_space for _ in range(batch_size)]
-        clean_masks = masks.tolist()
-        is_greedy = [True] * batch_size
-
-        return actions, q_out, clean_masks, is_greedy
-
     def react_batch(
         self,
         obs: np.ndarray,
         masks: np.ndarray,
         invisible_obs: np.ndarray | None = None,
-        is_sync: bool | None = None,
     ) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
         """
         批量推理接口 (Stateless).
@@ -84,13 +64,8 @@ class BaseEngine:
             obs: 观测数据
             masks: 动作掩码
             invisible_obs: 不可见观测数据 (Oracle模式用)
-            is_sync: 是否为同步/回放模式. 若为 None 则使用 self.is_sync.
 
         Returns:
             (actions, q_out, masks, is_greedy)
-
-        Note:
-            子类实现时应使用 is_sync 参数（或 self.is_sync），
-            如果为 True，调用 self._sync_fast_forward(masks) 跳过实际推理。
         """
         raise NotImplementedError("Subclasses must implement react_batch()")

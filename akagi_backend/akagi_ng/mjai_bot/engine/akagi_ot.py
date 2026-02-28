@@ -114,22 +114,14 @@ class AkagiOTEngine(BaseEngine):
         obs: np.ndarray,
         masks: np.ndarray,
         invisible_obs: np.ndarray | None = None,
-        is_sync: bool | None = None,
     ) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
         """
         执行在线推理。发生的异常（如连通性问题、超时、熔断）
         将抛回给 EngineProvider 进行回退处理。
         """
-        if is_sync is None:
-            is_sync = self.is_sync
-
         # 确保输入为 numpy 数组
         obs = np.asanyarray(obs)
         masks = np.asanyarray(masks)
-
-        # 如果处于显式同步模式，执行极速快进（跳过网络请求）
-        if is_sync:
-            return self._sync_fast_forward(masks)
 
         list_obs = obs.tolist()
         list_masks = masks.tolist()

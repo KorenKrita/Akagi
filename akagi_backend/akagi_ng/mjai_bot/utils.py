@@ -1,7 +1,10 @@
+import json
+from dataclasses import fields
+
 import numpy as np
 
 from akagi_ng.schema.constants import MahjongConstants
-from akagi_ng.schema.types import MJAIMetadata
+from akagi_ng.schema.types import MJAIEvent, MJAIMetadata
 
 # fmt: off
 mask_unicode_4p = [
@@ -59,3 +62,9 @@ def meta_to_recommend(meta: MJAIMetadata, is_3p: bool = False, temperature: floa
                 break
 
     return sorted(recommend, key=lambda x: x[1], reverse=True)
+
+
+def serialize_mjai_event(event: MJAIEvent) -> str:
+    """使用紧凑的 JSON 格式序列化 MJAI 事件，不使用递归的 asdict 复制。"""
+    payload = {f.name: getattr(event, f.name) for f in fields(event)}
+    return json.dumps(payload, separators=(",", ":"))

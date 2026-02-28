@@ -114,9 +114,19 @@ class EngineProtocol(Protocol):
         obs: np.ndarray,
         masks: np.ndarray,
         invisible_obs: np.ndarray | None = None,
-        is_sync: bool | None = None,
     ) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
         """批量处理。"""
+        ...
+
+
+class MJAIBotProtocol(Protocol):
+    """底层 C++ Bot 协议接口。
+
+    直接处理原始 MJAI JSON 字符串，具有同步和推理能力。
+    """
+
+    def react(self, event_json: str, can_act: bool = True) -> str | None:
+        """接收并返回原始 MJAI JSON 字符串。"""
         ...
 
 

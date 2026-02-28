@@ -17,7 +17,7 @@ from akagi_ng.mjai_bot.engine.provider import EngineProvider
 from akagi_ng.mjai_bot.logger import logger
 from akagi_ng.mjai_bot.status import BotStatusContext
 from akagi_ng.schema.notifications import NotificationCode
-from akagi_ng.schema.protocols import BotProtocol, EngineProtocol
+from akagi_ng.schema.protocols import EngineProtocol, MJAIBotProtocol
 from akagi_ng.settings import local_settings
 
 # 资源缓存
@@ -60,10 +60,19 @@ class NullEngine(BaseEngine):
         obs: np.ndarray,
         masks: np.ndarray,
         invisible_obs: np.ndarray | None = None,
-        is_sync: bool | None = None,
     ) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
-        # 使用基类的 _sync_fast_forward 返回第一个合法动作
-        return self._sync_fast_forward(np.asanyarray(masks))
+        return self._fast_forward(np.asanyarray(masks))
+
+    @staticmethod
+    def _fast_forward(masks: np.ndarray) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
+        """返回第一个合法动作，作为兜底策略。"""
+        batch_size = masks.shape[0]
+        action_space = masks.shape[1]
+        actions = np.argmax(masks, axis=1).tolist()
+        q_out = [[0.0] * action_space for _ in range(batch_size)]
+        clean_masks = masks.tolist()
+        is_greedy = [True] * batch_size
+        return actions, q_out, clean_masks, is_greedy
 
 
 class LazyLocalEngine(BaseEngine):
@@ -104,10 +113,9 @@ class LazyLocalEngine(BaseEngine):
         obs: np.ndarray,
         masks: np.ndarray,
         invisible_obs: np.ndarray | None = None,
-        is_sync: bool | None = None,
     ) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
         real_engine = self._ensure_engine()
-        return real_engine.react_batch(obs, masks, invisible_obs, is_sync=is_sync)
+        return real_engine.react_batch(obs, masks, invisible_obs)
 
 
 def _get_or_load_model_resource(model_path: Path, consts: ModuleType, is_3p: bool) -> MortalModelResource | None:
@@ -136,18 +144,18 @@ def _get_or_create_ot_client(url: str, api_key: str) -> AkagiOTClient:
 
 def load_bot_and_engine(
     status: BotStatusContext, player_id: int, is_3p: bool = False
-) -> tuple[BotProtocol, EngineProtocol]:
+) -> tuple[MJAIBotProtocol, EngineProtocol]:
     """加载引擎的统一入口"""
     if is_3p:
-        from akagi_ng.core.lib_loader import libriichi3p as libriichi
+        from akagi_ng.core.lib_loader import libriichi3p as libs
 
         model_filename = local_settings.model_config.model_3p
     else:
-        from akagi_ng.core.lib_loader import libriichi
+        from akagi_ng.core.lib_loader import libriichi as libs
 
         model_filename = local_settings.model_config.model_4p
 
-    consts = libriichi.consts
+    consts = libs.consts
     model_path = get_models_dir() / model_filename
 
     # 1. 准备 Lazy Local Engine (持有资源引用，按需加载)
@@ -163,6 +171,6 @@ def load_bot_and_engine(
     # 3. 组装 Provider (全新的实例)
     provider = EngineProvider(status, online_engine, local_engine, is_3p)
 
-    bot = libriichi.mjai.Bot(provider, player_id)
+    bot = libs.mjai.Bot(provider, player_id)
 
     return bot, provider

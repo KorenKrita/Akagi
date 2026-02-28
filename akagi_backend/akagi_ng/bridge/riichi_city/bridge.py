@@ -1,5 +1,4 @@
 import json
-from dataclasses import replace
 
 from akagi_ng.bridge.base import BaseBridge
 from akagi_ng.bridge.logger import logger
@@ -175,7 +174,7 @@ class RiichiCityBridge(BaseBridge):
         self._init_reconnect_seat(data)
 
         # 2. 生成 start_game
-        mjai_msgs.append(replace(self.make_start_game(self.game_status.seat, is_3p=self.game_status.is_3p), sync=True))
+        mjai_msgs.append(self.make_start_game(self.game_status.seat, is_3p=self.game_status.is_3p, sync=True))
 
         # 3. 解析局信息
         bakaze, kyoku, honba, kyotaku, oya, dora_marker = self._parse_reconnect_kyoku_info(hand_status)
@@ -192,17 +191,19 @@ class RiichiCityBridge(BaseBridge):
         tehais, my_tsumo = self._parse_reconnect_hand(rotated_players)
 
         # 5. 生成 start_kyoku
-        start_kyoku = self.make_start_kyoku(
-            bakaze=bakaze,
-            kyoku=kyoku,
-            honba=honba,
-            kyotaku=kyotaku,
-            oya=oya,
-            dora_marker=dora_marker,
-            scores=scores,
-            tehais=tehais,
+        mjai_msgs.append(
+            self.make_start_kyoku(
+                bakaze=bakaze,
+                kyoku=kyoku,
+                honba=honba,
+                kyotaku=kyotaku,
+                oya=oya,
+                dora_marker=dora_marker,
+                scores=scores,
+                tehais=tehais,
+                sync=True,
+            )
         )
-        mjai_msgs.append(replace(start_kyoku, sync=True))
 
         # 6. 生成 tsumo（如果有摸牌）
         if my_tsumo:

@@ -76,23 +76,25 @@ class Controller:
         target_name = "mortal3p" if is_3p else "mortal"
         current_name = self.current_bot_name
 
-        if current_name != target_name:
-            if not self.bot:
-                logger.info(f"Activating {target_name} bot.")
-            else:
-                logger.info(f"Switching bot from {current_name} to {target_name}.")
+        if current_name == target_name:
+            return
 
-            if not self._choose_bot(target_name):
-                logger.error(f"Failed to load {target_name} bot")
-                self.status.set_flag(NotificationCode.BOT_SWITCH_FAILED)
-                return
+        if not self.bot:
+            logger.info(f"Activating {target_name} bot.")
+        else:
+            logger.info(f"Switching bot from {current_name} to {target_name}.")
 
-            if self.pending_start_game_event:
-                logger.debug(f"Replaying cached start_game to new {target_name} bot.")
-                self.bot.react(self.pending_start_game_event)
-            else:
-                logger.error(f"No pending start_game event to replay for {target_name} bot activation.")
-                self.status.set_flag(NotificationCode.MODEL_LOAD_FAILED)
+        if not self._choose_bot(target_name):
+            logger.error(f"Failed to load {target_name} bot")
+            self.status.set_flag(NotificationCode.BOT_SWITCH_FAILED)
+            return
+
+        if self.pending_start_game_event:
+            logger.debug(f"Replaying cached start_game to new {target_name} bot.")
+            self.bot.react(self.pending_start_game_event)
+        else:
+            logger.error(f"No pending start_game event to replay for {target_name} bot activation.")
+            self.status.set_flag(NotificationCode.MODEL_LOAD_FAILED)
 
     @property
     def current_bot_name(self) -> str | None:

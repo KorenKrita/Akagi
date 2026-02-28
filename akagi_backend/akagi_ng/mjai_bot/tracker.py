@@ -1,8 +1,8 @@
-import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 from akagi_ng.mjai_bot.logger import logger
 from akagi_ng.mjai_bot.status import BotStatusContext
+from akagi_ng.mjai_bot.utils import serialize_mjai_event
 from akagi_ng.schema.constants import MahjongConstants
 from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.protocols import PlayerStateProtocol, StateTrackerProtocol
@@ -53,7 +53,7 @@ class StateTracker(StateTrackerProtocol):
 
             logger.debug(f"-> {processed_event}")
             if self.player_state:
-                self.player_state.update(json.dumps(asdict(processed_event)))
+                self.player_state.update(serialize_mjai_event(processed_event))
 
             return None
 

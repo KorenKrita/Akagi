@@ -10,7 +10,7 @@ from akagi_ng.schema.notifications import NotificationCode
 # 业务类型
 
 
-EngineType = Literal["mortal", "akagiot", "replay", "unknown", "null"]
+type EngineType = Literal["mortal", "akagiot", "unknown", "null"]
 
 
 class EngineAdditionalMeta(TypedDict, total=False):
@@ -68,6 +68,21 @@ type Actor = Annotated[int, "Player index (0-3)"]
 type Tile = Annotated[str, "MJAI tile string (e.g., '1m', '5mr', 'E')"]
 type Score = Annotated[int, "Player score (e.g., 25000)"]
 
+# MJAI 动作类型 (用于响应和推荐)
+type MJAIActionType = Literal[
+    "none",
+    "dahai",
+    "reach",
+    "chi",
+    "pon",
+    "daiminkan",
+    "ankan",
+    "kakan",
+    "tsumo",
+    "hora",
+    "ryukyoku",
+]
+
 
 class MJAIMetadata(TypedDict, total=False):
     """MJAI 协议响应中的元数据字段 (meta)。"""
@@ -88,8 +103,6 @@ class MJAIMetadata(TypedDict, total=False):
     engine_type: EngineType
     fallback_used: bool
     online_service_reconnecting: bool  # 熔断器状态
-    is_sync: bool  # 是否为快进同步模式
-    game_start: bool
 
     # 嵌套前瞻结果
     riichi_lookahead: Self
@@ -98,7 +111,7 @@ class MJAIMetadata(TypedDict, total=False):
 class MJAIResponse(TypedDict):
     """MJAI 协议响应格式"""
 
-    type: str  # 动作类型 (如 dahai, reach, chi, etc.)
+    type: MJAIActionType  # 动作类型
     actor: NotRequired[Actor]  # 注意：none 动作可能没有 actor
     pai: NotRequired[Tile]
     tsumogiri: NotRequired[bool]
@@ -158,7 +171,7 @@ class SSEClientData(NamedTuple):
     """SSE 客户端数据"""
 
     response: web.StreamResponse
-    queue: asyncio.Queue
+    queue: asyncio.Queue[bytes]
 
 
 # ==========================================================
@@ -177,7 +190,7 @@ class MJAIEventBase:
 class StartGameEvent(MJAIEventBase):
     id: Actor
     is_3p: bool
-    type: str = "start_game"
+    type: Literal["start_game"] = "start_game"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -190,14 +203,14 @@ class StartKyokuEvent(MJAIEventBase):
     oya: Actor
     scores: list[Score]
     tehais: list[list[Tile]]
-    type: str = "start_kyoku"
+    type: Literal["start_kyoku"] = "start_kyoku"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TsumoEvent(MJAIEventBase):
     actor: Actor
     pai: Tile
-    type: str = "tsumo"
+    type: Literal["tsumo"] = "tsumo"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -205,7 +218,7 @@ class DahaiEvent(MJAIEventBase):
     actor: Actor
     pai: Tile
     tsumogiri: bool
-    type: str = "dahai"
+    type: Literal["dahai"] = "dahai"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -214,7 +227,7 @@ class ChiEvent(MJAIEventBase):
     target: Actor
     pai: Tile
     consumed: list[Tile]
-    type: str = "chi"
+    type: Literal["chi"] = "chi"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -223,7 +236,7 @@ class PonEvent(MJAIEventBase):
     target: Actor
     pai: Tile
     consumed: list[Tile]
-    type: str = "pon"
+    type: Literal["pon"] = "pon"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -232,14 +245,14 @@ class DaiminkanEvent(MJAIEventBase):
     target: Actor
     pai: Tile
     consumed: list[Tile]
-    type: str = "daiminkan"
+    type: Literal["daiminkan"] = "daiminkan"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AnkanEvent(MJAIEventBase):
     actor: Actor
     consumed: list[Tile]
-    type: str = "ankan"
+    type: Literal["ankan"] = "ankan"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -247,13 +260,13 @@ class KakanEvent(MJAIEventBase):
     actor: Actor
     pai: Tile
     consumed: list[Tile]
-    type: str = "kakan"
+    type: Literal["kakan"] = "kakan"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ReachEvent(MJAIEventBase):
     actor: Actor
-    type: str = "reach"
+    type: Literal["reach"] = "reach"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -261,25 +274,25 @@ class ReachAcceptedEvent(MJAIEventBase):
     actor: Actor
     scores: list[Score] | None = None
     deltas: list[Score] | None = None
-    type: str = "reach_accepted"
+    type: Literal["reach_accepted"] = "reach_accepted"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DoraEvent(MJAIEventBase):
     dora_marker: Tile
-    type: str = "dora"
+    type: Literal["dora"] = "dora"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NukidoraEvent(MJAIEventBase):
     actor: Actor
     pai: Literal["N"] = "N"
-    type: str = "nukidora"
+    type: Literal["nukidora"] = "nukidora"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class EndKyokuEvent(MJAIEventBase):
-    type: str = "end_kyoku"
+    type: Literal["end_kyoku"] = "end_kyoku"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -298,7 +311,7 @@ class HoraEvent(MJAIEventBase):
     fu: int | None = None
     fan: int | None = None
     yaku: list[str] | None = None
-    type: str = "hora"
+    type: Literal["hora"] = "hora"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -308,23 +321,23 @@ class RyukyokuEvent(MJAIEventBase):
     deltas: list[Score] | None = None
     tehais: list[list[Tile]] | None = None
     tenpais: list[bool] | None = None
-    type: str = "ryukyoku"
+    type: Literal["ryukyoku"] = "ryukyoku"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class EndGameEvent(MJAIEventBase):
-    type: str = "end_game"
+    type: Literal["end_game"] = "end_game"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SystemEvent:
     code: SystemEventCode
-    type: str = "system_event"
+    type: Literal["system_event"] = "system_event"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SystemShutdownEvent:
-    type: str = "system_shutdown"
+    type: Literal["system_shutdown"] = "system_shutdown"
 
 
 type MJAIEvent = (

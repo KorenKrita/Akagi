@@ -1,6 +1,5 @@
 import base64
 import contextlib
-from dataclasses import replace
 from functools import cmp_to_key
 
 from google.protobuf.json_format import MessageToDict
@@ -67,23 +66,22 @@ class MajsoulBridge(BaseBridge):
 
     def _parse_sync_game(self, liqi_message: dict) -> list[AkagiEvent]:
         """处理游戏同步消息（重连后的同步）"""
-        self.syncing = True
         self._pre_scan_mode_from_sync_msg(liqi_message)
 
         sync_game_msgs = self._parse_sync_game_raw(liqi_message)
         parsed_list: list[AkagiEvent] = [self.make_system_event(NotificationCode.GAME_SYNCING)]
 
-        for i, msg in enumerate(sync_game_msgs):
-            parsed = self.parse_liqi(msg)
-            if parsed:
+        try:
+            for i, msg in enumerate(sync_game_msgs):
                 # 只有最后一个动作不打 sync 标签，以便触发一次真实推荐展示
                 is_last_msg = i == len(sync_game_msgs) - 1
-                for j, event in enumerate(parsed):
-                    if not is_last_msg:
-                        parsed[j] = replace(event, sync=True)
-                parsed_list.extend(parsed)
+                self.syncing = not is_last_msg
+                parsed = self.parse_liqi(msg)
+                if parsed:
+                    parsed_list.extend(parsed)
+        finally:
+            self.syncing = False
 
-        self.syncing = False
         return parsed_list
 
     def _parse_enter_game(self, liqi_message: dict) -> list[AkagiEvent]:

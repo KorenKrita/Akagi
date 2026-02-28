@@ -41,20 +41,16 @@ class EngineProvider(BaseEngine):
         obs: np.ndarray,
         masks: np.ndarray,
         invisible_obs: np.ndarray | None = None,
-        is_sync: bool | None = None,
     ) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
         """
         核心调度逻辑：
         1. 尝试在线引擎。
         2. 如果在线引擎不可用或抛出异常，自动回退到本地引擎。
         """
-        if is_sync is None:
-            is_sync = self.is_sync
-
         # 1. 尝试在线引擎 (如果配置了且没有处于熔断状态 - 熔断逻辑由 OTEngine 内部维护)
         if self.online_engine:
             try:
-                res = self.online_engine.react_batch(obs, masks, invisible_obs, is_sync=is_sync)
+                res = self.online_engine.react_batch(obs, masks, invisible_obs)
                 self.active_engine = self.online_engine
                 self.fallback_active = False
 
@@ -68,7 +64,7 @@ class EngineProvider(BaseEngine):
 
         # 2. 本地引擎作为最终保底
         self.active_engine = self.local_engine
-        res = self.local_engine.react_batch(obs, masks, invisible_obs, is_sync=is_sync)
+        res = self.local_engine.react_batch(obs, masks, invisible_obs)
 
         # 同步注入元数据
         # 即使底层引擎（如 LocalEngine）在 react_batch 中设置了元数据，

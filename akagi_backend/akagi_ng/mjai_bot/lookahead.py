@@ -1,7 +1,7 @@
 import json
-from dataclasses import asdict
 
 from akagi_ng.mjai_bot.logger import logger
+from akagi_ng.mjai_bot.utils import serialize_mjai_event
 from akagi_ng.schema.notifications import NotificationCode
 from akagi_ng.schema.protocols import EngineProtocol
 from akagi_ng.schema.types import MJAIEvent, MJAIMetadata, StartGameEvent
@@ -34,43 +34,32 @@ class LookaheadBot:
             candidate_event: 候选的 reach 事件
             game_start_event: 游戏开始事件，用于初始化 C++ Bot 状态
         """
-        from akagi_ng.mjai_bot.engine.replay import ReplayEngine
-
-        # 1. 构造 ReplayEngine 包装器
-        # 使用底层引擎已有的 Status Context (通常是在 fork 时传入的独立实例)
-        replay_engine = ReplayEngine(self.engine.status, self.engine)
-
-        # 2. 为模拟创建一个专用的 C++ Bot 实例
-        # 必须使用 replay_engine 初始化，以便拦截回放请求
+        # 1. 为模拟创建一个专用的 C++ Bot 实例
+        # 直接使用 fork 出来的真实引擎。回放阶段通过 can_act=False 避免推理。
         if self.is_3p:
             from akagi_ng.core.lib_loader import libriichi3p as libs
         else:
             from akagi_ng.core.lib_loader import libriichi as libs
 
-        # 注意：这里我们创建了一个新的 bot 实例，专门用于此次模拟
-        # 这比复用 self.cpp_bot 更安全，因为它是完全隔离的
-        sim_bot = libs.mjai.Bot(replay_engine, self.player_id)
+        sim_bot = libs.mjai.Bot(self.engine, self.player_id)
 
-        # 3. 重放历史事件
-        # ReplayEngine 处于 replay_mode=True，会快速响应，不调用底层引擎
+        # 2. 重放历史事件
+        # 回放阶段通过 can_act=False 仅推进状态，不触发推理。
         all_events: list[MJAIEvent] = []
         if game_start_event:
             all_events.append(game_start_event)
         all_events.extend(history_events)
 
         for e in all_events:
-            e_json = json.dumps(asdict(e), separators=(",", ":"))
+            e_json = serialize_mjai_event(e)
             try:
-                sim_bot.react(e_json)
+                sim_bot.react(e_json, can_act=False)
             except Exception:
                 logger.exception(f"LookaheadBot: Replay failed at event {e_json}")
                 return None
 
-        # 4. 执行候选事件（真正的推理）
-        # 停止回放模式，允许请求穿透到底层引擎 (Provider -> AkagiOT/Mortal)
-        replay_engine.stop_replaying()
-
-        cand_json = json.dumps(asdict(candidate_event), separators=(",", ":"))
+        # 3. 执行候选事件（真正的推理）
+        cand_json = serialize_mjai_event(candidate_event)
 
         try:
             response_json = sim_bot.react(cand_json)

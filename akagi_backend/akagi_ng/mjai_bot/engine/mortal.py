@@ -24,8 +24,7 @@ from akagi_ng.schema.notifications import NotificationCode
 class MortalModelResource:
     """
     持有 Mortal 模型核心资源的容器。
-    这些资源在多个 Bot 实例间共享，以减少显存占用。
-    Warmup 也在资源加载阶段完成。
+    这些资源在多个 Bot 实例间共享，以减少内存占用。
     """
 
     brain: torch.nn.Module
@@ -61,18 +60,10 @@ class MortalEngine(BaseEngine):
         obs: np.ndarray,
         masks: np.ndarray,
         invisible_obs: np.ndarray | None = None,
-        is_sync: bool | None = None,
     ) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
-        if is_sync is None:
-            is_sync = self.is_sync
-
         # 确保输入为 numpy 数组
         obs = np.asanyarray(obs)
         masks = np.asanyarray(masks)
-
-        # 如果处于显式同步模式，执行极速快进（跳过神经网络）
-        if is_sync:
-            return self._sync_fast_forward(masks)
 
         try:
             self.status.set_metadata(NotificationCode.ENGINE_TYPE, self.engine_type)
