@@ -1,10 +1,11 @@
 import json
-from dataclasses import fields
+from dataclasses import Field, fields
+from functools import cache
 
 import numpy as np
 
 from akagi_ng.schema.constants import MahjongConstants
-from akagi_ng.schema.types import MJAIEvent, MJAIMetadata
+from akagi_ng.schema.types import MJAIEvent, MJAIEventBase, MJAIMetadata
 
 # fmt: off
 mask_unicode_4p = [
@@ -23,8 +24,8 @@ def _is_approximately_equal(left: float, right: float) -> bool:
     return np.abs(left - right) <= np.finfo(float).eps
 
 
-def _softmax(arr: list[float] | np.ndarray, temperature: float = 1.0) -> np.ndarray:
-    """应用 softmax 变换到数组"""
+def _softmax(arr: list[float] | np.ndarray, temperature: float) -> np.ndarray:
+    """应用 softmax 变换到数组。使用数值稳定的平移方法。"""
     arr = np.array(arr, dtype=float)
 
     if arr.size == 0:
@@ -35,36 +36,37 @@ def _softmax(arr: list[float] | np.ndarray, temperature: float = 1.0) -> np.ndar
 
     # 平移值以确保数值稳定性
     max_val = np.max(arr)
-    arr = arr - max_val
-
-    # 应用 softmax 变换
-    exp_arr = np.exp(arr)
-    sum_exp = np.sum(exp_arr)
-
-    return exp_arr / sum_exp
+    e_x = np.exp(arr - max_val)
+    return e_x / e_x.sum()
 
 
-def meta_to_recommend(meta: MJAIMetadata, is_3p: bool = False, temperature: float = 1.0) -> list[tuple[str, float]]:
-    recommend = []
+def meta_to_recommend(meta: MJAIMetadata, is_3p: bool, temperature: float) -> list[tuple[str, float]]:
+    """将元数据转换为排序后的推荐列表。使用压缩的 zip 遍历以提升性能。"""
     mask_unicode = mask_unicode_3p if is_3p else mask_unicode_4p
 
-    q_values = meta["q_values"]
-    mask_bits = meta["mask_bits"]
+    q_values = meta.get("q_values")
+    mask_bits = meta.get("mask_bits", 0)
+    if not q_values:
+        return []
+
     scaled_q_values = _softmax(q_values, temperature)
 
-    q_idx = 0
-    for i in range(len(mask_unicode)):
-        if (mask_bits & (1 << i)) != 0:
-            if q_idx < len(scaled_q_values):
-                recommend.append((mask_unicode[i], float(scaled_q_values[q_idx])))
-                q_idx += 1
-            else:
-                break
+    # 提取被标记位激活的标签
+    active_labels = [label for i, label in enumerate(mask_unicode) if mask_bits & (1 << i)]
 
-    return sorted(recommend, key=lambda x: x[1], reverse=True)
+    # 将标签与计算出的概率合并后排序
+    recommend = list(zip(active_labels, scaled_q_values.tolist(), strict=False))
+    recommend.sort(key=lambda x: x[1], reverse=True)
+    return recommend
+
+
+@cache
+def _get_dataclass_fields(cls: type[MJAIEventBase]) -> tuple[Field[object], ...]:
+    """缓存 MJAI 事件数据类的字段对象。"""
+    return fields(cls)
 
 
 def serialize_mjai_event(event: MJAIEvent) -> str:
-    """使用紧凑的 JSON 格式序列化 MJAI 事件，不使用递归的 asdict 复制。"""
-    payload = {f.name: getattr(event, f.name) for f in fields(event)}
+    """使用紧凑的 JSON 格式序列化 MJAI 事件，通过类获取缓存的 dataclass 字段。"""
+    payload = {f.name: getattr(event, f.name) for f in _get_dataclass_fields(event.__class__)}
     return json.dumps(payload, separators=(",", ":"))
