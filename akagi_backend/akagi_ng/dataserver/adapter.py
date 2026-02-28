@@ -21,23 +21,28 @@ FuuroAction = Literal["chi_low", "chi_mid", "chi_high", "pon", "kan_select"]
 
 def _extract_consumed(hand_tiles_with_aka: list[str], target_bases: list[str]) -> list[str]:
     """
-    基于需要消耗的基础牌名（不带 'r'），从实际带有赤宝牌的手牌列表里提取出要用掉的牌
-    优先提取带有 'r' 的赤宝牌
+    基于需要消耗的基础牌名（如 "5m"），从带有赤宝牌标记的手牌中提取消耗牌。
+    原则：优先消耗赤宝牌。
     """
     consumed = []
     hand = hand_tiles_with_aka.copy()
 
     for base in target_bases:
-        aka_version = f"{base}r" if "5" in base else None
+        # 清除输入可能的赤标记，统一按基础牌名处理搜索逻辑
+        pure_base = base.replace("r", "")
+        aka_version = f"{pure_base}r" if "5" in pure_base else None
 
+        # 优先级 1: 优先寻找对应的赤宝牌
         if aka_version and aka_version in hand:
             consumed.append(aka_version)
             hand.remove(aka_version)
-        elif base in hand:
-            consumed.append(base)
-            hand.remove(base)
+        # 优先级 2: 寻找普通牌
+        elif pure_base in hand:
+            consumed.append(pure_base)
+            hand.remove(pure_base)
         else:
-            consumed.append(base)
+            # 容错：如果手牌不一致，保留原始基础名（理论上不应发生）
+            consumed.append(pure_base)
 
     return consumed
 
