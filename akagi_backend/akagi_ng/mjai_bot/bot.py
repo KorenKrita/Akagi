@@ -52,13 +52,14 @@ class MortalBot:
                 return None
 
             # 3. 增强：注入元数据与执行前瞻逻辑
-            if not (meta := response.get("meta")):
+            meta: MJAIMetadata | None = response.get("meta")
+            if not meta:
                 return None
 
             self._post_react(meta)
 
-            # 三麻抑制单一选项的 meta 显示
-            if self.is_3p and response.get("type") == "none":
+            # 4. 智能抑制：如果推荐内容仅包含唯一的“跳过”，则移除 meta 以隐藏推荐
+            if self._should_suppress_meta(meta):
                 response.pop("meta", None)
 
             return response
@@ -108,6 +109,16 @@ class MortalBot:
             self.logger.exception("MortalBot engine error")
             self.status.set_flag(NotificationCode.BOT_RUNTIME_ERROR)
             return None
+
+    def _should_suppress_meta(self, meta: MJAIMetadata) -> bool:
+        """
+        判断是否应该抑制元数据。
+        如果唯一合法动作是“跳过”，则返回 True。
+        这通常发生在三麻中由于规则禁止“吃”而导致模型返回唯一的“none”动作。
+        """
+        mask_bits = meta.get("mask_bits", 0)
+        none_idx = 43 if self.is_3p else 45
+        return mask_bits == (1 << none_idx)
 
     def _post_react(self, meta: MJAIMetadata):
         """元数据增强阶段"""
