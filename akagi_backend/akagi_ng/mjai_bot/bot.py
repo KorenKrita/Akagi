@@ -17,6 +17,7 @@ from akagi_ng.schema.types import (
     StartGameEvent,
     StartKyokuEvent,
 )
+from akagi_ng.settings import local_settings
 
 
 class MortalBot:
@@ -162,7 +163,7 @@ class MortalBot:
         if "q_values" not in meta or "mask_bits" not in meta:
             return
 
-        recommendations = meta_to_recommend(meta, is_3p=self.is_3p)
+        recommendations = meta_to_recommend(meta, is_3p=self.is_3p, temperature=local_settings.model_config.temperature)
         top_3_actions = [rec[0] for rec in recommendations[:3]]
 
         if "reach" not in top_3_actions:
@@ -199,7 +200,9 @@ class MortalBot:
                 self.logger.warning("Riichi Lookahead: Simulation returned no metadata.")
                 return None
 
-            sim_recs = meta_to_recommend(sim_meta, is_3p=self.is_3p)
+            sim_recs = meta_to_recommend(
+                sim_meta, is_3p=self.is_3p, temperature=local_settings.model_config.temperature
+            )
             all_candidates = ", ".join([f"{action}({conf:.3f})" for action, conf in sim_recs])
             self.logger.info(f"Riichi Lookahead: Simulation success. Candidates: {all_candidates}")
             return sim_meta
