@@ -1,3 +1,13 @@
+"""
+测试模块：akagi_backend/tests/unit/test_akagi_ot_circuit_breaker.py
+
+描述：针对 Akagi-OT 客户端熔断机制的单元测试。
+主要测试点：
+- 连续网络失败触发熔断状态切换。
+- 熔断开启后的快速失败 (Fast-fail) 回退逻辑。
+- 冷却期后的恢复探测与熔断重置。
+"""
+
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -25,7 +35,6 @@ class MockFallbackEngine(BaseEngine):
         obs: np.ndarray,
         masks: np.ndarray,
         invisible_obs: np.ndarray | None = None,
-        is_sync: bool | None = None,
     ) -> tuple[list[int], list[list[float]], list[list[bool]], list[bool]]:
         self.call_count += 1
         batch_size = obs.shape[0]

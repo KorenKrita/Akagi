@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_riichi_lookahead.py
+
+描述：针对立直前瞻 (Riichi Lookahead) 逻辑的单元测试。
+主要测试点：
+- 根据推理结果（立直动作是否在前三）触发模拟的逻辑。
+- 模拟执行流程 (_run_riichi_lookahead) 的正确性，包括历史事件的回放。
+- LookaheadBot 对 C++ 核心 Bot 实例的创建与注入。
+- 模拟过程中的错误捕获与状态标志上报。
+"""
+
 import json
 import sys
 import unittest
@@ -8,6 +19,8 @@ import pytest
 from akagi_ng.mjai_bot.bot import MortalBot
 from akagi_ng.mjai_bot.lookahead import LookaheadBot
 from akagi_ng.mjai_bot.status import BotStatusContext
+from akagi_ng.schema.notifications import NotificationCode
+from akagi_ng.schema.types import ReachEvent, StartGameEvent, StartKyokuEvent, TsumoEvent
 
 # 自动应用 mock_lib_loader_module fixture（定义在 unit/conftest.py 中）
 pytestmark = pytest.mark.usefixtures("mock_lib_loader_module")
@@ -62,7 +75,7 @@ class TestRiichiLookahead(unittest.TestCase):
         meta = {"q_values": [0.1], "mask_bits": 1}
         self.bot._handle_riichi_lookahead(meta)
 
-        self.assertTrue(self.bot.status.flags.get("riichi_simulation_failed"))
+        self.assertIn(NotificationCode.RIICHI_SIM_FAILED, self.bot.status.flags)
         self.assertNotIn("riichi_lookahead", meta)
 
     def test_run_riichi_lookahead_simulation_success(self):
@@ -89,25 +102,21 @@ class TestRiichiLookahead(unittest.TestCase):
         mock_engine.status = BotStatusContext()
         self.bot.engine = mock_engine  # Required for LookaheadBot instantiation
         self.bot.is_3p = True
-        self.bot.game_start_event = {"type": "start_game", "id": 0, "is_3p": True}
+        self.bot.game_start_event = StartGameEvent(id=0, is_3p=True)
         unknown_tehai = ["?"] * 13
-        self.bot.history_json = [
-            json.dumps(
-                {
-                    "type": "start_kyoku",
-                    "bakaze": "E",
-                    "kyoku": 1,
-                    "honba": 0,
-                    "kyotaku": 0,
-                    "oya": 0,
-                    "scores": [25000] * 4,
-                    "dora_marker": "1p",
-                    "tehais": [["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "E", "E", "E", "S"]]
-                    + [unknown_tehai] * 3,
-                    "is_3p": True,
-                }
+        self.bot.history = [
+            StartKyokuEvent(
+                bakaze="E",
+                kyoku=1,
+                honba=0,
+                kyotaku=0,
+                oya=0,
+                scores=[25000] * 4,
+                dora_marker="1p",
+                tehais=[["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "E", "E", "E", "S"]]
+                + [unknown_tehai] * 3,
             ),
-            json.dumps({"type": "tsumo", "actor": 0, "pai": "S"}),
+            TsumoEvent(actor=0, pai="S"),
         ]
 
         # 2. Run with patched LookaheadBot
@@ -128,7 +137,7 @@ class TestRiichiLookahead(unittest.TestCase):
             mock_lookahead_instance.simulate_reach.assert_called_once()
             args, kwargs = mock_lookahead_instance.simulate_reach.call_args
             self.assertEqual(args[0], self.bot.history)  # history_events
-            self.assertEqual(args[1], {"type": "reach", "actor": self.bot.player_id})  # candidate_event
+            self.assertEqual(args[1], ReachEvent(actor=self.bot.player_id))  # candidate_event
             self.assertEqual(kwargs.get("game_start_event"), self.bot.game_start_event)  # game_start_event
 
         # Verify result
@@ -149,8 +158,8 @@ class TestRiichiLookahead(unittest.TestCase):
         # Verify error handling
         self.assertIsNone(result)
 
-    def test_lookahead_with_replay_engine(self):
-        """测试使用 ReplayEngine 进行 Lookahead 模拟"""
+    def test_lookahead_with_direct_engine(self):
+        """测试 Lookahead 直接使用传入 engine 创建 sim_bot。"""
         mock_loader = sys.modules["akagi_ng.core.lib_loader"]
         mock_loader.libriichi.mjai.Bot = MagicMock(return_value=MagicMock())
 
@@ -167,47 +176,43 @@ class TestRiichiLookahead(unittest.TestCase):
         # 创建 LookaheadBot
         lookahead_bot = LookaheadBot(mock_engine, player_id=0, is_3p=False)
 
-        # Mock ReplayEngine (由于它在方法内部导入，我们需要 patch 它)
-        with patch("akagi_ng.mjai_bot.engine.replay.ReplayEngine") as MockReplayEngine:
-            # 配置 Mock ReplayEngine 实例
-            mock_replay_instance = MockReplayEngine.return_value
+        # 配置 sim_bot (libs.mjai.Bot) 的行为
+        # 注意：LookaheadBot 现在会创建一个新的 sim_bot
+        mock_sim_bot = mock_loader.libriichi.mjai.Bot.return_value
+        mock_sim_bot.react.side_effect = [
+            None,  # game_start
+            None,  # history
+            json.dumps({"type": "dahai", "meta": {"q_values": [0.1], "mask_bits": 45}}),  # reach event
+        ]
 
-            # 配置 sim_bot (libs.mjai.Bot) 的行为
-            # 注意：LookaheadBot 现在会创建一个新的 sim_bot
-            mock_sim_bot = mock_loader.libriichi.mjai.Bot.return_value
-            mock_sim_bot.react.side_effect = [
-                None,  # game_start
-                None,  # history
-                json.dumps({"type": "dahai", "meta": {"q_values": [0.1], "mask_bits": 45}}),  # reach event
-            ]
+        # 执行模拟
+        result = lookahead_bot.simulate_reach(
+            history_events=[
+                StartKyokuEvent(
+                    bakaze="E",
+                    kyoku=1,
+                    honba=0,
+                    kyotaku=0,
+                    oya=0,
+                    scores=[25000] * 4,
+                    dora_marker="1p",
+                    tehais=[["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "E", "E", "E", "S"]]
+                    + [["?"] * 13] * 3,
+                )
+            ],
+            candidate_event=ReachEvent(actor=0),
+            game_start_event=StartGameEvent(id=0, is_3p=False),
+        )
 
-            # 执行模拟
-            result = lookahead_bot.simulate_reach(
-                history_events=[
-                    {
-                        "type": "start_kyoku",
-                        "bakaze": "E",
-                        "kyoku": 1,
-                        "honba": 0,
-                        "kyotaku": 0,
-                        "oya": 0,
-                        "scores": [25000] * 4,
-                        "dora_marker": "1p",
-                        "tehais": [["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "E", "E", "E", "S"]]
-                        + [["?"] * 13] * 3,
-                        "is_3p": False,
-                    }
-                ],
-                candidate_event={"type": "reach", "actor": 0},
-                game_start_event={"type": "start_game", "id": 0, "is_3p": False},
-            )
+        # 验证 sim_bot 使用传入的真实 engine 构建
+        mock_loader.libriichi.mjai.Bot.assert_called_once_with(mock_engine, 0)
 
-            # 验证 ReplayEngine 被正确初始化
-            MockReplayEngine.assert_called_once_with(mock_engine.status, mock_engine)
+        # 回放阶段应禁用推理（can_act=False），候选事件保持默认推理
+        self.assertEqual(mock_sim_bot.react.call_count, 3)
+        self.assertEqual(mock_sim_bot.react.call_args_list[0].kwargs, {"can_act": False})
+        self.assertEqual(mock_sim_bot.react.call_args_list[1].kwargs, {"can_act": False})
+        self.assertEqual(mock_sim_bot.react.call_args_list[2].kwargs, {})
 
-            # 验证 stop_replaying 被调用
-            mock_replay_instance.stop_replaying.assert_called_once()
-
-            # 验证结果
-            self.assertIsNotNone(result)
-            self.assertEqual(result["mask_bits"], 45)
+        # 验证结果
+        self.assertIsNotNone(result)
+        self.assertEqual(result["mask_bits"], 45)

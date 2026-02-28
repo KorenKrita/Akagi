@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/integration/test_lookahead_resilience.py
+
+描述：针对立直前瞻 (Lookahead) 在复杂异常场景下的稳健性 (Resilience) 集成测试。
+主要测试点：
+- 在线引擎回退至本地引擎后的立直前瞻触发。
+- 断线重连恢复状态后的立直前瞻触发。
+- 重连与在线引擎故障并存时的多重回退前瞻。
+- 使用真实可选 C++ 核心库 (libriichi/3p) 进行的高保真内部模拟执行测试。
+"""
+
 import json
 import unittest
 from unittest.mock import MagicMock, patch
@@ -10,6 +21,7 @@ from akagi_ng.bridge.majsoul.bridge import MajsoulBridge
 from akagi_ng.mjai_bot.bot import MortalBot
 from akagi_ng.mjai_bot.engine.provider import EngineProvider
 from akagi_ng.mjai_bot.status import BotStatusContext
+from akagi_ng.schema.types import StartGameEvent, StartKyokuEvent, TsumoEvent
 
 # ==========================================
 # Real Liqi Payloads (Shared Resource)
@@ -84,7 +96,6 @@ class TestMortalBotResilience(unittest.TestCase):
 
         # Bot Setup
         self.bot = MortalBot(status=self.status, engine=None)
-        self.bot.model_loader = MagicMock()  # Will be overridden in _setup_provider
 
         # Initialize Bridge state
         if "authGame_req" in LIQI_LOG_DATA:
@@ -118,7 +129,7 @@ class TestMortalBotResilience(unittest.TestCase):
         self.meta_recommend_patcher.stop()
         self.factory_patcher.stop()
 
-    def _side_effect_recommend(self, meta, is_3p):
+    def _side_effect_recommend(self, meta, is_3p, temperature=1.0):
         if self.should_trigger_reach:
             return [("reach", 0.99), ("dahai", 0.1)]
         return [("dahai", 0.99)]
@@ -130,8 +141,9 @@ class TestMortalBotResilience(unittest.TestCase):
 
         for event in events:
             # Call engine if needed
-            if event["type"] in ["tsumo", "chi", "pon", "daiminkan"] and self.bot.engine:
-                self.bot.engine.react_batch([0], [0], [0], is_sync=False)
+            etype = event.get("type")
+            if etype in ["tsumo", "chi", "pon", "daiminkan"] and self.bot.engine:
+                self.bot.engine.react_batch([0], [0], [0])
 
         meta = {"q_values": [], "mask_bits": 0}
         if self.should_trigger_reach:
@@ -153,7 +165,7 @@ class TestMortalBotResilience(unittest.TestCase):
         self.mock_local_engine.react_batch.return_value = ([], [], [], [])
 
         self.bot.engine = provider
-        self.bot.model = self.mock_model
+        self.bot.bot = self.mock_model
         # Override loader for start_game calls
         self.mock_loader.return_value = (self.mock_model, provider)
         self.bot.player_id = 0
@@ -166,7 +178,7 @@ class TestMortalBotResilience(unittest.TestCase):
         self.mock_lookahead_cls.reset_mock()
 
         # Trigger tsumo
-        res = self.bot.react({"type": "tsumo", "actor": 0, "pai": "5m"})
+        res = self.bot.react(TsumoEvent(actor=0, pai="5m"))
 
         self.mock_lookahead_instance.simulate_reach.assert_called_once()
         self.should_trigger_reach = False
@@ -175,25 +187,24 @@ class TestMortalBotResilience(unittest.TestCase):
     def _simulate_reconnect(self):
         """Helper to simulate syncGame"""
         expected_mjai_restore = [
-            {
-                "type": "start_kyoku",
-                "bakaze": "E",
-                "kyoku": 1,
-                "honba": 0,
-                "kyotaku": 0,
-                "oya": 0,
-                "scores": [25000] * 4,
-                "tehais": [["?"] * 13] * 4,
-                "is_3p": True,
-                "sync": True,
-            }
+            StartKyokuEvent(
+                bakaze="E",
+                kyoku=1,
+                honba=0,
+                kyotaku=0,
+                oya=0,
+                scores=[25000] * 4,
+                dora_marker="1p",
+                tehais=[["?"] * 13] * 4,
+                sync=True,
+            )
         ]
         with patch.object(self.bridge, "_parse_sync_game", return_value=expected_mjai_restore):
             events = self.bridge.parse_liqi(LIQI_LOG_DATA["syncGame_res"])
             if events:
                 for ev in events:
                     # 过滤非标准 MJAI 事件
-                    if ev.get("type") == "system_event":
+                    if ev.type == "system_event":
                         continue
                     self.bot.react(ev)
 
@@ -221,7 +232,7 @@ class TestMortalBotResilience(unittest.TestCase):
         self._setup_provider(online_fail=False)
 
         # 1. Init
-        self.bot.react({"type": "start_game", "id": 0, "is_3p": False})
+        self.bot.react(StartGameEvent(id=0, is_3p=False))
         # 2. Reconnect
         self._simulate_reconnect()
 
@@ -241,12 +252,12 @@ class TestMortalBotResilience(unittest.TestCase):
 
         # 1. Fail First
         self.mock_online_engine.react_batch.side_effect = Exception("Fail")
-        self.bot.react({"type": "tsumo", "actor": 0, "pai": "1m"})
+        self.bot.react(TsumoEvent(actor=0, pai="1m"))
         self.assertTrue(provider.fallback_active)
 
         # 2. Recover Next
         self.mock_online_engine.react_batch.side_effect = None
-        self.bot.react({"type": "tsumo", "actor": 0, "pai": "2m"})
+        self.bot.react(TsumoEvent(actor=0, pai="2m"))
         self.assertFalse(provider.fallback_active, "Should have recovered")
 
         # 3. Trigger Riichi
@@ -368,27 +379,26 @@ class TestLookaheadInternal(unittest.TestCase):
         self.mock_online_engine.react_batch.side_effect = Exception("Online Dead")
 
         # Sequence
-        self.bot.react({"type": "start_game", "id": 0})
+        self.bot.react(StartGameEvent(id=0, is_3p=False))
         self.bot.react(
-            {
-                "type": "start_kyoku",
-                "bakaze": "E",
-                "kyoku": 1,
-                "honba": 0,
-                "kyotaku": 0,
-                "oya": 0,
-                "scores": [25000] * 4,
-                "dora_marker": "1p",
-                "tehais": [
+            StartKyokuEvent(
+                bakaze="E",
+                kyoku=1,
+                honba=0,
+                kyotaku=0,
+                oya=0,
+                scores=[25000] * 4,
+                dora_marker="1p",
+                tehais=[
                     ["1p", "2p", "3p", "4p", "5p", "6p", "7p", "8p", "9p", "1s", "1s", "1s", "2s"],
                     ["?"] * 13,
                     ["?"] * 13,
                     ["?"] * 13,
                 ],
-            }
+            )
         )
         # Actor 0 draw 2s (Ready to discard 1s or similar)
-        self.bot.react({"type": "tsumo", "actor": 0, "pai": "2s"})
+        self.bot.react(TsumoEvent(actor=0, pai="2s"))
 
         self.assertTrue(self.provider.fallback_active)
         result = self.bot._run_riichi_lookahead()
@@ -403,28 +413,26 @@ class TestLookaheadInternal(unittest.TestCase):
         self.mock_online_engine.react_batch.side_effect = Exception("Online Dead")
 
         # Sequence
-        self.bot.react({"type": "start_game", "id": 0})
+        self.bot.react(StartGameEvent(id=0, is_3p=True))
         self.bot.react(
-            {
-                "type": "start_kyoku",
-                "bakaze": "E",
-                "kyoku": 1,
-                "honba": 0,
-                "kyotaku": 0,
-                "oya": 0,
-                "scores": [35000, 35000, 35000, 0],
-                "dora_marker": "1p",
-                "is_3p": True,
-                "tehais": [
+            StartKyokuEvent(
+                bakaze="E",
+                kyoku=1,
+                honba=0,
+                kyotaku=0,
+                oya=0,
+                scores=[35000, 35000, 35000, 0],
+                dora_marker="1p",
+                tehais=[
                     ["1p", "2p", "3p", "4p", "5p", "6p", "7p", "8p", "9p", "1s", "1s", "1s", "2s"],
                     ["?"] * 13,
                     ["?"] * 13,
                     ["?"] * 13,
                 ],
-            }
+            )
         )
         # Actor 0 draw 2s
-        self.bot.react({"type": "tsumo", "actor": 0, "pai": "2s"})
+        self.bot.react(TsumoEvent(actor=0, pai="2s"))
 
         self.assertTrue(self.provider.fallback_active)
         result = self.bot._run_riichi_lookahead()

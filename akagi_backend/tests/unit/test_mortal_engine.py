@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_mortal_engine.py
+
+描述：针对本地 Mortal 引擎 (MortalEngine) 的单元测试。
+主要测试点：
+- 模型资源 (MortalModelResource) 的成功加载、路径不存在及文件损坏处理。
+- 批处理推理逻辑 (_react_batch) 的调用与结果解析。
+- 温度采样 (Boltzmann) 和 Top-P 采样逻辑。
+- 推理过程中的异常捕获与 RuntimeError 抛出。
+"""
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -34,15 +45,16 @@ def test_mortal_engine_init(mock_mortal_resource) -> None:
     assert engine.device == mock_mortal_resource.device
 
 
-def test_mortal_engine_react_batch_sync(mock_mortal_resource) -> None:
+def test_mortal_engine_react_batch_calls_inference(mock_mortal_resource) -> None:
     engine = MortalEngine(BotStatusContext(), mock_mortal_resource, is_3p=False)
     obs = np.zeros((1, 200, 34))
     masks = np.zeros((1, 46), dtype=bool)
     masks[0, 5] = True
-    # is_sync 模式下跳过模型调用，直接返回第一个合法动作
-    actions, _, _, is_greedy = engine.react_batch(obs, masks, obs, is_sync=True)
-    assert actions == [5]
-    assert is_greedy == [True]
+    with patch.object(engine, "_react_batch", return_value=([5], [[0.0] * 46], masks.tolist(), [True])) as mock_impl:
+        actions, _, _, is_greedy = engine.react_batch(obs, masks, obs)
+        assert actions == [5]
+        assert is_greedy == [True]
+        mock_impl.assert_called_once()
 
 
 def test_sample_top_p() -> None:
@@ -119,5 +131,18 @@ def test_mortal_engine_react_batch_list_input(mock_mortal_resource) -> None:
     engine = MortalEngine(BotStatusContext(), mock_mortal_resource, is_3p=False)
     obs = [[[0.0] * 34] * 200]
     masks = [[True] * 46]
-    actions, _, _, _ = engine.react_batch(obs, masks, obs, is_sync=True)
-    assert len(actions) == 1
+    with patch.object(
+        engine,
+        "_react_batch",
+        return_value=(
+            [0],
+            [[0.0] * 46],
+            [
+                [True] * 46,
+            ],
+            [True],
+        ),
+    ) as mock_impl:
+        actions, _, _, _ = engine.react_batch(obs, masks, obs)
+        assert len(actions) == 1
+        mock_impl.assert_called_once()

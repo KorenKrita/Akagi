@@ -1,3 +1,13 @@
+"""
+测试模块：akagi_backend/tests/unit/test_dataserver_lifecycle.py
+
+描述：针对数据服务器 (DataServer) 生命周期管理和 SSE 消息分发的单元测试。
+主要测试点：
+- DataServer 的启动 (Run)、清理和停止 (Stop) 流程。
+- 通过 SSEManager 广播事件、推荐和通知的转发逻辑。
+- 异步事件循环 (Event Loop) 的正确管理与关闭。
+"""
+
 import asyncio
 from unittest.mock import MagicMock, patch
 
@@ -36,12 +46,8 @@ def test_dataserver_proxy_methods(ds):
     ds.send_recommendations({"recommendations": ["discard"], "action": "discard"})
     assert ds.sse_manager.broadcast_event.called
 
-    # update_system_error
-    ds.update_system_error(404, "not found")
-    ds.sse_manager.broadcast_event.assert_called()
-
     # send_notifications
-    ds.send_notifications([{"code": 1001, "msg": "msg"}])
+    ds.send_notifications(["1001"])
     ds.sse_manager.broadcast_event.assert_called()
 
 

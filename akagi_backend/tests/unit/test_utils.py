@@ -1,15 +1,27 @@
 """
-mjai_bot/utils.py 单元测试
+测试模块：akagi_backend/tests/unit/test_utils.py
 
-测试工具函数的正确性。
+描述：针对通用工具函数 (MJAI Bot Utils) 的单元测试。
+主要测试点：
+- 3P/4P 模式下的动作掩码 Unicode 列表完整性。
+- 元数据转推荐列表 (meta_to_recommend) 的排序、温度参数及边界情况处理。
+- 优化后的 MJAI 事件序列化 (serialize_mjai_event) 与标准 asdict 序列化的一致性校验。
 """
 
+import json
 import unittest
+from dataclasses import asdict
 
 from akagi_ng.mjai_bot.utils import (
     mask_unicode_3p,
     mask_unicode_4p,
     meta_to_recommend,
+    serialize_mjai_event,
+)
+from akagi_ng.schema.types import (
+    DahaiEvent,
+    StartGameEvent,
+    StartKyokuEvent,
 )
 
 
@@ -157,3 +169,36 @@ class TestMetaToRecommendEdgeCases(unittest.TestCase):
 
         # 极低温度下，最高值应该接近 1.0
         self.assertGreater(result[0][1], 0.9)
+
+
+class TestMJAIEventSerialization(unittest.TestCase):
+    """测试 MJAI 事件序列化"""
+
+    def _legacy_serialize(self, event) -> str:
+        return json.dumps(asdict(event), separators=(",", ":"))
+
+    def test_serialize_start_game_matches_legacy(self):
+        event = StartGameEvent(id=0, is_3p=False, sync=True)
+        self.assertEqual(serialize_mjai_event(event), self._legacy_serialize(event))
+
+    def test_serialize_start_kyoku_matches_legacy(self):
+        event = StartKyokuEvent(
+            bakaze="E",
+            kyoku=1,
+            honba=0,
+            kyotaku=0,
+            oya=0,
+            scores=[25000, 25000, 25000, 25000],
+            dora_marker="1p",
+            tehais=[
+                ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "E", "S", "W", "N"],
+                ["?"] * 13,
+                ["?"] * 13,
+                ["?"] * 13,
+            ],
+        )
+        self.assertEqual(serialize_mjai_event(event), self._legacy_serialize(event))
+
+    def test_serialize_dahai_matches_legacy(self):
+        event = DahaiEvent(actor=1, pai="5mr", tsumogiri=False)
+        self.assertEqual(serialize_mjai_event(event), self._legacy_serialize(event))

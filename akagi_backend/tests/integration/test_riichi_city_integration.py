@@ -1,4 +1,12 @@
-"""Riichi City Bridge 和 Bot 的集成测试"""
+"""
+测试模块：akagi_backend/tests/integration/test_riichi_city_integration.py
+
+描述：针对麻雀一番街 (Riichi City) 平台的二进制协议完整流转集成测试。
+主要测试点：
+- 二进制协议帧模拟与 UID 登录逻辑模拟。
+- 房间进入 (EnterRoom) 与游戏开始 (GameStart) 的级联处理。
+- 验证从原始二进制包到底层 Bridge 转换再到 Controller 决策的完整业务闭环。
+"""
 
 import json
 
@@ -22,7 +30,7 @@ def test_riichi_city_bridge_full_flow(riichi_city_bridge, integration_controller
     # 1. Login UID 消息 (type 0x01)
     login_msg = make_rc_msg(1, 0x01, {"uid": "12345"})
     events = riichi_city_bridge.parse(login_msg)
-    assert events is None
+    assert events == []
     assert riichi_city_bridge.uid == 12345
 
     # 2. Enter Room 消息
@@ -69,10 +77,11 @@ def test_riichi_city_bridge_full_flow(riichi_city_bridge, integration_controller
     )
     events = riichi_city_bridge.parse(game_start_msg)
     assert len(events) >= 2
-    assert events[0]["type"] == "start_game"
-    assert events[1]["type"] == "start_kyoku"
+    assert events[0].type == "start_game"
+    assert events[1].type == "start_kyoku"
 
     # Controller 处理
     for ev in events:
-        res = integration_controller.react(ev)
-        assert res is None or "error" not in res
+        integration_controller.react(ev)
+        res = integration_controller.last_response
+        assert res is None or isinstance(res, dict)

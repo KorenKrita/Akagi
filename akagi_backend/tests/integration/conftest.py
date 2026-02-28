@@ -1,3 +1,13 @@
+"""
+测试模块：akagi_backend/tests/integration/conftest.py
+
+描述：集成测试专用的 pytest 配置与 Fixtures 模块。
+主要测试点：
+- 各平台 Bridge (Majsoul, Tenhou, Riichi City, Amatsuki) 的集成测试实例提供。
+- 集成测试环境下的 Mock 引擎配置，防止因环境差异导致的 C++ 扩展崩溃。
+- 提供带有默认配置的集成测试专用 Controller 和 Settings 实例。
+"""
+
 from unittest.mock import MagicMock
 
 import pytest

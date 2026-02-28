@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_electron_client.py
+
+描述：针对 Electron 注入客户端 (Electron Client) 的单元测试，负责与 Electron 渲染进程的 WebSocket 通信。
+主要测试点：
+- 客户端工厂 (create_electron_client) 的实例创建。
+- 雀魂 (Majsoul) 和天凤 (Tenhou) 客户端的连接生命周期管理。
+- 调试器事件 (Debugger Detached) 和协议定义更新 (LiqiDefinition) 的处理。
+- WebSocket 帧 (Frame) 的 push 与分发逻辑，包括队列满时的丢弃策略。
+"""
+
 import base64
 import contextlib
 import queue
@@ -9,6 +20,15 @@ from akagi_ng.electron_client import (
     MajsoulElectronClient,
     TenhouElectronClient,
     create_electron_client,
+)
+from akagi_ng.schema.types import (
+    DebuggerDetachedMessage,
+    EndGameEvent,
+    LiqiDefinitionMessage,
+    TsumoEvent,
+    WebSocketClosedMessage,
+    WebSocketCreatedMessage,
+    WebSocketFrameMessage,
 )
 
 # ==========================================================
@@ -46,21 +66,21 @@ def ms_client():
 
 def test_majsoul_lifecycle(ms_client):
     # Created
-    ms_client.push_message({"type": "websocket_created", "url": "wss://majsoul.com/game"})
+    ms_client.push_message(WebSocketCreatedMessage(url="wss://majsoul.com/game"))
     assert ms_client._active_connections == 1
-    assert ms_client.message_queue.get(timeout=2.0)["code"] == "client_connected"
+    assert ms_client.message_queue.get(timeout=2.0).code == "client_connected"
 
     # Closed
-    ms_client.push_message({"type": "websocket_closed"})
+    ms_client.push_message(WebSocketClosedMessage())
     assert ms_client._active_connections == 0
-    assert ms_client.message_queue.get(timeout=2.0)["code"] == "game_disconnected"
+    assert ms_client.message_queue.get(timeout=2.0).code == "game_disconnected"
 
 
 def test_majsoul_debugger_events(ms_client):
     ms_client._active_connections = 1
-    ms_client.push_message({"type": "debugger_detached"})
+    ms_client.push_message(DebuggerDetachedMessage())
     assert ms_client._active_connections == 0
-    assert ms_client.message_queue.get(timeout=2.0)["code"] == "game_disconnected"
+    assert ms_client.message_queue.get(timeout=2.0).code == "game_disconnected"
 
 
 def test_majsoul_liqi_update(ms_client):
@@ -69,21 +89,21 @@ def test_majsoul_liqi_update(ms_client):
         patch("akagi_ng.electron_client.majsoul.ensure_dir"),
         patch("builtins.open", mock_open()),
     ):
-        ms_client.push_message({"type": "liqi_definition", "data": '{"test":1}'})
-        assert ms_client.message_queue.get(timeout=2.0)["code"] == "majsoul_proto_updated"
+        ms_client.push_message(LiqiDefinitionMessage(data='{"test":1}'))
+        assert ms_client.message_queue.get(timeout=2.0).code == "majsoul_proto_updated"
 
     # Fail case
-    ms_client.push_message({"type": "liqi_definition", "data": "invalid json"})
-    assert ms_client.message_queue.get(timeout=2.0)["code"] == "majsoul_proto_update_failed"
+    ms_client.push_message(LiqiDefinitionMessage(data="invalid json"))
+    assert ms_client.message_queue.get(timeout=2.0).code == "majsoul_proto_update_failed"
 
 
 def test_majsoul_frames(ms_client):
-    ms_client.bridge.parse.return_value = [{"type": "msg1"}, {"type": "end_game"}]
-    ms_client.push_message({"type": "websocket", "data": base64.b64encode(b"raw").decode()})
+    ms_client.bridge.parse.return_value = [TsumoEvent(actor=0, pai="1m"), EndGameEvent()]
+    ms_client.push_message(WebSocketFrameMessage(direction="inbound", data=base64.b64encode(b"raw").decode()))
 
-    assert ms_client.message_queue.get(timeout=2.0)["type"] == "msg1"
-    assert ms_client.message_queue.get(timeout=2.0)["type"] == "end_game"
-    assert ms_client.message_queue.get(timeout=2.0)["code"] == "return_lobby"
+    assert ms_client.message_queue.get(timeout=2.0).type == "tsumo"
+    assert ms_client.message_queue.get(timeout=2.0).type == "end_game"
+    assert ms_client.message_queue.get(timeout=2.0).code == "return_lobby"
 
 
 # ==========================================================
@@ -103,35 +123,76 @@ def th_client():
 
 
 def test_tenhou_lifecycle(th_client):
-    th_client.push_message({"type": "websocket_created", "url": "https://tenhou.net/3/"})
+    th_client.push_message(WebSocketCreatedMessage(url="https://tenhou.net/3/"))
     assert th_client._active_connections == 1
-    assert th_client.message_queue.get(timeout=2.0)["code"] == "client_connected"
+    assert th_client.message_queue.get(timeout=2.0).code == "client_connected"
 
-    th_client.push_message({"type": "websocket_closed"})
+    th_client.push_message(WebSocketClosedMessage())
     assert th_client._active_connections == 0
-    assert th_client.message_queue.get(timeout=2.0)["code"] == "game_disconnected"
+    assert th_client.message_queue.get(timeout=2.0).code == "game_disconnected"
+
+
+def test_tenhou_non_target_url_ignored(th_client):
+    th_client.push_message(WebSocketCreatedMessage(url="wss://google.com/socket"))
+    assert th_client._active_connections == 0
+    assert th_client.message_queue.empty()
 
 
 def test_tenhou_frames(th_client):
     # Text frame
-    th_client.bridge.parse.return_value = [{"type": "msg1"}]
-    th_client.push_message({"type": "websocket", "direction": "inbound", "data": "HELO"})
+    th_client.bridge.parse.return_value = [TsumoEvent(actor=0, pai="1m")]
+    th_client.push_message(WebSocketFrameMessage(direction="inbound", data="HELO"))
 
     msg = th_client.message_queue.get(timeout=2.0)
-    assert msg.get("type") == "msg1"
+    assert msg.type == "tsumo"
 
     # Binary frame
     th_client.push_message(
-        {"type": "websocket", "direction": "inbound", "opcode": 2, "data": base64.b64encode(b"binary").decode()}
+        WebSocketFrameMessage(direction="inbound", opcode=2, data=base64.b64encode(b"binary").decode())
     )
     th_client.bridge.parse.assert_called_with(b"binary")
 
     # Exception handle
     th_client.bridge.parse.side_effect = Exception("crash")
-    th_client.push_message({"type": "websocket", "direction": "inbound", "data": "FAIL"})
+    th_client.push_message(WebSocketFrameMessage(direction="inbound", data="FAIL"))
 
     # Process remaining binary message if any
     with contextlib.suppress(queue.Empty):
         th_client.message_queue.get(timeout=0.1)
 
     assert th_client.message_queue.empty()
+
+
+def test_tenhou_outbound_frame_ignored(th_client):
+    th_client.push_message(WebSocketFrameMessage(direction="outbound", data="ignore"))
+    th_client.bridge.parse.assert_not_called()
+    assert th_client.message_queue.empty()
+
+
+def test_majsoul_queue_full_drops_event():
+    q = queue.Queue(maxsize=1)
+    q.put_nowait({"sentinel": True})
+
+    with patch("akagi_ng.electron_client.majsoul.MajsoulBridge"):
+        client = MajsoulElectronClient(shared_queue=q)
+    client.start()
+
+    client.push_message(WebSocketCreatedMessage(url="wss://majsoul.com/game"))
+
+    assert client._active_connections == 1
+    assert q.qsize() == 1
+
+
+def test_tenhou_queue_full_drops_event():
+    q = queue.Queue(maxsize=1)
+    q.put_nowait({"sentinel": True})
+
+    with patch("akagi_ng.electron_client.tenhou.TenhouBridge") as mock_bridge_cls:
+        mock_bridge = mock_bridge_cls.return_value
+        mock_bridge.parse.return_value = [TsumoEvent(actor=0, pai="1m")]
+        client = TenhouElectronClient(shared_queue=q)
+    client.start()
+
+    client.push_message(WebSocketFrameMessage(direction="inbound", data="HELO"))
+
+    assert q.qsize() == 1

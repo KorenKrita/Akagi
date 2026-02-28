@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_bridge_tenhou.py
+
+描述：针对天凤 (Tenhou) 平台 XML/JSON 协议 Bridge 逻辑的单元测试。
+主要测试点：
+- 天凤协议标签 (Tag) 到 MJAI 事件的转换逻辑。
+- 复杂的副露 (Meld) 编码解析与处理（吃、碰、明/暗/加杠）。
+- 分数结算 (sc/owari 标签) 的解析。
+- 断线重连 (HELO/REJOIN) 时的状态同步逻辑。
+"""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,8 +28,8 @@ def test_convert_start_game(bridge):
     bridge.state.is_3p = True
     result = bridge._convert_start_game(message)
     assert len(result) == 1
-    assert result[0]["type"] == "start_game"
-    assert result[0]["is_3p"] is True
+    assert result[0].type == "start_game"
+    assert result[0].is_3p is True
 
 
 def test_convert_tsumo(bridge):
@@ -28,9 +39,9 @@ def test_convert_tsumo(bridge):
         mock_conv.return_value = "5z"
         result = bridge._convert_tsumo(message)
         assert len(result) == 1
-        assert result[0]["type"] == "tsumo"
-        assert result[0]["actor"] == 0
-        assert result[0]["pai"] == "5z"
+        assert result[0].type == "tsumo"
+        assert result[0].actor == 0
+        assert result[0].pai == "5z"
 
 
 def test_convert_tsumo_high_index(bridge):
@@ -39,7 +50,7 @@ def test_convert_tsumo_high_index(bridge):
     with patch("akagi_ng.bridge.tenhou.bridge.tenhou_to_mjai_one") as mock_conv:
         mock_conv.return_value = "5z"
         result = bridge._convert_tsumo(message)
-        assert result[0]["actor"] == 1
+        assert result[0].actor == 1
 
 
 def test_convert_dahai_tsumogiri(bridge):
@@ -50,8 +61,8 @@ def test_convert_dahai_tsumogiri(bridge):
         mock_conv.return_value = "5z"
         result = bridge._convert_dahai(message)
         assert len(result) == 1
-        assert result[0]["type"] == "dahai"
-        assert result[0]["tsumogiri"] is True
+        assert result[0].type == "dahai"
+        assert result[0].tsumogiri is True
 
 
 def test_convert_meld_pon(bridge):
@@ -67,8 +78,8 @@ def test_convert_meld_pon(bridge):
         MockMeldClass.parse_meld.return_value = mock_meld
         result = bridge._convert_meld(message)
         assert len(result) == 1
-        assert result[0]["type"] == "pon"
-        assert result[0]["actor"] == 1
+        assert result[0].type == "pon"
+        assert result[0].actor == 1
 
 
 def test_convert_reach(bridge):
@@ -76,8 +87,8 @@ def test_convert_reach(bridge):
     message = {"tag": "REACH", "who": "1", "step": "1"}
     result = bridge._dispatch_reach(message)
     assert len(result) == 1
-    assert result[0]["type"] == "reach"
-    assert result[0]["actor"] == 1
+    assert result[0].type == "reach"
+    assert result[0].actor == 1
 
 
 def test_decode_message_heartbeat(bridge) -> None:
@@ -85,7 +96,10 @@ def test_decode_message_heartbeat(bridge) -> None:
 
 
 def test_decode_message_invalid_json(bridge) -> None:
-    assert bridge._decode_message(b"not json") is None
+    import json
+
+    with pytest.raises(json.JSONDecodeError):
+        bridge._decode_message(b"not json")
 
 
 def test_convert_un_3p(bridge) -> None:
@@ -103,34 +117,34 @@ def test_convert_un_4p(bridge) -> None:
 def test_convert_dora(bridge) -> None:
     message = {"tag": "DORA", "hai": "4"}
     res = bridge._convert_dora(message)
-    assert res[0]["type"] == "dora"
-    assert res[0]["dora_marker"] == "2m"
+    assert res[0].type == "dora"
+    assert res[0].dora_marker == "2m"
 
 
 def test_convert_end_game(bridge) -> None:
     bridge.state.game_active = True
     res = bridge._convert_end_game()
-    assert res[0]["type"] == "end_game"
+    assert res[0].type == "end_game"
     assert bridge.state.game_active is False
 
 
 def test_convert_ryukyoku(bridge) -> None:
     message = {"tag": "RYUUKYOKU", "sc": "250,10,250,-10,250,10,250,-10"}
     res = bridge._convert_ryukyoku(message)
-    assert any(e["type"] == "ryukyoku" for e in res)
-    assert any(e["type"] == "end_kyoku" for e in res)
+    assert any(e.type == "ryukyoku" for e in res)
+    assert any(e.type == "end_kyoku" for e in res)
 
 
 def test_convert_hora(bridge) -> None:
     message = {"tag": "AGARI", "sc": "250,10,250,-10,250,10,250,-10"}
     res = bridge._convert_hora(message)
-    assert res[0]["type"] == "end_kyoku"
+    assert res[0].type == "end_kyoku"
 
 
 def test_handle_nukidora(bridge) -> None:
     bridge.state.hand = [120]
     res = bridge._handle_nukidora(0)
-    assert res[0]["type"] == "nukidora"
+    assert res[0].type == "nukidora"
     assert 120 not in bridge.state.hand
 
 
@@ -143,24 +157,24 @@ def test_convert_start_kyoku(bridge) -> None:
         "hai": "0,4,8,12,16,20,24,28,32,36,40,44,48",
     }
     res = bridge._convert_start_kyoku(message)
-    assert res[0]["type"] == "start_kyoku"
-    assert res[0]["bakaze"] == "E"
-    assert res[0]["kyoku"] == 1
-    assert res[0]["oya"] == 0
-    assert "is_3p" not in res[0]
+    assert res[0].type == "start_kyoku"
+    assert res[0].bakaze == "E"
+    assert res[0].kyoku == 1
+    assert res[0].oya == 0
+    assert not hasattr(res[0], "is_3p")
 
 
 def test_dispatch_reach_accepted(bridge) -> None:
     message = {"tag": "REACH", "who": "0", "step": "2", "ten": "240,250,250,250"}
     res = bridge._dispatch_reach(message)
-    assert res[0]["type"] == "reach_accepted"
+    assert res[0].type == "reach_accepted"
     assert bridge.state.in_riichi is True
 
 
 def test_convert_helo_reinit(bridge) -> None:
     bridge.state.game_active = True
     res = bridge._convert_helo({"tag": "HELO"})
-    assert res[0]["type"] == "end_game"
+    assert res[0].type == "end_game"
     assert bridge.state.game_active is False
 
 
@@ -198,13 +212,13 @@ def test_convert_helo_reinit_active_game(tenhou_bridge) -> None:
     tenhou_bridge.state.game_active = True
     msgs = tenhou_bridge._convert_helo({"tag": "HELO"})
     assert msgs is not None
-    assert msgs[0]["type"] == "end_game"
+    assert msgs[0].type == "end_game"
     assert tenhou_bridge.state.game_active is False
 
 
 def test_convert_rejoin(tenhou_bridge) -> None:
     msgs = tenhou_bridge._convert_rejoin({"tag": "REJOIN"})
-    assert msgs is None
+    assert msgs == []
 
 
 def test_convert_un_empty_names(tenhou_bridge) -> None:

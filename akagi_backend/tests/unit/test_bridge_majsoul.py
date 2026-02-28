@@ -1,8 +1,12 @@
 """
-MajsoulBridge 单元测试
+测试模块：akagi_backend/tests/unit/test_bridge_majsoul.py
 
-测试雀魂协议解析器（MajsoulBridge）的 MJAI 转换功能。
-直接测试 parse_liqi 方法的 MJAI 转换逻辑。
+描述：针对雀魂 (Majsoul) Liqi 协议解析与 Bridge 逻辑的单元测试。
+主要测试点：
+- 认证 (authGame) 请求与响应的处理（座位识别、三麻/四麻判断）。
+- Liqi 协议中各种 ActionPrototype 消息到 MJAI 事件的转换。
+- 雀魂特有的牌面编码 (Tile Mapping) 到 MJAI 格式的映射。
+- 游戏结束统计与排名计算。
 """
 
 import unittest
@@ -52,8 +56,8 @@ class TestMajsoulBridge(unittest.TestCase):
         self.assertFalse(self.bridge.is_3p)
         self.assertEqual(self.bridge.seat, 1)  # 玩家在第二个位置
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "start_game")
-        self.assertEqual(result[0]["id"], 1)
+        self.assertEqual(result[0].type, "start_game")
+        self.assertEqual(result[0].id, 1)
 
     def test_auth_game_response_returns_start_game_3p(self):
         """测试 authGame 响应返回正确的 start_game 事件（三人麻）"""
@@ -72,8 +76,8 @@ class TestMajsoulBridge(unittest.TestCase):
 
         self.assertTrue(self.bridge.is_3p)
         self.assertEqual(self.bridge.seat, 1)
-        self.assertEqual(result[0]["type"], "start_game")
-        self.assertTrue(result[0]["is_3p"])
+        self.assertEqual(result[0].type, "start_game")
+        self.assertTrue(result[0].is_3p)
 
     # ========== start_kyoku 相关测试 ==========
 
@@ -115,14 +119,14 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "start_kyoku")
-        self.assertEqual(result[0]["bakaze"], "E")
-        self.assertEqual(result[0]["kyoku"], 1)
-        self.assertEqual(result[0]["honba"], 0)
-        self.assertEqual(result[0]["oya"], 0)
-        self.assertEqual(result[0]["dora_marker"], "1m")
-        self.assertEqual(result[0]["scores"], [25000, 25000, 25000, 25000])
-        self.assertNotIn("is_3p", result[0])
+        self.assertEqual(result[0].type, "start_kyoku")
+        self.assertEqual(result[0].bakaze, "E")
+        self.assertEqual(result[0].kyoku, 1)
+        self.assertEqual(result[0].honba, 0)
+        self.assertEqual(result[0].oya, 0)
+        self.assertEqual(result[0].dora_marker, "1m")
+        self.assertEqual(result[0].scores, [25000, 25000, 25000, 25000])
+        self.assertFalse(hasattr(result[0], "is_3p"))
 
     def test_action_new_round_with_14_tiles_includes_tsumo(self):
         """测试庄家开局 14 张牌时包含自摸事件"""
@@ -163,9 +167,9 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["type"], "start_kyoku")
-        self.assertEqual(result[1]["type"], "tsumo")
-        self.assertEqual(result[1]["actor"], 0)
+        self.assertEqual(result[0].type, "start_kyoku")
+        self.assertEqual(result[1].type, "tsumo")
+        self.assertEqual(result[1].actor, 0)
 
     # ========== tsumo/dahai 相关测试 ==========
 
@@ -189,9 +193,9 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "tsumo")
-        self.assertEqual(result[0]["actor"], 1)
-        self.assertEqual(result[0]["pai"], "5m")
+        self.assertEqual(result[0].type, "tsumo")
+        self.assertEqual(result[0].actor, 1)
+        self.assertEqual(result[0].pai, "5m")
 
     def test_action_discard_tile_returns_dahai(self):
         """测试 ActionDiscardTile 返回正确的 dahai 事件"""
@@ -214,10 +218,10 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "dahai")
-        self.assertEqual(result[0]["actor"], 2)
-        self.assertEqual(result[0]["pai"], "9p")
-        self.assertFalse(result[0]["tsumogiri"])
+        self.assertEqual(result[0].type, "dahai")
+        self.assertEqual(result[0].actor, 2)
+        self.assertEqual(result[0].pai, "9p")
+        self.assertFalse(result[0].tsumogiri)
 
     def test_action_discard_tile_with_riichi(self):
         """测试立直时的切牌事件"""
@@ -241,10 +245,10 @@ class TestMajsoulBridge(unittest.TestCase):
 
         # 应该有 reach, dahai 和 reach_accepted 三个事件
         self.assertEqual(len(result), 3)
-        self.assertEqual(result[0]["type"], "reach")
-        self.assertEqual(result[0]["actor"], 0)
-        self.assertEqual(result[1]["type"], "dahai")
-        self.assertTrue(result[1]["tsumogiri"])
+        self.assertEqual(result[0].type, "reach")
+        self.assertEqual(result[0].actor, 0)
+        self.assertEqual(result[1].type, "dahai")
+        self.assertTrue(result[1].tsumogiri)
 
     # ========== 副露相关测试 ==========
 
@@ -269,10 +273,10 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "chi")
-        self.assertEqual(result[0]["actor"], 1)
-        self.assertEqual(result[0]["target"], 0)
-        self.assertEqual(result[0]["pai"], "4m")  # MJAI 格式
+        self.assertEqual(result[0].type, "chi")
+        self.assertEqual(result[0].actor, 1)
+        self.assertEqual(result[0].target, 0)
+        self.assertEqual(result[0].pai, "4m")  # MJAI 格式
 
     def test_action_chi_peng_gang_pon(self):
         """测试碰牌事件"""
@@ -295,11 +299,11 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "pon")
-        self.assertEqual(result[0]["actor"], 2)
-        self.assertEqual(result[0]["target"], 0)
+        self.assertEqual(result[0].type, "pon")
+        self.assertEqual(result[0].actor, 2)
+        self.assertEqual(result[0].target, 0)
         # 7z 在 MJAI 格式中是 "C"（中）
-        self.assertEqual(result[0]["pai"], "C")
+        self.assertEqual(result[0].pai, "C")
 
     def test_action_angang_addgang_ankan(self):
         """测试暗杠事件"""
@@ -321,8 +325,8 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "ankan")
-        self.assertEqual(result[0]["actor"], 0)
+        self.assertEqual(result[0].type, "ankan")
+        self.assertEqual(result[0].actor, 0)
 
     def test_action_angang_addgang_kakan(self):
         """测试加杠事件"""
@@ -344,9 +348,9 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "kakan")
-        self.assertEqual(result[0]["actor"], 1)
-        self.assertEqual(result[0]["pai"], "3p")
+        self.assertEqual(result[0].type, "kakan")
+        self.assertEqual(result[0].actor, 1)
+        self.assertEqual(result[0].pai, "3p")
 
     # ========== 和牌/流局相关测试 ==========
 
@@ -370,7 +374,7 @@ class TestMajsoulBridge(unittest.TestCase):
 
         # 实际实现返回 end_kyoku
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "end_kyoku")
+        self.assertEqual(result[0].type, "end_kyoku")
 
     def test_action_liuju_returns_end_kyoku(self):
         """测试流局事件返回 end_kyoku"""
@@ -391,7 +395,7 @@ class TestMajsoulBridge(unittest.TestCase):
 
         # 实际实现返回 end_kyoku
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "end_kyoku")
+        self.assertEqual(result[0].type, "end_kyoku")
 
     def test_action_notile_returns_end_kyoku(self):
         """测试荒牌流局返回 end_kyoku"""
@@ -409,7 +413,7 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "end_kyoku")
+        self.assertEqual(result[0].type, "end_kyoku")
 
     # ========== 拔北测试 ==========
 
@@ -432,9 +436,9 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "nukidora")
-        self.assertEqual(result[0]["actor"], 1)
-        self.assertEqual(result[0]["pai"], "N")
+        self.assertEqual(result[0].type, "nukidora")
+        self.assertEqual(result[0].actor, 1)
+        self.assertEqual(result[0].pai, "N")
 
     # ========== 游戏结束测试 ==========
 
@@ -460,22 +464,22 @@ class TestMajsoulBridge(unittest.TestCase):
         result = self.bridge.parse_liqi(liqi_message)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["type"], "end_game")
+        self.assertEqual(result[0].type, "end_game")
         self.assertTrue(self.bridge.game_ended)
         self.assertEqual(self.bridge.rank, 2)  # 第二名
         self.assertEqual(self.bridge.score, 28000)
 
     # ========== 无效消息处理测试 ==========
 
-    def test_parse_liqi_returns_none_for_empty_message(self):
-        """测试空消息返回 None"""
+    def test_parse_liqi_returns_empty_list_for_empty_message(self):
+        """测试空消息返回 []"""
         result = self.bridge.parse_liqi({})
-        self.assertIsNone(result)
+        self.assertEqual(result, [])
 
-    def test_parse_liqi_returns_none_for_none_message(self):
-        """测试 None 消息返回 None"""
+    def test_parse_liqi_returns_empty_list_for_none_message(self):
+        """测试 None 消息返回 []"""
         result = self.bridge.parse_liqi(None)
-        self.assertIsNone(result)
+        self.assertEqual(result, [])
 
     def test_dispatch_message_unhandled_method(self):
         # Create a mock liqi message with an unhandled method

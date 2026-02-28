@@ -1,4 +1,10 @@
-"""单元测试共享 fixtures"""
+"""
+测试模块：akagi_backend/tests/unit/conftest.py
+
+描述：单元测试专属配置，主要用于提供单元测试环境下的通用 mock。
+主要测试点：
+- 模拟 lib_loader 模块以隔离真实的 C++ 动态库加载。
+"""
 
 import sys
 from unittest.mock import MagicMock, patch

@@ -1,4 +1,13 @@
-"""Engine Provider Integration Tests"""
+"""
+测试模块：akagi_backend/tests/integration/test_engine_provider_integration.py
+
+描述：针对引擎协调器 (EngineProvider) 在集成环境下的策略流转测试。
+主要测试点：
+- 基于真实（或半真实）环境的在线引擎与本地引擎初始化协作。
+- 在线引擎成功响应时的策略保持逻辑。
+- 在线引擎故障时自动触发熔断并回退至本地引擎的完整链路。
+- 选项参数 (Options) 在 Provider 层级的透传校验。
+"""
 
 from unittest.mock import MagicMock
 
@@ -8,6 +17,7 @@ import pytest
 from akagi_ng.mjai_bot.engine.base import BaseEngine
 from akagi_ng.mjai_bot.engine.provider import EngineProvider
 from akagi_ng.mjai_bot.status import BotStatusContext
+from akagi_ng.schema.notifications import NotificationCode
 
 
 @pytest.fixture
@@ -78,7 +88,7 @@ def test_provider_react_fallback(mock_engines):
 
     # Check flags
     flags = provider.status.flags
-    assert flags.get("fallback_used") is True
+    assert NotificationCode.FALLBACK_USED in flags
 
     # Check meta
     meta = provider.status.metadata
@@ -95,6 +105,6 @@ def test_provider_options_passing(mock_engines):
     # Mock online success
     online.react_batch.return_value = ([0], [[1.0]], [[True]], [False])
 
-    provider.react_batch(obs, masks, obs, is_sync=True)
+    provider.react_batch(obs, masks, obs)
 
-    online.react_batch.assert_called_with(obs, masks, obs, is_sync=True)
+    online.react_batch.assert_called_with(obs, masks, obs)

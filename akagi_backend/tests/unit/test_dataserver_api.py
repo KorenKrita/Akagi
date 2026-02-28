@@ -1,3 +1,15 @@
+"""
+测试模块：akagi_backend/tests/unit/test_dataserver_api.py
+
+描述：针对数据服务器 HTTP API 和 CORS 中间件的单元测试。
+主要测试点：
+- CORS 中间件对允许/禁止来源 (Origin) 的过滤逻辑。
+- 获取、修改和重置设置 (Settings) 的 API 接口。
+- 消息注入 (Ingest) 和系统关闭 (Shutdown) 接口的功能与错误处理。
+- 修改配置时触发的资源缓存清理逻辑。
+"""
+
+import queue
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -5,6 +17,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from akagi_ng.dataserver.api import _is_allowed_origin, cors_middleware, setup_routes
+from akagi_ng.schema.types import SystemShutdownEvent, WebSocketClosedMessage
 
 
 @pytest.fixture
@@ -90,19 +103,46 @@ async def test_ingest_mjai_success(cli):
     mock_app = MagicMock()
     mock_app.electron_client = MagicMock()
 
-    with patch("akagi_ng.core.get_app_context", return_value=mock_app):
-        resp = await cli.post("/api/ingest", json={"type": "tsumo"})
+    with patch("akagi_ng.dataserver.api.get_app_context", return_value=mock_app):
+        resp = await cli.post("/api/ingest", json={"type": "websocket_closed"})
         assert resp.status == 200
-        mock_app.electron_client.push_message.assert_called_once_with({"type": "tsumo"})
+        mock_app.electron_client.push_message.assert_called_once_with(WebSocketClosedMessage())
 
 
 async def test_ingest_mjai_no_client(cli):
     mock_app = MagicMock()
     mock_app.electron_client = None
 
-    with patch("akagi_ng.core.get_app_context", return_value=mock_app):
-        resp = await cli.post("/api/ingest", json={"type": "tsumo"})
+    with patch("akagi_ng.dataserver.api.get_app_context", return_value=mock_app):
+        resp = await cli.post("/api/ingest", json={"type": "websocket_closed"})
         assert resp.status == 503
+
+
+async def test_shutdown_no_message_queue(cli):
+    mock_app = MagicMock()
+    mock_app.shared_queue = None
+
+    with patch("akagi_ng.dataserver.api.get_app_context", return_value=mock_app):
+        resp = await cli.post("/api/shutdown")
+        assert resp.status == 503
+        data = await resp.json()
+        assert data["ok"] is False
+        assert "Message queue not available" in data["error"]
+
+
+async def test_shutdown_with_message_queue(cli):
+    mock_app = MagicMock()
+    mock_app.shared_queue = queue.Queue()
+
+    with patch("akagi_ng.dataserver.api.get_app_context", return_value=mock_app):
+        resp = await cli.post("/api/shutdown")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["ok"] is True
+        assert data["message"] == "Shutdown initiated"
+
+    shutdown_msg = mock_app.shared_queue.get_nowait()
+    assert isinstance(shutdown_msg, SystemShutdownEvent)
 
 
 async def test_save_settings_triggers_cache_clear(cli):
@@ -128,3 +168,43 @@ async def test_reset_settings_triggers_cache_clear(cli):
         resp = await cli.post("/api/settings/reset")
         assert resp.status == 200
         mock_clear.assert_called_once()
+
+
+async def test_save_settings_internal_error(cli):
+    with (
+        patch("akagi_ng.dataserver.api.verify_settings", return_value=True),
+        patch("akagi_ng.dataserver.api.get_settings_dict", return_value={}),
+        patch("akagi_ng.dataserver.api.local_settings") as mock_settings,
+    ):
+        mock_settings.update.side_effect = RuntimeError("boom")
+        resp = await cli.post("/api/settings", json={"log_level": "DEBUG"})
+        assert resp.status == 500
+        data = await resp.json()
+        assert data["ok"] is False
+
+
+async def test_reset_settings_internal_error(cli):
+    with (
+        patch("akagi_ng.dataserver.api.get_default_settings_dict", return_value={"default": True}),
+        patch("akagi_ng.dataserver.api.local_settings") as mock_settings,
+    ):
+        mock_settings.update.side_effect = RuntimeError("boom")
+        resp = await cli.post("/api/settings/reset")
+        assert resp.status == 500
+        data = await resp.json()
+        assert data["ok"] is False
+
+
+async def test_shutdown_queue_full(cli):
+    full_queue = queue.Queue(maxsize=1)
+    full_queue.put(object())
+
+    mock_app = MagicMock()
+    mock_app.shared_queue = full_queue
+
+    with patch("akagi_ng.dataserver.api.get_app_context", return_value=mock_app):
+        resp = await cli.post("/api/shutdown")
+        assert resp.status == 503
+        data = await resp.json()
+        assert data["ok"] is False
+        assert data["error"] == "Message queue is full"

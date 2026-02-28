@@ -1,3 +1,13 @@
+"""
+测试模块：akagi_backend/tests/unit/test_engine_provider.py
+
+描述：针对引擎协调器 (EngineProvider) 熔断回退和状态上报的单元测试。
+主要测试点：
+- 在线引擎失败时自动切换至本地引擎的回退 (Fallback) 逻辑。
+- 在线引擎恢复后的自动重连探测逻辑。
+- 回退期间元数据 (Metadata) 和状态标志 (Flags) 的正确上报。
+"""
+
 import unittest
 from unittest.mock import MagicMock
 
@@ -85,4 +95,4 @@ class TestEngineProvider(unittest.TestCase):
         # BUT get_additional_meta reports primary engine type
         self.assertEqual(meta["engine_type"], "akagiot")
         # Expect fallback_used to be True
-        self.assertTrue(flags.get("fallback_used"))
+        self.assertIn("fallback_used", flags)

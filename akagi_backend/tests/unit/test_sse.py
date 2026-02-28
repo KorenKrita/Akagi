@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_sse.py
+
+描述：针对服务器发送事件 (SSE) 管理逻辑的单元测试。
+主要测试点：
+- SSEManager 对客户端 (Client) 的增加、移除及连接清理逻辑。
+- 异步广播事件 (_broadcast_async) 与历史通知 (Notification History) 的管理。
+- 心跳维持 (Keep-alive) 逻辑。
+- SSE 处理程序 (sse_handler) 的并发请求与重复连接处理。
+"""
+
 import asyncio
 import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,6 +18,7 @@ from aiohttp import web
 
 from akagi_ng.dataserver.sse import SSEManager, _format_sse_message
 from akagi_ng.schema.constants import ServerConstants
+from akagi_ng.schema.types import SSEClientData
 
 
 @pytest.fixture
@@ -28,14 +40,14 @@ async def test_add_client(sse_manager):
     mock_response = MagicMock(spec=web.StreamResponse)
     mock_queue = asyncio.Queue()
     client_id = "test_client"
-    client_data = {"response": mock_response, "queue": mock_queue}
+    client_data = SSEClientData(response=mock_response, queue=mock_queue)
 
     await sse_manager.add_client(client_id, client_data)
 
     async with sse_manager.lock:
         assert client_id in sse_manager.clients
-        assert sse_manager.clients[client_id]["response"] == mock_response
-        assert sse_manager.clients[client_id]["queue"] == mock_queue
+        assert sse_manager.clients[client_id].response == mock_response
+        assert sse_manager.clients[client_id].queue == mock_queue
 
 
 @pytest.mark.asyncio
@@ -43,7 +55,7 @@ async def test_remove_client(sse_manager):
     """测试移除客户端"""
     mock_response = AsyncMock(spec=web.StreamResponse)
     client_id = "test_client"
-    await sse_manager.add_client(client_id, {"response": mock_response, "queue": asyncio.Queue()})
+    await sse_manager.add_client(client_id, SSEClientData(response=mock_response, queue=asyncio.Queue()))
 
     await sse_manager._remove_client(client_id, expected_response=mock_response)
 
@@ -59,14 +71,14 @@ async def test_remove_client_mismatch(sse_manager):
     mock_response_2 = MagicMock(spec=web.StreamResponse)
     client_id = "test_client"
 
-    await sse_manager.add_client(client_id, {"response": mock_response_1, "queue": asyncio.Queue()})
+    await sse_manager.add_client(client_id, SSEClientData(response=mock_response_1, queue=asyncio.Queue()))
 
     # 尝试移除，但传入不匹配的响应对象
     await sse_manager._remove_client(client_id, expected_response=mock_response_2)
 
     async with sse_manager.lock:
         assert client_id in sse_manager.clients
-        assert sse_manager.clients[client_id]["response"] == mock_response_1
+        assert sse_manager.clients[client_id].response == mock_response_1
 
 
 @pytest.mark.asyncio
@@ -75,8 +87,8 @@ async def test_broadcast_async(sse_manager):
     q1 = asyncio.Queue()
     q2 = asyncio.Queue()
 
-    await sse_manager.add_client("c1", {"response": MagicMock(), "queue": q1})
-    await sse_manager.add_client("c2", {"response": MagicMock(), "queue": q2})
+    await sse_manager.add_client("c1", SSEClientData(response=MagicMock(), queue=q1))
+    await sse_manager.add_client("c2", SSEClientData(response=MagicMock(), queue=q2))
 
     payload = b"test message"
     await sse_manager._broadcast_async(payload)
@@ -89,7 +101,7 @@ async def test_broadcast_async(sse_manager):
 async def test_broadcast_event(sse_manager):
     """测试事件广播与缓存更新"""
     q = asyncio.Queue()
-    await sse_manager.add_client("c1", {"response": MagicMock(), "queue": q})
+    await sse_manager.add_client("c1", SSEClientData(response=MagicMock(), queue=q))
 
     event_data = {"key": "value"}
 
@@ -133,7 +145,10 @@ def test_format_sse_message_with_event():
 async def test_keep_alive_logic(sse_manager):
     queue1 = asyncio.Queue()
     queue2 = asyncio.Queue()
-    sse_manager.clients = {"c1": {"queue": queue1}, "c2": {"queue": queue2}}
+    sse_manager.clients = {
+        "c1": SSEClientData(response=MagicMock(), queue=queue1),
+        "c2": SSEClientData(response=MagicMock(), queue=queue2),
+    }
 
     # We want to test one iteration of keep_alive
     # Patch sleep to return immediately or raise to exit
@@ -171,7 +186,7 @@ async def test_remove_client_failure_branches(sse_manager):
     # 模拟异常
     mock_response = AsyncMock(spec=web.StreamResponse)
     mock_response.write_eof.side_effect = Exception("error")
-    await sse_manager.add_client("c1", {"response": mock_response, "queue": asyncio.Queue()})
+    await sse_manager.add_client("c1", SSEClientData(response=mock_response, queue=asyncio.Queue()))
     await sse_manager._remove_client("c1")
     # 应该被捕获
 
@@ -221,10 +236,29 @@ async def test_sse_handler_success_flow(sse_manager):
 
 
 @pytest.mark.asyncio
+async def test_sse_handler_duplicate_client_id_no_deadlock(sse_manager):
+    old_response = AsyncMock(spec=web.StreamResponse)
+    await sse_manager.add_client("c1", SSEClientData(response=old_response, queue=asyncio.Queue()))
+
+    mock_request = MagicMock(spec=web.Request)
+    mock_request.query = {"clientId": "c1"}
+    mock_request.remote = "127.0.0.1"
+
+    new_response = AsyncMock(spec=web.StreamResponse)
+    with (
+        patch("aiohttp.web.StreamResponse", return_value=new_response),
+        patch.object(asyncio.Queue, "get", side_effect=asyncio.CancelledError),
+    ):
+        await asyncio.wait_for(sse_manager.sse_handler(mock_request), timeout=1.0)
+
+    old_response.write_eof.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_keep_alive_execution_logic(sse_manager):
     # 覆盖 keep_alive 协程的内部逻辑（不运行无限循环）
     q = asyncio.Queue()
-    await sse_manager.add_client("c1", {"response": MagicMock(), "queue": q})
+    await sse_manager.add_client("c1", SSEClientData(response=MagicMock(), queue=q))
 
     # 通过手动调用逻辑块来模拟一次循环
     async with sse_manager.lock:
@@ -232,7 +266,7 @@ async def test_keep_alive_execution_logic(sse_manager):
 
     payload = b": keep-alive\n\n"
     for client_data in targets:
-        queue = client_data.get("queue")
+        queue = client_data.queue
         if queue:
             queue.put_nowait(payload)
 

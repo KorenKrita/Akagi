@@ -1,11 +1,23 @@
-"""StateTracker 单元测试"""
+"""
+测试模块：akagi_backend/tests/unit/test_state_tracker.py
 
+描述：针对游戏状态追踪器 (StateTracker) 的单元测试。
+主要测试点：
+- 对 C++ PlayerState 实例的初始化与事件更新逻辑。
+- 拔北 (Nukidora) 事件向切牌 (Dahai) 逻辑的内部分发转换。
+- 手牌 MJAI 格式化 (tehai_mjai_with_aka) 对赤宝牌的正确映射。
+- 状态更新异常时的错误捕获与标志设置。
+"""
+
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from akagi_ng.mjai_bot.status import BotStatusContext
 from akagi_ng.mjai_bot.tracker import StateTracker
+from akagi_ng.schema.notifications import NotificationCode
+from akagi_ng.schema.types import DahaiEvent, NukidoraEvent, StartGameEvent
 
 
 @pytest.fixture
@@ -29,7 +41,7 @@ def test_initialization(bot):
 
 def test_react_start_game(bot):
     with patch("akagi_ng.core.lib_loader.libriichi.state.PlayerState") as MockPlayerState:
-        event = {"type": "start_game", "id": 1, "is_3p": False}
+        event = StartGameEvent(id=1, is_3p=False)
         bot.react(event)
 
         assert bot.player_id == 1
@@ -45,23 +57,24 @@ def test_react_nukidora_conversion(bot):
     bot.player_state = MagicMock()
     bot.player_state.last_self_tsumo.return_value = "N"
 
-    event = {"type": "nukidora", "actor": 0}
+    event = NukidoraEvent(actor=0)
     # nukidora 内部会判断 == "N"
     bot.react(event)
 
     # 验证转换为了 dahai 调用 update
     called_args = bot.player_state.update.call_args[0][0]
-    assert "dahai" in called_args
-    assert '"pai": "N"' in called_args
+    payload = json.loads(called_args)
+    assert payload["type"] == "dahai"
+    assert payload["pai"] == "N"
 
 
 def test_error_handling(bot):
     bot.player_state = MagicMock()
     bot.player_state.update.side_effect = RuntimeError("test error")
 
-    res = bot.react({"type": "dahai", "actor": 1, "pai": "1m", "tsumogiri": False})
+    res = bot.react(DahaiEvent(actor=1, pai="1m", tsumogiri=False))
     assert res is None
-    assert bot.status.flags.get("state_tracker_error") is True
+    assert NotificationCode.STATE_TRACKER_ERROR in bot.status.flags
 
 
 def test_properties_pass_through(bot):

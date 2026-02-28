@@ -1,3 +1,13 @@
+"""
+测试模块：akagi_backend/tests/unit/test_application.py
+
+描述：针对主应用 (AkagiApp) 生命周期和核心流程的单元测试。
+主要测试点：
+- 应用初始化 (Init) 和启动/停止 (Start/Stop) 信号处理。
+- 消息处理主循环 (Main Loop) 的调度逻辑。
+- 处理过程中的错误捕获以及输出发射 (Emit) 路径（包括同步期间的屏蔽）。
+"""
+
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -5,6 +15,7 @@ import pytest
 
 from akagi_ng.application import AkagiApp
 from akagi_ng.core import AppContext
+from akagi_ng.schema.types import MJAIResponse, ProcessResult
 
 
 @pytest.fixture
@@ -60,7 +71,7 @@ def test_app_main_loop_flow(app) -> None:
     app._stop_event = threading.Event()
 
     mock_ctx = MagicMock(spec=AppContext)
-    mock_ctx.bot = MagicMock()
+    mock_ctx.state_tracker = MagicMock()
     mock_ctx.controller = MagicMock()
 
     msg = {"type": "tsumo", "actor": 0}
@@ -99,33 +110,33 @@ def test_app_cleanup(app) -> None:
 
 def test_process_event_error_handling(app) -> None:
     """测试消息处理中的异常捕获。"""
-    mock_bot = MagicMock()
+    mock_state_tracker = MagicMock()
     mock_ctrl = MagicMock()
 
     # 模拟 Controller 抛出异常
     mock_ctrl.react.side_effect = ValueError("Test Error")
 
     msg = {"type": "dahai", "sync": False}
-    result = app._process_event(msg, mock_bot, mock_ctrl)
+    result = app._process_event(msg, mock_state_tracker, mock_ctrl)
 
     # 不应导致崩溃，且返回为空
-    assert result["response"] is None
-    assert result["notifications"] == []
-    assert result["is_sync"] is False
+    assert result.response is None
+    assert result.notifications == []
+    assert result.is_sync is False
 
 
 def test_emit_outputs_standard(app) -> None:
     """测试标准输出发射路径。"""
     app.ds = MagicMock()
-    result = {
-        "response": {"action": "dahai", "meta": {}},
-        "notifications": [{"code": "TEST"}],
-        "is_sync": False,
-    }
-    mock_bot = MagicMock()
+    result = ProcessResult(
+        response=MJAIResponse(action="dahai", meta={}),
+        notifications=["TEST"],
+        is_sync=False,
+    )
+    mock_state_tracker = MagicMock()
 
     with patch("akagi_ng.application.build_dataserver_payload", return_value={"rec": True}):
-        app._emit_outputs(result, mock_bot)
+        app._emit_outputs(result, mock_state_tracker)
 
         # 应该发送通知和推荐
         assert app.ds.send_notifications.called
@@ -135,15 +146,15 @@ def test_emit_outputs_standard(app) -> None:
 def test_emit_outputs_sync_masking(app) -> None:
     """测试同步期间屏蔽推荐。"""
     app.ds = MagicMock()
-    result = {
-        "response": {"action": "sync", "meta": {}},
-        "notifications": [{"code": "SYNCING"}],
-        "is_sync": True,
-    }
-    mock_bot = MagicMock()
+    result = ProcessResult(
+        response=MJAIResponse(action="sync", meta={}),
+        notifications=["SYNCING"],
+        is_sync=True,
+    )
+    mock_state_tracker = MagicMock()
 
     with patch("akagi_ng.application.build_dataserver_payload", return_value={"rec": True}):
-        app._emit_outputs(result, mock_bot)
+        app._emit_outputs(result, mock_state_tracker)
 
         # 应该发送通知，但不发送推荐
         assert app.ds.send_notifications.called

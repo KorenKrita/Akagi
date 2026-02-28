@@ -1,4 +1,13 @@
-"""MortalBot 单元测试（合并自 test_mortal_bot_decision / test_bots / test_mortal_bot_edge_cases）"""
+"""
+测试模块：akagi_backend/tests/unit/test_mortal_bot_decision.py
+
+描述：针对 MortalBot 决策与元数据注入逻辑的单元测试。
+主要测试点：
+- 基础对战事件 (Tsumo, Dahai) 的响应流程。
+- 同步事件 (sync=True) 不触发决策的逻辑校验。
+- 三麻模式下的元数据格式、player_id 设置及动作屏蔽逻辑。
+- 运行时异常、Json 解析错误等异常情况的稳健性。
+"""
 
 import json
 from unittest.mock import MagicMock, patch
@@ -7,6 +16,9 @@ import pytest
 
 from akagi_ng.mjai_bot.bot import MortalBot
 from akagi_ng.mjai_bot.status import BotStatusContext
+from akagi_ng.mjai_bot.utils import mask_unicode_3p
+from akagi_ng.schema.notifications import NotificationCode
+from akagi_ng.schema.types import DahaiEvent, StartGameEvent, TsumoEvent
 
 # 自动应用 mock_lib_loader_module fixture（定义在 unit/conftest.py 中）
 pytestmark = pytest.mark.usefixtures("mock_lib_loader_module")
@@ -51,13 +63,30 @@ def test_event_processing_flow(mock_engine_setup) -> None:
     bot = MortalBot(status, is_3p=False)
 
     # 1. start_game 初始化
-    bot.react({"type": "start_game", "id": 0, "is_3p": False})
-    assert bot.model == mock_bot_instance
+    bot.react(StartGameEvent(id=0, is_3p=False))
+    assert bot.bot == mock_bot_instance
 
     # 2. tsumo 会触发推理
-    resp = bot.react({"type": "tsumo", "actor": 0, "pai": "1m"})
+    resp = bot.react(TsumoEvent(actor=0, pai="1m"))
     assert resp["type"] == "dahai"
     assert resp["pai"] == "1m"
+
+
+def test_sync_event_uses_can_act_false(mock_engine_setup) -> None:
+    """同步事件应通过 can_act=False 仅推进状态，不触发推理。"""
+    _, mock_bot_instance, _ = mock_engine_setup
+    status = BotStatusContext()
+    bot = MortalBot(status, is_3p=False)
+
+    bot.react(StartGameEvent(id=0, is_3p=False))
+    mock_bot_instance.react.reset_mock()
+
+    bot.react(TsumoEvent(actor=0, pai="1m", sync=True))
+
+    assert mock_bot_instance.react.call_count == 1
+    args, kwargs = mock_bot_instance.react.call_args
+    assert isinstance(args[0], str)
+    assert kwargs == {"can_act": False}
 
 
 def test_meta_data_format_3p(mock_engine_setup) -> None:
@@ -81,10 +110,10 @@ def test_meta_data_format_3p(mock_engine_setup) -> None:
         }
     )
 
-    bot.react({"type": "start_game", "id": 1, "is_3p": True})
+    bot.react(StartGameEvent(id=1, is_3p=True))
     # 手动设置 metadata 模拟 Provider 行为，因为单元测试直接测试 Bot
     status.set_metadata("engine_type", "mortal")
-    resp = bot.react({"type": "tsumo", "actor": 1, "pai": "1m"})
+    resp = bot.react(TsumoEvent(actor=1, pai="1m"))
 
     assert "meta" in resp
     # engine_type 应该通过 status.metadata 注入
@@ -100,30 +129,69 @@ def test_mortal3p_player_id(mock_engine_setup) -> None:
     bot = MortalBot(status, is_3p=True)
     assert bot.is_3p is True
 
-    bot.react({"type": "start_game", "id": 1, "is_3p": True})
+    bot.react(StartGameEvent(id=1, is_3p=True))
     assert bot.player_id == 1
+
+
+def test_3p_none_only_response_is_dropped(mock_engine_setup) -> None:
+    """三麻中仅有 none 选项的响应应被视为无效并丢弃。"""
+    _, mock_bot_instance, mock_engine = mock_engine_setup
+    mock_engine.is_3p = True
+
+    none_only_mask = 1 << mask_unicode_3p.index("none")
+    mock_bot_instance.react.return_value = json.dumps(
+        {
+            "type": "none",
+            "meta": {
+                "q_values": [1.0],
+                "mask_bits": none_only_mask,
+            },
+        }
+    )
+
+    status = BotStatusContext()
+    bot = MortalBot(status, is_3p=True)
+    bot.react(StartGameEvent(id=1, is_3p=True))
+
+    resp = bot.react(TsumoEvent(actor=1, pai="1m"))
+    assert resp is not None
+    assert resp["type"] == "none"
+
+
+def test_response_missing_type_is_dropped(mock_engine_setup) -> None:
+    """模型返回缺失 type 的响应应被安全过滤。"""
+    _, mock_bot_instance, _ = mock_engine_setup
+    mock_bot_instance.react.return_value = json.dumps({"meta": {"q_values": [1.0], "mask_bits": 1}})
+
+    status = BotStatusContext()
+    bot = MortalBot(status, is_3p=False)
+    bot.react(StartGameEvent(id=0, is_3p=False))
+
+    resp = bot.react(TsumoEvent(actor=0, pai="1m"))
+    assert resp is not None
+    assert "type" not in resp
+    assert NotificationCode.BOT_RUNTIME_ERROR not in status.flags
 
 
 # ===== 错误处理 & 边界情况 =====
 
 
-def test_error_handling_malformed_json() -> None:
-    """验证异常 JSON 输入时的错误响应。"""
+def test_error_handling_runtime_exception(mock_engine_setup) -> None:
+    """验证模型 react 抛出异常时的错误响应。"""
+    _, mock_bot_instance, _ = mock_engine_setup
     status = BotStatusContext()
     bot = MortalBot(status, is_3p=False)
-    resp = bot.react("!!invalid!!")
+    bot.react(StartGameEvent(id=0, is_3p=False))
+
+    # 模拟模型崩溃
+    mock_bot_instance.react.side_effect = Exception("Model Crash")
+    resp = bot.react(TsumoEvent(actor=0, pai="1m"))
 
     assert resp is None
-    assert status.flags["bot_runtime_error"] is True
+    assert NotificationCode.BOT_RUNTIME_ERROR in status.flags
 
 
-def test_mortal_bot_parse_error() -> None:
-    """验证 invalid JSON 输入的处理。（原 test_mortal_bot_edge_cases.py）"""
-    status = BotStatusContext()
-    bot = MortalBot(status=status, is_3p=False)
-    res = bot.react("invalid json")
-    assert res is None
-    assert status.flags["bot_runtime_error"] is True
+# 移除了 test_mortal_bot_parse_error，因为 MortalBot.react 不再承担运行时非对象输入的校验重任。
 
 
 def test_mortal_bot_json_decode_error() -> None:
@@ -131,22 +199,24 @@ def test_mortal_bot_json_decode_error() -> None:
     status = BotStatusContext()
     bot = MortalBot(status=status, is_3p=False)
     bot.player_id = 0
-    bot.model = MagicMock()
-    bot.model.react.return_value = "corrupt { json"
+    bot.bot = MagicMock()
+    bot.bot.react.return_value = "corrupt { json"
 
     bot.engine = MagicMock()
     bot.engine.status = status
 
-    res = bot.react(json.dumps([{"type": "dahai", "actor": 0, "tile": "1m"}]))
+    # 传递对象，而不是 JSON 字符串
+    res = bot.react(DahaiEvent(actor=0, pai="1m", tsumogiri=False))
     assert res is None
-    assert status.flags["bot_runtime_error"] is True
+    # 验证正确的通知标志
+    assert NotificationCode.JSON_DECODE_ERROR in status.flags
 
 
 def test_mortal_bot_unknown_engine_notification() -> None:
     """验证 _handle_start_game 在未知引擎类型时不设置加载标志。（原 test_mortal_bot_edge_cases.py）"""
     status = BotStatusContext()
     bot = MortalBot(status=status, is_3p=False)
-    event = {"type": "start_game", "id": 0, "is_3p": False}
+    event = StartGameEvent(id=0, is_3p=False)
     mock_engine = MagicMock()
     status.set_metadata("engine_type", "alien_ai")
 
@@ -166,12 +236,12 @@ def test_notification_flags_persistency(mock_engine_setup) -> None:
     _, _, _ = mock_engine_setup
     status = BotStatusContext()
     bot = MortalBot(status, is_3p=False)
-    bot.react({"type": "start_game", "id": 0, "is_3p": False})
+    bot.react(StartGameEvent(id=0, is_3p=False))
 
-    status.set_flag("game_connected", True)
+    status.set_flag(NotificationCode.GAME_CONNECTED, True)
 
     # 模拟下一轮推理
-    bot.react({"type": "tsumo", "actor": 0, "pai": "2m"})
+    bot.react(TsumoEvent(actor=0, pai="2m"))
 
     # 验证标志依然存在
-    assert status.flags["game_connected"] is True
+    assert NotificationCode.GAME_CONNECTED in status.flags

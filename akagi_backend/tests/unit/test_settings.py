@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_settings.py
+
+描述：针对配置管理 (Settings) 模块的单元测试。
+主要测试点：
+- 各配置子项 (OT, MITM, Server, Model) 的 Dataclass 默认值与创建。
+- 配置文件的加载、JSON Schema 验证及非法配置的备份重置逻辑。
+- 根据平台 URL 自动修正平台类型的逻辑。
+- 系统区域语言 (Locale) 的自动检测逻辑 (Windows/Python fallback)。
+"""
+
 import sys
 import unittest
 from unittest.mock import mock_open, patch

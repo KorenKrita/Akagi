@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_status_flags.py
+
+描述：针对 Bot 状态标志 (Status Flags) 与元数据上报逻辑的单元测试。
+主要测试点：
+- 在线模式正常运行时的绿色状态 (Green) 判定。
+- 仅本地模式运行时的蓝色状态 (Blue) 判定。
+- 在线引擎故障触发回退时的黄色状态 (Yellow) 判定。
+- 熔断器开启（等待重连）时的红色状态 (Red) 判定。
+"""
+
 from unittest.mock import MagicMock
 
 from akagi_ng.mjai_bot.engine.base import BaseEngine
@@ -14,7 +25,7 @@ class MockEngine(BaseEngine):
     def fork(self, status: BotStatusContext | None = None):
         return MockEngine(status or self.status, self.name, self.custom_meta)
 
-    def react_batch(self, obs, masks, invisible_obs=None, is_sync=None):
+    def react_batch(self, obs, masks, invisible_obs=None):
         self.status.set_metadata("engine_type", self.engine_type)
         for k, v in self.custom_meta.items():
             self.status.set_metadata(k, v)
@@ -34,7 +45,7 @@ def test_status_flags_green_online():
     meta = status.metadata
     assert meta["engine_type"] == "akagiot"
     assert meta.get("fallback_used") is False
-    assert meta.get("online_service_reconnecting") is None
+    assert meta.get("online_service_reconnecting") is False
 
 
 def test_status_flags_blue_local():
@@ -48,7 +59,7 @@ def test_status_flags_blue_local():
     meta = status.metadata
     assert meta["engine_type"] == "mortal"
     assert meta.get("fallback_used") is False
-    assert meta.get("online_service_reconnecting") is None
+    assert meta.get("online_service_reconnecting") is False
 
 
 def test_status_flags_yellow_fallback():

@@ -1,6 +1,11 @@
-"""Bridge 和 Bot 的集成测试
+"""
+测试模块：akagi_backend/tests/integration/test_majsoul_integration.py
 
-测试 Bridge 解析消息后 Bot 能够正确响应的完整流程
+描述：针对雀魂 (Majsoul) 平台的完整协议流转集成测试。
+主要测试点：
+- AuthGame 请求与响应中的账号 ID 识别与 3P/4P 模式判定。
+- 跨局 (Kyoku) 状态流转，验证 ActionNewRound 与 ActionNoTile 的联动。
+- 多局对战场景下的状态持久化与重置逻辑。
 """
 
 import pytest
@@ -41,8 +46,8 @@ def test_bridge_parses_start_game_response_4p(majsoul_bridge):
 
     # 验证返回了 start_game 消息
     assert len(result) == 1
-    assert result[0]["type"] == "start_game"
-    assert result[0]["id"] == 0  # seat 0
+    assert result[0].type == "start_game"
+    assert result[0].id == 0  # seat 0
     assert majsoul_bridge.is_3p is False
 
 
@@ -66,8 +71,8 @@ def test_bridge_parses_start_game_response_3p(majsoul_bridge):
 
     # 验证返回了 start_game 消息
     assert len(result) == 1
-    assert result[0]["type"] == "start_game"
-    assert result[0]["id"] == 0  # seat 0
+    assert result[0].type == "start_game"
+    assert result[0].id == 0  # seat 0
     assert majsoul_bridge.is_3p is True
 
 
@@ -88,7 +93,7 @@ def test_bridge_complete_kyoku_flow(majsoul_bridge):
 
     result = majsoul_bridge.parse_liqi(auth_res)
     assert len(result) == 1
-    assert result[0]["type"] == "start_game"
+    assert result[0].type == "start_game"
 
     # 模拟 ActionNewRound 消息
     new_round = {
@@ -112,13 +117,13 @@ def test_bridge_complete_kyoku_flow(majsoul_bridge):
 
     # 验证返回了 start_kyoku 消息
     assert len(result) == 1
-    assert result[0]["type"] == "start_kyoku"
-    assert result[0]["bakaze"] == "E"
-    assert result[0]["kyoku"] == 1
-    assert result[0]["honba"] == 0
-    assert result[0]["kyotaku"] == 0
-    assert result[0]["dora_marker"] == "1p"
-    assert result[0]["scores"] == [25000, 25000, 25000, 25000]
+    assert result[0].type == "start_kyoku"
+    assert result[0].bakaze == "E"
+    assert result[0].kyoku == 1
+    assert result[0].honba == 0
+    assert result[0].kyotaku == 0
+    assert result[0].dora_marker == "1p"
+    assert result[0].scores == [25000, 25000, 25000, 25000]
 
 
 @pytest.mark.integration
@@ -160,8 +165,8 @@ def test_bridge_handles_multiple_kyoku(majsoul_bridge):
 
         result = majsoul_bridge.parse_liqi(new_round)
         assert len(result) == 1
-        assert result[0]["type"] == "start_kyoku"
-        assert result[0]["kyoku"] == (kyoku % 4) + 1
+        assert result[0].type == "start_kyoku"
+        assert result[0].kyoku == (kyoku % 4) + 1
 
         # 模拟局结束
         end_kyoku = {
@@ -172,4 +177,4 @@ def test_bridge_handles_multiple_kyoku(majsoul_bridge):
 
         result = majsoul_bridge.parse_liqi(end_kyoku)
         assert len(result) == 1
-        assert result[0]["type"] == "end_kyoku"
+        assert result[0].type == "end_kyoku"

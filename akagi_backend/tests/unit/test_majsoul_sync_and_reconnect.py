@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_majsoul_sync_and_reconnect.py
+
+描述：专门针对雀魂断线重连和状态同步 (Sync/Reconnect) 逻辑的单元测试。
+主要测试点：
+- 重连时从 snapshot 中提前识别 3P/4P 模式。
+- 对重连 Actions 的回放逻辑，包括 sync 标志的正确设置。
+- 修复 ActionNewRound 事件被后续动作意外修改的不可变性校验。
+- 真实对局日志数据下的同步逻辑回归测试。
+"""
+
 import unittest
 from unittest.mock import patch
 
@@ -11,34 +22,6 @@ class TestMajsoulSyncAndReconnect(unittest.TestCase):
         self.bridge.seat = 0
         self.bridge.is_3p = False
 
-    def test_parse_sync_game_camel_case_keys(self):
-        """Test that parse_sync_game handles 'gameRestore' (camelCase) correctly."""
-        # Mock input matching the log structure (camelCase keys from protobuf)
-        msg_dict = {
-            "data": {
-                "gameRestore": {
-                    # We leave actions empty to avoid protobuf decoding issues in this test
-                    # checking snapshot presence is sufficient to prove we accessed 'gameRestore'
-                    "actions": [],
-                    "snapshot": {"dummy": "data"},
-                }
-            }
-        }
-
-        msgs = self.bridge._parse_sync_game_raw(msg_dict)
-
-        # It should return at least one message for the snapshot.
-        self.assertEqual(len(msgs), 1)
-        self.assertEqual(msgs[0]["type"], "sync_game")
-        self.assertEqual(msgs[0]["snapshot"]["dummy"], "data")
-
-    def test_parse_sync_game_fallback_snake_case_failure(self):
-        """Verify that snake_case keys are no longer supported or ignored if we only check gameRestore."""
-        msg_dict = {"data": {"game_restore": {"actions": [], "snapshot": {"dummy": "data"}}}}
-        msgs = self.bridge._parse_sync_game_raw(msg_dict)
-        # Should be empty as we expect 'gameRestore'
-        self.assertEqual(len(msgs), 0)
-
     @patch("akagi_ng.bridge.majsoul.bridge.MajsoulBridge._parse_sync_game_raw")
     def test_reconnect_pre_scans_is_3p_from_snapshot(self, mock_parse_sync_game):
         """
@@ -49,12 +32,6 @@ class TestMajsoulSyncAndReconnect(unittest.TestCase):
                 "type": 1,
                 "method": ".lq.ActionPrototype",
                 "data": {"name": "ActionDealTile", "data": {"seat": 0, "tile": "1m"}},
-            },
-            {
-                "type": "sync_game",
-                "snapshot": {
-                    "players": [{"score": 35000}] * 3,  # 3 players
-                },
             },
         ]
         mock_parse_sync_game.return_value = mock_actions
@@ -87,7 +64,6 @@ class TestMajsoulSyncAndReconnect(unittest.TestCase):
                     },
                 },
             },
-            {"type": "sync_game", "snapshot": {"ju": 0}},
         ]
         mock_parse_sync_game.return_value = mock_actions
 
@@ -98,9 +74,37 @@ class TestMajsoulSyncAndReconnect(unittest.TestCase):
         # 1: start_kyoku (from ActionNewRound)
         # Should NOT see a second start_kyoku
 
-        self.assertEqual(events[1]["type"], "start_kyoku")
-        start_kyoku_count = sum(1 for e in events if e["type"] == "start_kyoku")
+        self.assertEqual(events[1].type, "start_kyoku")
+        start_kyoku_count = sum(1 for e in events if e.type == "start_kyoku")
         self.assertEqual(start_kyoku_count, 1)
+
+    @patch("akagi_ng.bridge.majsoul.bridge.MajsoulBridge._parse_sync_game_raw")
+    def test_sync_flags_are_applied_during_sync_replay(self, mock_parse_sync_game):
+        """Non-last replay actions should be sync=True; the last action stays sync=False."""
+        mock_actions = [
+            {
+                "type": 1,
+                "method": ".lq.ActionPrototype",
+                "data": {"name": "ActionDealTile", "data": {"seat": 1, "tile": "1m"}},
+            },
+            {
+                "type": 1,
+                "method": ".lq.ActionPrototype",
+                "data": {
+                    "name": "ActionDiscardTile",
+                    "data": {"seat": 1, "tile": "1m", "moqie": True, "isLiqi": False},
+                },
+            },
+        ]
+        mock_parse_sync_game.return_value = mock_actions
+
+        events = self.bridge._parse_sync_game({})
+
+        self.assertEqual(events[0].type, "system_event")
+        self.assertEqual(events[1].type, "tsumo")
+        self.assertTrue(events[1].sync)
+        self.assertEqual(events[2].type, "dahai")
+        self.assertFalse(events[2].sync)
 
     def test_reconnect_with_real_log_data(self):
         """
@@ -135,17 +139,17 @@ class TestMajsoulSyncAndReconnect(unittest.TestCase):
 
         # Assertions
         # 1. system_event
-        self.assertEqual(events[0]["type"], "system_event")
-        self.assertEqual(events[0]["code"], "game_syncing")
+        self.assertEqual(events[0].type, "system_event")
+        self.assertEqual(events[0].code, "game_syncing")
 
         # 2. start_kyoku should be present!
         # If ActionNewRound parses correctly, we should get start_kyoku.
         self.assertGreater(len(events), 1, "Should have more than just system_event")
-        self.assertEqual(events[1]["type"], "start_kyoku")
-        self.assertEqual(len(events[1]["tehais"][self.bridge.seat]), 13)  # Hand tiles
+        self.assertEqual(events[1].type, "start_kyoku")
+        self.assertEqual(len(events[1].tehais[self.bridge.seat]), 13)  # Hand tiles
 
         # 3. Tsumo event (since 14 tiles)
-        self.assertEqual(events[2]["type"], "tsumo")
+        self.assertEqual(events[2].type, "tsumo")
 
     def test_start_kyoku_immutability(self):
         """Test that start_kyoku event is not mutated by subsequent actions (Reference Bug Fix)."""
@@ -172,7 +176,7 @@ class TestMajsoulSyncAndReconnect(unittest.TestCase):
         events = self.bridge._handle_action_new_round(action_new_round)
         start_kyoku_event = events[0]
 
-        self.assertIn("1m", start_kyoku_event["tehais"][0])
+        self.assertIn("1m", start_kyoku_event.tehais[0])
 
         # 2. ActionDiscardTile (Discard 1m)
         action_discard = {
@@ -193,6 +197,6 @@ class TestMajsoulSyncAndReconnect(unittest.TestCase):
         # If bug exists, 1m will be missing from start_kyoku_event
         self.assertIn(
             "1m",
-            start_kyoku_event["tehais"][0],
+            start_kyoku_event.tehais[0],
             "ActionNewRound event was mutated by subsequent discard! 1m should still be there.",
         )

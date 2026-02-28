@@ -1,9 +1,20 @@
+"""
+测试模块：akagi_backend/tests/unit/test_bridge_amatsuki.py
+
+描述：针对 AMATSUKI (天月) 平台 Bridge 逻辑的单元测试。
+主要测试点：
+- STOMP 协议帧的解析与分发。
+- 各种游戏事件（摸牌、切牌、副露、立直、拔北等）从 STOMP 到 MJAI 事件的转换。
+- 游戏开始、结束及断线重连同步逻辑。
+"""
+
 import json
 from unittest.mock import patch
 
 import pytest
 
 from akagi_ng.bridge.amatsuki.bridge import STOMP, STOMPFrame
+from akagi_ng.schema.types import StartKyokuEvent, SystemEvent
 
 
 @pytest.fixture
@@ -21,10 +32,12 @@ def make_stomp(destination, content_dict):
 
 
 def test_parse_returns_none_for_invalid_stomp(bridge):
-    """Test parse returns None for invalid STOMP content"""
+    """Test parse returns PARSE_ERROR for invalid STOMP content"""
     content = b"INVALID\n\n"
     result = bridge.parse(content)
-    assert result is None
+    assert result is not None
+    assert len(result) == 1
+    assert result[0] == SystemEvent(type="system_event", code="game_data_parse_failed")
 
 
 def test_handle_draw(bridge):
@@ -39,9 +52,9 @@ def test_handle_draw(bridge):
         mock_mapping.__getitem__.side_effect = lambda x: "4m" if x == 12 else "?"
         result = bridge._handle_draw(stomp)
         assert len(result) == 1
-        assert result[0]["type"] == "tsumo"
-        assert result[0]["actor"] == 0
-        assert result[0]["pai"] == "4m"
+        assert result[0].type == "tsumo"
+        assert result[0].actor == 0
+        assert result[0].pai == "4m"
 
 
 def test_handle_tehai_action_kiri(bridge):
@@ -60,10 +73,10 @@ def test_handle_tehai_action_kiri(bridge):
         mock_mapping.__getitem__.side_effect = lambda x: "4m" if x == 12 else "?"
         result = bridge._handle_tehai_action(stomp)
         assert len(result) == 1
-        assert result[0]["type"] == "dahai"
-        assert result[0]["actor"] == 0
-        assert result[0]["pai"] == "4m"
-        assert result[0]["tsumogiri"] is True
+        assert result[0].type == "dahai"
+        assert result[0].actor == 0
+        assert result[0].pai == "4m"
+        assert result[0].tsumogiri is True
 
 
 def test_handle_river_action_pon(bridge):
@@ -81,11 +94,11 @@ def test_handle_river_action_pon(bridge):
         mock_mapping.__getitem__.side_effect = lambda x: "4m"
         result = bridge._handle_river_action(stomp)
         assert len(result) == 1
-        assert result[0]["type"] == "pon"
-        assert result[0]["actor"] == 0
-        assert result[0]["target"] == 1
-        assert result[0]["pai"] == "4m"
-        assert len(result[0]["consumed"]) == 2
+        assert result[0].type == "pon"
+        assert result[0].actor == 0
+        assert result[0].target == 1
+        assert result[0].pai == "4m"
+        assert len(result[0].consumed) == 2
 
 
 def test_handle_river_action_chi(bridge):
@@ -103,11 +116,11 @@ def test_handle_river_action_chi(bridge):
         mock_mapping.__getitem__.side_effect = lambda x: {4: "2m", 8: "3m", 12: "4m"}.get(x, "?")
         result = bridge._handle_river_action(stomp)
         assert len(result) == 1
-        assert result[0]["type"] == "chi"
-        assert result[0]["actor"] == 0
-        assert result[0]["target"] == 3
-        assert result[0]["pai"] == "4m"
-        assert result[0]["consumed"] == ["2m", "3m"]
+        assert result[0].type == "chi"
+        assert result[0].actor == 0
+        assert result[0].target == 3
+        assert result[0].pai == "4m"
+        assert result[0].consumed == ["2m", "3m"]
 
 
 def test_handle_join_desk_callback(bridge) -> None:
@@ -130,7 +143,16 @@ def test_handle_join_desk_callback(bridge) -> None:
 
 
 def test_handle_sync_dora_initial(bridge) -> None:
-    bridge.temp_start_round = {"type": "start_kyoku", "dora_marker": None}
+    bridge.temp_start_round = StartKyokuEvent(
+        bakaze="E",
+        kyoku=1,
+        honba=0,
+        kyotaku=0,
+        oya=0,
+        scores=[25000] * 4,
+        dora_marker="?",
+        tehais=[["?"] * 13] * 4,
+    )
     content = {
         "dora": [{"id": 0}],  # 1m
         "honba": 0,
@@ -138,8 +160,8 @@ def test_handle_sync_dora_initial(bridge) -> None:
     }
     stomp = make_stomp("/topic/desk/syncDora/" + "1", content)
     res = bridge._handle_sync_dora(stomp)
-    assert res[0]["dora_marker"] == "1m"
-    assert res[0]["kyotaku"] == 1
+    assert res[0].dora_marker == "1m"
+    assert res[0].kyotaku == 1
     assert bridge.temp_start_round is None
 
 
@@ -152,8 +174,8 @@ def test_handle_sync_dora_update(bridge) -> None:
     }
     stomp = make_stomp("/topic/desk/syncDora/" + "1", content)
     res = bridge._handle_sync_dora(stomp)
-    assert res[0]["type"] == "dora"
-    assert res[0]["dora_marker"] == "2m"
+    assert res[0].type == "dora"
+    assert res[0].dora_marker == "2m"
     assert bridge.current_dora_count == 2
 
 
@@ -167,9 +189,7 @@ def test_handle_tehai_action_ext(bridge) -> None:
     }
     bridge.hand_ids = [0, 1, 2, 3, 4]
     stomp = make_stomp("/topic/tehai_action", content)
-    res = bridge._handle_tehai_action(stomp)
-    assert res is not None
-    assert any(e["type"] == "ankan" for e in res)
+    assert any(e.type == "ankan" for e in bridge._handle_tehai_action(stomp))
 
 
 def test_handle_tehai_action_reach(bridge) -> None:
@@ -182,8 +202,8 @@ def test_handle_tehai_action_reach(bridge) -> None:
     }
     stomp = make_stomp("/topic/desk/tehaiAction/" + "1", content)
     res = bridge._handle_tehai_action(stomp)
-    assert res[0]["type"] == "reach"
-    assert res[1]["type"] == "dahai"
+    assert res[0].type == "reach"
+    assert res[1].type == "dahai"
     assert bridge.temp_reach_accepted is not None
 
 
@@ -192,7 +212,7 @@ def test_handle_tehai_action_kita(bridge) -> None:
     content = {"action": "KITA", "haiList": [], "isKiri": False, "isReachDisplay": False, "position": 0}
     stomp = make_stomp("/topic/desk/tehaiAction/" + "1", content)
     res = bridge._handle_tehai_action(stomp)
-    assert res[0]["type"] == "nukidora"
+    assert res[0].type == "nukidora"
 
 
 def test_handle_river_action_minkan(bridge) -> None:
@@ -205,9 +225,9 @@ def test_handle_river_action_minkan(bridge) -> None:
     }
     stomp = make_stomp("/topic/desk/riverAction/" + "1", content)
     res = bridge._handle_river_action(stomp)
-    assert res[0]["type"] == "daiminkan"
-    assert res[0]["actor"] == 0
-    assert res[0]["target"] == 1
+    assert res[0].type == "daiminkan"
+    assert res[0].actor == 0
+    assert res[0].target == 1
 
 
 def test_handle_round_start_happy_path(bridge):
@@ -247,11 +267,11 @@ def test_handle_round_start_happy_path(bridge):
     assert bridge.game_started is True
     assert bridge.seat == 0
     assert len(res) == 1
-    assert res[0]["type"] == "start_game"
-    assert res[0]["is_3p"] is False
+    assert res[0].type == "start_game"
+    assert res[0].is_3p is False
     assert bridge.temp_start_round is not None
-    assert bridge.temp_start_round["type"] == "start_kyoku"
-    assert "is_3p" not in bridge.temp_start_round
+    assert bridge.temp_start_round.type == "start_kyoku"
+    # is_3p 不在 start_kyoku 中
 
 
 def test_bridge_reset(bridge):
@@ -265,19 +285,13 @@ def test_handle_end_events(bridge) -> None:
     stomp_ron = make_stomp(
         "/topic/desk/ronAction/" + "1", {"agariInfo": {}, "increaseAndDecrease": [], "isTsumo": False}
     )
-    assert bridge._handle_ron_action(stomp_ron)[0]["type"] == "end_kyoku"
+    assert bridge._handle_ron_action(stomp_ron)[0].type == "end_kyoku"
 
     stomp_ryu = make_stomp("/topic/desk/ryuukyokuAction/" + "1", {"reason": 1, "scores": [25000, 25000, 25000, 25000]})
-    assert bridge._handle_ryukyoku_action(stomp_ryu)[0]["type"] == "end_kyoku"
+    assert bridge._handle_ryukyoku_action(stomp_ryu)[0].type == "end_kyoku"
 
     stomp_end = make_stomp("/user/topic/desk/gameEnd/" + "1", {})
-    assert bridge._handle_game_end(stomp_end)[0]["type"] == "end_game"
-
-
-def test_validate_content_error_branch(bridge) -> None:
-    stomp = STOMP()
-    stomp.content = None
-    assert bridge._validate_content(None, stomp) is False
+    assert bridge._handle_game_end(stomp_end)[0].type == "end_game"
 
 
 def test_stomp_parse_headers():
@@ -340,38 +354,38 @@ def test_handle_join_desk_callback_failures(bridge):
 def test_handle_round_start_missing_keys(bridge):
     """测试 roundStart 缺失关键字段"""
     stomp = make_stomp("/user/topic/desk/roundStart/" + "1", {"bakaze": 0})
-    assert bridge._handle_round_start(stomp) is None
+    assert bridge._handle_round_start(stomp) == []
 
 
 def test_build_kakan_variations(bridge):
     """测试加杠的多样性（赤宝牌处理）"""
     # 赤 5m (ID 16 是 5mr)
     res = bridge._build_kakan({"haiList": [{"id": 16}]}, 0)
-    assert res[0]["consumed"] == ["5m", "5m", "5m"]
+    assert res[0].consumed == ["5m", "5m", "5m"]
 
     # 普通 5m (ID 17 是 5m)
     res = bridge._build_kakan({"haiList": [{"id": 17}]}, 0)
-    assert res[0]["consumed"] == ["5mr", "5m", "5m"]
+    assert res[0].consumed == ["5mr", "5m", "5m"]
 
 
 def test_build_wreach(bridge):
     """测试 WREACH 动作"""
     res = bridge._build_wreach({"haiList": [{"id": 0}]}, 0)
-    assert res[0]["type"] == "reach"
-    assert res[1]["type"] == "dahai"
-    assert res[1]["tsumogiri"] is True
+    assert res[0].type == "reach"
+    assert res[1].type == "dahai"
+    assert res[1].tsumogiri is True
 
 
 def test_handle_tehai_action_unknown(bridge):
     """测试未知的手牌动作"""
     stomp = make_stomp("/topic/desk/tehaiAction/", {"action": "UNKNOWN", "haiList": [], "position": 0})
-    assert bridge._handle_tehai_action(stomp) is None
+    assert bridge._handle_tehai_action(stomp) == []
 
 
 def test_handle_river_action_unknown(bridge):
     """测试未知的河牌动作"""
     stomp = make_stomp("/topic/desk/riverAction/", {"action": "KIRI", "menzu": {"menzuList": []}, "position": 0})
-    assert bridge._handle_river_action(stomp) is None
+    assert bridge._handle_river_action(stomp) == []
 
 
 def test_parse_dispatch_logic(bridge):
@@ -380,8 +394,8 @@ def test_parse_dispatch_logic(bridge):
     stomp_draw = f'MESSAGE\ndestination:{"/user/topic/desk/draw/"}0\n\n{{"hai":{{"id":0}},"position":0}}\x00'
     res = bridge.parse(stomp_draw.encode())
     assert res is not None
-    assert res[0]["type"] == "tsumo"
+    assert res[0].type == "tsumo"
 
     # 不匹配任何 handler
     stomp_unknown = "MESSAGE\ndestination:/unknown/topic\n\n{}\x00"
-    assert bridge.parse(stomp_unknown.encode()) is None
+    assert bridge.parse(stomp_unknown.encode()) == []

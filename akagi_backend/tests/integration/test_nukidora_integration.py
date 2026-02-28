@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/integration/test_nukidora_integration.py
+
+描述：针对三麻拔北 (Nukidora) 逻辑在 C++ 核心库中的集成校验。
+TODO: 后续可以扩展为针对所有 MJAI 消息的集成测试
+主要测试点：
+- 校验 libriichi3p 对拔北消息类型的原生支持与正确解析。
+- 验证拔北动作后游戏状态在 Rust 核心中的正确演进。
+- 跨语言（Python 调用 Rust）边界下的复杂事件处理稳健性。
+"""
+
 import json
 
 import pytest

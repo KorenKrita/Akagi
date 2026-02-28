@@ -1,9 +1,12 @@
 """
-MajsoulBridge 手牌追踪单元测试（合并版）
-包含：
-- 基础手牌追踪
-- 极端手牌追踪（暗杠/加杠）
-- 拔北手牌追踪（三麻）
+测试模块：akagi_backend/tests/unit/test_bridge_majsoul_hand.py
+
+描述：专门针对雀魂 (Majsoul) Bridge 手牌追踪 (Hand Tracking) 逻辑的单元测试。
+主要测试点：
+- 摸牌、手切、摸切对当前手牌和自摸牌状态的影响。
+- 副露（吃、碰、暗杠、加杠）后的手牌更新准确性。
+- 三麻拔北 (Kita) 场景下的手牌与自摸牌处理逻辑。
+- 庄家 14 张初始手牌的排序与分割。
 """
 
 import unittest
@@ -519,12 +522,12 @@ class TestMajsoulBridgeKitaDebug(unittest.TestCase):
         # 我们需要检查 parse_liqi 返回的消息，看看 Bot 能看到什么。
         events = self.bridge.parse_liqi(liqi_message_new_round)
 
-        start_kyoku = next(e for e in events if e["type"] == "start_kyoku")
-        tsumo = next(e for e in events if e["type"] == "tsumo")
+        start_kyoku = next(e for e in events if e.type == "start_kyoku")
+        tsumo = next(e for e in events if e.type == "tsumo")
 
         # 检查 Bot 的手牌
-        bot_tehais = start_kyoku["tehais"][0]
-        bot_tsumo = tsumo["pai"]
+        bot_tehais = start_kyoku.tehais[0]
+        bot_tsumo = tsumo.pai
 
         # 预期: Bot 应该能看到 "N"。
         # 目前 (Buggy): Bot 看到手牌 13 张 "1p" + 自摸 1 张 "1p"。没有 N。

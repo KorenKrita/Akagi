@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_mjai_bot_network.py
+
+描述：针对神经网络结构 (Network Architecture) 的单元测试。
+主要测试点：
+- 基础组件测试：ChannelAttention, ResBlock, ResNet。
+- 高层结构测试：Brain (v3/v4, Oracle/Non-Oracle), DQN, AuxNet。
+- 推理设备自动检测逻辑。
+- 神经网络中的 Masking (屏蔽非法动作) 逻辑校验。
+"""
+
 import pytest
 import torch
 

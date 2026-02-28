@@ -1,3 +1,13 @@
+"""
+测试模块：akagi_backend/tests/unit/test_engine_factory.py
+
+描述：针对引擎工厂 (Engine Factory) 和延迟加载机制的单元测试。
+主要测试点：
+- 延迟加载引擎 (LazyLocalEngine) 的初始化、代理和按需加载逻辑。
+- 根据 3P/4P 配置加载对应的 Bot 和引擎实例。
+- 根据在线/本地配置加载 EngineProvider 及其组合逻辑。
+"""
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -25,7 +35,7 @@ def test_lazy_local_engine_init(mock_consts) -> None:
     """测试延迟加载引擎的初始化。"""
     path = Path("mortal.pth")
     engine = LazyLocalEngine(BotStatusContext(), path, mock_consts, is_3p=False)
-    assert engine.name == "Mortal(Lazy)"
+    assert engine.name == "Local"
     assert engine._real_engine is None
 
 
@@ -57,7 +67,7 @@ def test_lazy_local_engine_delegation(mock_consts) -> None:
 
 
 def test_load_bot_and_engine_4p(mock_lib_loader_module) -> None:
-    """测试加载 4 人麻将引擎和机器人。"""
+    """测试加载 4 人麻将引擎和 Bot。"""
     with patch("akagi_ng.mjai_bot.engine.factory.local_settings") as mock_settings:
         mock_settings.ot.online = False
         mock_settings.model_config.model_4p = "mortal_4p.pth"
@@ -72,7 +82,7 @@ def test_load_bot_and_engine_4p(mock_lib_loader_module) -> None:
 
 
 def test_load_bot_and_engine_3p(mock_lib_loader_module) -> None:
-    """测试加载 3 人麻将引擎和机器人。"""
+    """测试加载 3 人麻将引擎和 Bot。"""
     with patch("akagi_ng.mjai_bot.engine.factory.local_settings") as mock_settings:
         mock_settings.ot.online = False
         mock_settings.model_config.model_3p = "mortal_3p.pth"

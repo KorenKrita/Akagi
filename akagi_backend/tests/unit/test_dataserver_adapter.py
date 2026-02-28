@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_dataserver_adapter.py
+
+描述：针对数据服务器适配器 (DataServer Adapter) 的单元测试，负责将 MJAI 事件转换为前端所需的格式。
+主要测试点：
+- 手牌消耗逻辑 (_extract_consumed) 中对赤宝牌的优先处理。
+- 各种副露（吃、碰、杠）和和牌动作的详情提取逻辑。
+- 推荐信息 (_process_standard_recommendations) 的转换与过滤。
+- 立直前瞻 (Riichi Lookahead) 信息的附加逻辑。
+"""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -103,9 +114,6 @@ def test_handle_chi_fuuro_with_aka_priority(mock_bot):
 
 
 def test_handle_chi_fuuro_edge_cases(mock_bot):
-    # No last_kawa
-    assert _handle_chi_fuuro(mock_bot, None, "chi_low") == []
-
     # Can chi but parsing fails -> empty consumed
     mock_bot.player_state.last_cans.can_chi_low = True
     res = _handle_chi_fuuro(mock_bot, "E", "chi_low")

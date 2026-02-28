@@ -1,4 +1,12 @@
-"""Amatsuki Bridge 和 Bot 的集成测试"""
+"""
+测试模块：akagi_backend/tests/integration/test_amatsuki_integration.py
+
+描述：针对天月 (Amatsuki) 平台的完整对局流程集成测试。
+主要测试点：
+- STOMP 协议帧的模拟构造。
+- 完整的对局生命周期流转：JoinDesk -> RoundStart -> SyncDora -> Draw/Discard。
+- 验证 Bridge 与 Controller 在处理天月特有的 DoraSync 缓存机制时的协同工作。
+"""
 
 import json
 
@@ -33,7 +41,7 @@ def test_amatsuki_bridge_full_flow(amatsuki_bridge, integration_controller, mock
     join_msg = make_stomp_frame("/user/topic/callback/joinDesk", join_content)
 
     events = amatsuki_bridge.parse(join_msg)
-    assert events is None  # Join 只改变状态，不产生 MJAI
+    assert events == []  # Join 只改变状态，不产生 MJAI
     assert amatsuki_bridge.valid_flow is True
 
     # 2. Round Start (start_game + start_kyoku)
@@ -77,7 +85,7 @@ def test_amatsuki_bridge_full_flow(amatsuki_bridge, integration_controller, mock
 
     # 第一次只会是 `start_game`，`start_kyoku` 被缓存等待 DoraSync
     assert len(events) == 1
-    assert events[0]["type"] == "start_game"
+    assert events[0].type == "start_game"
 
     # 将 start_game 发送给 controller
     res = integration_controller.react(events[0])
@@ -93,11 +101,12 @@ def test_amatsuki_bridge_full_flow(amatsuki_bridge, integration_controller, mock
     events = amatsuki_bridge.parse(dora_msg)
 
     assert len(events) == 1
-    assert events[0]["type"] == "start_kyoku"
-    assert events[0]["dora_marker"] == "2m"
+    assert events[0].type == "start_kyoku"
+    assert events[0].dora_marker == "2m"
 
     # 发送 start_kyoku 给 controller
-    res = integration_controller.react(events[0])
+    integration_controller.react(events[0])
+    res = integration_controller.last_response
     assert res is None or res.get("type") == "dahai"
 
     # 4. Handle Draw (TSUMO)
@@ -109,11 +118,12 @@ def test_amatsuki_bridge_full_flow(amatsuki_bridge, integration_controller, mock
     events = amatsuki_bridge.parse(draw_msg)
 
     assert len(events) == 1
-    assert events[0]["type"] == "tsumo"
-    assert events[0]["pai"] == "3m"
+    assert events[0].type == "tsumo"
+    assert events[0].pai == "3m"
 
     # 发送 tsumo 给 controller，期望获得 mock 引擎的响应
-    res = integration_controller.react(events[0])
+    integration_controller.react(events[0])
+    res = integration_controller.last_response
     assert res is not None
     assert res.get("type") == "dahai"
     assert "meta" in res

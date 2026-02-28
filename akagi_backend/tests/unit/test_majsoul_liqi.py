@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_majsoul_liqi.py
+
+描述：针对雀魂 (Majsoul) Liqi 协议解析器的单元测试。
+主要测试点：
+- LiqiProto 对 Request、Response 和 Notify 三种消息类型的二进制解析逻辑。
+- Protobuf Varint 编码解析及 XOR 解码逻辑。
+- 嵌套消息 (ActionPrototype 在 Wrapper 中) 的自动提取与解析。
+- 心跳包处理及消息类找不到时的容错机制。
+"""
+
 import struct
 from unittest.mock import MagicMock, patch
 
@@ -100,24 +111,27 @@ def test_liqi_proto_parse_notify_with_nested_wrapper(proto):
             "ActionDiscardTile": mock_action_cls,
         }.get(name)
 
-        # Mock MessageToDict for the outer wrapper
+        # Mock MessageToDict for the inner action
         with (
             patch("akagi_ng.bridge.majsoul.liqi.MessageToDict") as mock_m2d,
-            patch("akagi_ng.bridge.majsoul.liqi.base64.b64decode", return_value=b"decoded"),
             patch("akagi_ng.bridge.majsoul.liqi.decode", return_value=b"xor_decoded"),
         ):
-            # First call: outer wrapper
-            # Second call: inner action
-            mock_m2d.side_effect = [
-                {"name": "ActionDiscardTile", "data": "base64_str"},  # Outer dict
-                {"tile": "1m"},  # Inner dict
-            ]
+            # Only one call: inner action
+            mock_m2d.return_value = {"tile": "1m"}
+
+            # 模拟 proto_obj 的属性
+            proto_obj = MagicMock()
+            proto_obj.name = "ActionDiscardTile"
+            proto_obj.data = b"encoded_data"
+            proto_obj.step = 1
+            mock_wrapper_cls.FromString.return_value = proto_obj
 
             method, dict_obj = proto._parse_notify(block)
 
             assert method == ".lq.Lobby.notifyAction"
             assert dict_obj["data"] == {"tile": "1m"}
             assert dict_obj["name"] == "ActionDiscardTile"
+            assert dict_obj["step"] == 1
 
 
 def test_liqi_proto_varint_parsing():
@@ -218,12 +232,21 @@ def test_liqi_proto_parse_notify_inner_unknown_cls(proto):
         patch.object(proto, "get_message_class") as mock_get_cls,
         patch("akagi_ng.bridge.majsoul.liqi.MessageToDict") as mock_m2d,
     ):
+        # 模拟 proto_obj 的属性，且 get_message_class 对内层返回 None
+        proto_obj = MagicMock()
+        proto_obj.name = "UnknownAction"
+        proto_obj.data = b"raw_data"
+        proto_obj.step = 10
         mock_get_cls.side_effect = lambda name: MagicMock() if name == "notifyAction" else None
-        mock_m2d.return_value = {"name": "UnknownAction", "data": "base64"}
+
+        # 当内层找不到类时，parse_wrapper 返回 None
+        # _parse_notify 会回退到通用的 MessageToDict(proto_obj) 路径
+        mock_m2d.return_value = {"name": "UnknownAction", "data": "base64_string", "step": 10}
 
         method, dict_obj = proto._parse_notify(block)
         assert method == ".lq.Lobby.notifyAction"
-        assert dict_obj["data"] == "base64"  # Remains as string
+        assert dict_obj["name"] == "UnknownAction"
+        assert dict_obj["data"] == "base64_string"
 
 
 def test_liqi_proto_full_parse_notify(proto):

@@ -1,5 +1,13 @@
-"""测试共享 fixtures 和配置"""
+"""
+测试模块：akagi_backend/tests/conftest.py
 
+描述：项目顶层测试配置，包含全局 fixtures、钩子函数和测试标记推断逻辑。
+主要测试点：
+- 测试标记 (markers) 的自动推断逻辑。
+- 提供通用的游戏消息、Liqi 协议消息和各平台 Bridge 的模拟 fixture。
+"""
+
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +28,41 @@ try:
     HAS_LIBRIICHI3P = True
 except ImportError:
     HAS_LIBRIICHI3P = False
+
+
+def _infer_domain_markers(path: Path) -> set[str]:
+    """根据测试文件名推断领域标签。"""
+    stem = path.stem.lower()
+    markers: set[str] = set()
+
+    keyword_map: dict[str, tuple[str, ...]] = {
+        "bridge": ("bridge", "majsoul", "tenhou", "riichi_city", "amatsuki", "liqi", "nukidora"),
+        "engine": ("engine", "akagi_ot"),
+        "bot": ("bot", "lookahead", "state_tracker"),
+        "application": ("application", "controller", "settings", "utils"),
+        "dataserver": ("dataserver", "sse"),
+        "client": ("electron", "mitm_client", "mitm_bridge"),
+    }
+
+    for marker, keywords in keyword_map.items():
+        if any(keyword in stem for keyword in keywords):
+            markers.add(marker)
+    return markers
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]):
+    """统一给单测/集成测试打标签，便于分组执行与回归编排。"""
+    for item in items:
+        path = Path(str(item.fspath))
+        norm = path.as_posix()
+
+        if "/tests/unit/" in norm:
+            item.add_marker("unit")
+        elif "/tests/integration/" in norm:
+            item.add_marker("integration")
+
+        for marker in _infer_domain_markers(path):
+            item.add_marker(marker)
 
 
 @pytest.fixture
@@ -119,10 +162,10 @@ def riichi_city_bridge():
     """创建一个干净的 RiichiCityBridge 实例"""
     bridge = RiichiCityBridge()
     bridge.uid = 1001
-    bridge.game_status = MagicMock()  # Use MagicMock specifically
+    bridge.game_status = MagicMock()  # 这里必须使用 MagicMock，便于动态属性注入
     bridge.game_status.accept_reach = None
     bridge.game_status.dora_markers = []
-    bridge.game_status.player_list = [1000, 1001, 1002, 1003]  # User at index 1
+    bridge.game_status.player_list = [1000, 1001, 1002, 1003]  # 当前用户位于索引 1
     bridge.game_status.seat = 1
     bridge.game_status.last_dahai_actor = 0
     bridge.game_status.is_3p = False

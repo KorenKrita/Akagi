@@ -1,4 +1,13 @@
-"""Controller 单元测试（合并自 test_mjai_bot_controller / test_controller_lifecycle / test_controller_bot_switch）"""
+"""
+测试模块：akagi_backend/tests/unit/test_mjai_bot_controller.py
+
+描述：针对 MJAI Bot 协调器 (Controller) 的单元测试。
+主要测试点：
+- Bot 实例的生命周期管理，包括 4P/3P 模式切换。
+- 对战事件的转发与重放 (Replay) 机制。
+- Bot 运行异常、切换失败等场景的状态标志捕获。
+- 事件序列不完整或 Bot 未加载时的安全降级处理。
+"""
 
 from unittest.mock import MagicMock, patch
 
@@ -6,6 +15,8 @@ import pytest
 
 from akagi_ng.mjai_bot.controller import Controller
 from akagi_ng.mjai_bot.status import BotStatusContext
+from akagi_ng.schema.notifications import NotificationCode
+from akagi_ng.schema.types import DahaiEvent, StartGameEvent, StartKyokuEvent, TsumoEvent
 
 
 @pytest.fixture
@@ -21,18 +32,9 @@ def test_controller_unmatched_event_sequence(controller):
     controller.bot = MagicMock()
     controller.bot.react.return_value = None
 
-    controller.react({"type": "start_game", "id": 0, "is_3p": False})
-    res = controller.react({"type": "dahai", "actor": 0, "tile": "1m"})
+    controller.react(StartGameEvent(id=0, is_3p=False))
+    res = controller.react(DahaiEvent(actor=0, pai="1m", tsumogiri=False))
     assert res is None
-
-
-def test_controller_invalid_return_type(controller):
-    """Bot 返回非字典对象时应设置 RUNTIME_ERROR 标志"""
-    controller.bot = MagicMock()
-    controller.bot.react.return_value = "invalid"
-    res = controller.react({"type": "dahai", "actor": 0, "tile": "1m"})
-    assert res is None
-    assert controller.status.flags.get("bot_runtime_error") is True
 
 
 def test_controller_runtime_error(controller):
@@ -41,15 +43,15 @@ def test_controller_runtime_error(controller):
     mock_bot.react.side_effect = Exception("test error")
     controller.bot = mock_bot
 
-    res = controller.react({"type": "tsumo", "actor": 0, "pai": "1m"})
+    res = controller.react(TsumoEvent(actor=0, pai="1m"))
     assert res is None
-    assert controller.status.flags.get("bot_runtime_error") is True
+    assert NotificationCode.BOT_RUNTIME_ERROR in controller.status.flags
 
 
 def test_controller_no_bot_loaded(controller):
     """未加载 Bot 时所有事件应返回 none"""
     controller.bot = None
-    res = controller.react({"type": "dahai", "actor": 0, "tile": "1m"})
+    res = controller.react(DahaiEvent(actor=0, pai="1m", tsumogiri=False))
     assert res is None
 
 
@@ -59,24 +61,24 @@ def test_controller_no_bot_loaded(controller):
 def test_controller_early_is_3p_detection(controller):
     """start_game 中的 is_3p 应立即触发 Bot 激活"""
     with patch.object(controller, "_ensure_bot_activated") as mock_activate:
-        controller.react({"type": "start_game", "id": 0, "is_3p": True})
+        controller.react(StartGameEvent(id=0, is_3p=True))
         mock_activate.assert_called_once_with(True)
 
 
 def test_controller_mandatory_is_3p(controller):
     """start_game 的 is_3p=False 也应触发激活"""
     with patch.object(controller, "_ensure_bot_activated") as mock_activate:
-        controller.react({"type": "start_game", "id": 0, "is_3p": False})
+        controller.react(StartGameEvent(id=0, is_3p=False))
         mock_activate.assert_called_once_with(False)
 
 
 def test_controller_bot_switch_failed(controller):
     """_choose_bot 失败时应设置 BOT_SWITCH_FAILED 标志"""
     with patch.object(controller, "_choose_bot", return_value=False):
-        controller.react({"type": "start_game", "id": 0, "is_3p": False})
+        controller.react(StartGameEvent(id=0, is_3p=False))
 
         assert controller.bot is None
-        assert controller.status.flags.get("bot_switch_failed") is True
+        assert NotificationCode.BOT_SWITCH_FAILED in controller.status.flags
 
 
 # ===== 生命周期 & Bot 切换 =====
@@ -92,7 +94,7 @@ def test_controller_lifecycle_replay():
 
     with patch("akagi_ng.mjai_bot.bot.MortalBot", return_value=mock_instance) as MockBotClass:
         # start_game(is_3p=True) 应触发加载 mortal3p 并重放
-        start_game = {"type": "start_game", "id": 1, "is_3p": True}
+        start_game = StartGameEvent(id=1, is_3p=True)
         controller.react(start_game)
 
         assert controller.bot is mock_instance
@@ -110,10 +112,19 @@ def test_controller_lifecycle_start_kyoku_after_replay():
     mock_instance.react.return_value = None
 
     with patch("akagi_ng.mjai_bot.bot.MortalBot", return_value=mock_instance):
-        start_game = {"type": "start_game", "id": 1, "is_3p": True}
+        start_game = StartGameEvent(id=1, is_3p=True)
         controller.react(start_game)
 
-        start_kyoku = {"type": "start_kyoku", "scores": [35000, 35000, 35000, 0], "is_3p": True}
+        start_kyoku = StartKyokuEvent(
+            bakaze="E",
+            kyoku=1,
+            honba=0,
+            oya=0,
+            scores=[35000, 35000, 35000, 0],
+            dora_marker="1p",
+            kyotaku=0,
+            tehais=[["?"] * 13] * 4,
+        )
         res = controller.react(start_kyoku)
         assert res is None
         # react 应被调用 2 次：start_game 重放 + start_kyoku
@@ -131,7 +142,7 @@ def test_controller_bot_switch_4p_to_3p():
 
     with patch("akagi_ng.mjai_bot.bot.MortalBot", return_value=mock_bot) as MockBotClass:
         # 1. 激活四麻
-        controller.react({"type": "start_game", "id": 0, "is_3p": False})
+        controller.react(StartGameEvent(id=0, is_3p=False))
         assert controller.bot is mock_bot
         MockBotClass.assert_called_once()
         MockBotClass.reset_mock()
@@ -141,7 +152,7 @@ def test_controller_bot_switch_4p_to_3p():
         mock_bot.is_3p = False
 
         # 2. 切换到三麻
-        new_start_game = {"type": "start_game", "id": 0, "is_3p": True}
+        new_start_game = StartGameEvent(id=0, is_3p=True)
         controller.react(new_start_game)
         assert controller.bot is mock_bot
         MockBotClass.assert_called_once()
@@ -158,22 +169,20 @@ def test_controller_bot_switch_reconnect_scenario():
 
     with patch("akagi_ng.mjai_bot.bot.MortalBot", return_value=mock_3p):
         # 重连场景必须有 start_game（Bridge 合成）→ start_kyoku
-        start_game = {"type": "start_game", "id": 0, "is_3p": True}
+        start_game = StartGameEvent(id=0, is_3p=True)
         controller.react(start_game)
         assert controller.bot is mock_3p
 
-        start_kyoku = {
-            "type": "start_kyoku",
-            "scores": [35000, 35000, 35000, 0],
-            "is_3p": True,
-            "bakaze": "E",
-            "kyoku": 1,
-            "honba": 0,
-            "kyotaku": 0,
-            "oya": 0,
-            "dora_marker": "1p",
-            "tehais": [["?"] * 13] * 4,
-        }
+        start_kyoku = StartKyokuEvent(
+            bakaze="E",
+            kyoku=1,
+            honba=0,
+            kyotaku=0,
+            oya=0,
+            dora_marker="1p",
+            scores=[35000, 35000, 35000, 0],
+            tehais=[["?"] * 13] * 4,
+        )
         res = controller.react(start_kyoku)
         assert res is None
         assert mock_3p.react.call_count == 2

@@ -1,3 +1,14 @@
+"""
+测试模块：akagi_backend/tests/unit/test_mitm_bridge_addon.py
+
+描述：针对 MITMProxy 插件 (BridgeAddon) 的单元测试。
+主要测试点：
+- 根据配置 (Auto/Manual) 和域名自动识别并激活对应的 Bridge 实例。
+- WebSocket 生命周期钩子 (start, message, end) 的拦截与转发。
+- HTTP 钩子对天月 (Amatsuki) 心跳包等请求的拦截处理。
+- 过期 Bridge 实例的自动清理逻辑。
+"""
+
 import queue
 from unittest.mock import MagicMock, patch
 
@@ -119,7 +130,7 @@ def test_bridge_addon_websocket_lifecycle(addon, shared_queue) -> None:
         addon.websocket_start(flow)
         assert flow.id in addon.activated_flows
         conn_msg = shared_queue.get(timeout=1)
-        assert conn_msg["type"] == "system_event"
+        assert conn_msg.type == "system_event"
 
     msg = MagicMock()
     msg.content = b"fake_tenhou_msg"
@@ -182,3 +193,13 @@ def test_bridge_addon_cleanup(addon) -> None:
     addon._cleanup_stale_bridges(max_age_seconds=10)
     assert flow.id not in addon.activated_flows
     assert flow.id not in addon.bridges
+
+
+def test_bridge_addon_queue_full_drops_system_event():
+    shared_queue = queue.Queue(maxsize=1)
+    shared_queue.put_nowait({"sentinel": True})
+    addon = BridgeAddon(shared_queue)
+
+    addon._on_connection_established()
+    assert addon._active_connections == 1
+    assert shared_queue.qsize() == 1

@@ -1,4 +1,13 @@
-"""MitmClient 生命周期集成测试"""
+"""
+测试模块：akagi_backend/tests/integration/test_mitm_client_integration.py
+
+描述：针对 MITM 代理客户端 (MitmClient) 的异步生命周期集成测试。
+主要测试点：
+- 代理线程的异步启动、DumpMaster 实例初始化及插件加载。
+- 配置禁用场景下的安全不启动逻辑。
+- 上游代理 (Upstream) 参数的正确透传与解析。
+- 代理启动失败时的状态回滚与清理逻辑。
+"""
 
 import queue
 import time
@@ -111,3 +120,21 @@ def test_mitm_client_upstream(mock_mitm_settings, mock_dump_master):
     # To be more precise, we could patch options.Options but let's assume if it runs it's fine.
 
     client.stop()
+
+
+def test_mitm_client_start_failure_resets_running(mock_mitm_settings, monkeypatch):
+    mock_cls = MagicMock()
+    mock_instance = MagicMock()
+
+    async def failing_run():
+        raise RuntimeError("start failed")
+
+    mock_instance.run.side_effect = failing_run
+    mock_cls.return_value = mock_instance
+    monkeypatch.setattr("akagi_ng.mitm_client.client.DumpMaster", mock_cls)
+
+    client = MitmClient(shared_queue=queue.Queue())
+    client.start()
+    client._thread.join(timeout=2.0)
+
+    assert client.running is False
