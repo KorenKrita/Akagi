@@ -13,6 +13,8 @@ export default function Hud() {
     w: 0,
     active: false,
   });
+  const rafId = useRef<number | null>(null);
+  const pendingBounds = useRef<{ width: number; height: number } | null>(null);
 
   const handlePointerDown = (e: PointerEvent) => {
     e.preventDefault();
@@ -30,13 +32,21 @@ export default function Hud() {
   const handlePointerMove = (e: PointerEvent) => {
     if (!startPos.current.active) return;
 
-    // Calculate new size
+    // 计算新尺寸
     const deltaX = e.screenX - startPos.current.x;
     const width = Math.min(HUD_MAX_WIDTH, Math.max(HUD_MIN_WIDTH, startPos.current.w + deltaX));
-    // Enforce 16:9 aspect ratio
+    // 强制 16:9 比例
     const height = Math.round((width * 9) / 16);
 
-    window.electron.invoke('set-window-bounds', { width, height });
+    pendingBounds.current = { width, height };
+    if (rafId.current === null) {
+      rafId.current = requestAnimationFrame(() => {
+        rafId.current = null;
+        if (pendingBounds.current) {
+          window.electron.invoke('set-window-bounds', pendingBounds.current);
+        }
+      });
+    }
   };
 
   const handlePointerUp = (e: PointerEvent) => {
@@ -44,11 +54,16 @@ export default function Hud() {
 
     startPos.current.active = false;
     document.body.style.cursor = '';
+    pendingBounds.current = null;
+    if (rafId.current !== null) {
+      cancelAnimationFrame(rafId.current);
+      rafId.current = null;
+    }
 
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {
-      // Ignore
+      // 忽略
     }
   };
 
@@ -80,7 +95,7 @@ export default function Hud() {
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp} // Safety fallback
+          onPointerCancel={handlePointerUp} // 安全兜底
         >
           <svg
             width='12'

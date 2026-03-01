@@ -45,6 +45,26 @@ export function useStatusNotification(
     }
     return list;
   }, [notifications, connectionError]);
+
+  // 在渲染阶段直接清理已失效的隐藏状态
+  const currentCodes = new Set(allNotifications.map((n) => n.code));
+  let hasStaleHiddenCodes = false;
+  hiddenCodes.forEach((code) => {
+    if (!currentCodes.has(code)) {
+      hasStaleHiddenCodes = true;
+    }
+  });
+
+  if (hasStaleHiddenCodes) {
+    const nextHiddenCodes = new Set(hiddenCodes);
+    nextHiddenCodes.forEach((code) => {
+      if (!currentCodes.has(code)) {
+        nextHiddenCodes.delete(code);
+      }
+    });
+    // 直接在这里触发重渲染以清理状态
+    setHiddenCodes(nextHiddenCodes);
+  }
   // 确定状态栏显示内容
   const { statusMessage, statusType, activeStatusCode } = useMemo(() => {
     // 过滤出候选状态
@@ -159,27 +179,6 @@ export function useStatusNotification(
       return () => clearTimeout(timer);
     }
   }, [activeStatusCode]);
-
-  // 清理不再存在的 hiddenCodes
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setHiddenCodes((prev) => {
-        const currentCodes = new Set(allNotifications.map((n) => n.code));
-        let hasChanges = false;
-        const next = new Set(prev);
-
-        next.forEach((code) => {
-          if (!currentCodes.has(code)) {
-            next.delete(code);
-            hasChanges = true;
-          }
-        });
-
-        return hasChanges ? next : prev;
-      });
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [allNotifications]);
 
   return { statusMessage, statusType };
 }

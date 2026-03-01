@@ -2,7 +2,6 @@ import http from 'node:http';
 
 import type { FullRecommendationData, Settings } from '@/types';
 
-// Visual Verification Mock Server for Recommendations
 console.log('Starting server in MOCK mode (SSE) for Recommendation Visual Test.');
 
 const STREAM_INTERVAL_MS = 3000;
@@ -17,7 +16,7 @@ const corsHeaders: Record<string, string> = {
 const port = 8765;
 const hostname = '127.0.0.1';
 
-// Default settings for reset
+// 默认设置
 const defaultSettings: Settings = {
   log_level: 'INFO',
   locale: 'zh-CN',
@@ -46,7 +45,6 @@ const defaultSettings: Settings = {
   },
 };
 
-// In-memory settings storage
 let mockSettings: Settings = { ...defaultSettings };
 
 const server = http.createServer((req, res) => {
@@ -65,7 +63,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(data));
   };
 
-  // Handle Settings API
+  // 获取设置接口
   if (url.pathname === '/api/settings') {
     if (req.method === 'GET') {
       return jsonResponse({ ok: true, data: mockSettings });
@@ -88,14 +86,14 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // Handle Settings Reset API
+  // 重置接口
   if (url.pathname === '/api/settings/reset' && req.method === 'POST') {
     mockSettings = { ...defaultSettings };
     console.log('Reset mock settings to default');
     return jsonResponse({ ok: true, data: mockSettings, restartRequired: true });
   }
 
-  // Handle Ingest API (Mocked MJAI payload ingestion)
+  // Ingest 接口（模拟 MJAI 输入）
   if (url.pathname === '/api/ingest' && req.method === 'POST') {
     let body = '';
     req.on('data', (chunk) => (body += chunk.toString()));
@@ -111,19 +109,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Handle Shutdown API
+  // 关机接口
   if (url.pathname === '/api/shutdown' && req.method === 'POST') {
     console.log('[SHUTDOWN] Received shutdown request, exiting mock server...');
     jsonResponse({ ok: true, message: 'Shutdown initiated' });
 
-    // Exit after a short delay to ensure the response is sent
+    // 延迟退出，确保响应已发送
     setTimeout(() => {
       process.exit(0);
     }, 500);
     return;
   }
 
-  // Handle Models API
+  // 获取模型列表接口
   if (url.pathname === '/api/models' && req.method === 'GET') {
     const mockModels = ['mortal.pth', 'mortal3p.pth', 'custom_model.pth'];
     return jsonResponse({ ok: true, data: mockModels });
@@ -145,7 +143,6 @@ const server = http.createServer((req, res) => {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    // initial comment + first payload
     res.write(': connected\n\n');
     sendData('recommendations', generateMockData(connectionStateCounter));
     connectionStateCounter++;
@@ -183,6 +180,7 @@ server.listen(port, hostname, () => {
 
 function generateMockData(counter: number): FullRecommendationData {
   const scenarios = [
+    // 场景 1：普通打牌
     {
       tehai: ['1m', '2m', '3m', '5m', '6m', '7m', '1p', '1p', '5p', '0p', '9p', 'E', 'E', 'W'],
       recommendations: [
@@ -191,7 +189,7 @@ function generateMockData(counter: number): FullRecommendationData {
         { action: '1p', confidence: 0.05 },
       ],
     },
-    // Scenario 2: Riichi Lookahead (Ryanpeikou-ish shape)
+    // 场景 2：立直前瞻（类似二杯口的形态）
     {
       tehai: ['1m', '2m', '2m', '3m', '3m', '4m', '4m', '5m', '5m', '6m', '6m', '7m', '7m', '8m'],
       recommendations: [
@@ -209,7 +207,7 @@ function generateMockData(counter: number): FullRecommendationData {
       ],
     },
 
-    // Scenario 3: Mixed Kan (Ankan 4m + Kakan 7s)
+    // 场景 3：混合杠（暗杠 4m + 加杠 7s）
     {
       tehai: ['4m', '4m', '4m', '4m', '5m', '6m', '7m', 'E', 'E', 'E', '7s'], // has a 7s, 7s, 7s from Pon
       recommendations: [
@@ -218,8 +216,8 @@ function generateMockData(counter: number): FullRecommendationData {
         { action: '7s', confidence: 0.1 }, // Skip kan
       ],
     },
-    // Scenario 4: Pon (Bump) vs Daiminkan (Open Kan)
-    // Hand: 999p 123s ... Opponent discards 9p
+    // 场景 4：碰 vs 大明杠
+    // 手牌：999p 123s ... 对手打出 9p
     {
       tehai: ['9p', '9p', '9p', '1s', '2s', '3s', '4s', '5s', '6s', 'E', 'E', 'S', 'S'],
       recommendations: [
@@ -228,8 +226,8 @@ function generateMockData(counter: number): FullRecommendationData {
         { action: 'none', confidence: 0.02 },
       ],
     },
-    // Scenario 5: Chi (Eat) - Opponent discards 7m
-    // Hand: 56m ...
+    // 场景 5：吃 - 对手打出 7m
+    // 手牌：56m ...
     {
       tehai: ['5m', '6m', '8m', '9m', '1p', '2p', '3p', '4s', '5s', '6s', 'E', 'E', 'W'],
       recommendations: [
@@ -237,7 +235,7 @@ function generateMockData(counter: number): FullRecommendationData {
         { action: 'none', confidence: 0.15 },
       ],
     },
-    // Scenario 6: Ron (Win by discard)
+    // 场景 6：荣和
     {
       tehai: ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', '1s', '2s', '3s', '9m'],
       recommendations: [
@@ -245,7 +243,7 @@ function generateMockData(counter: number): FullRecommendationData {
         { action: 'none', confidence: 0.01 },
       ],
     },
-    // Scenario 7: Tsumo (Win by self-draw)
+    // 场景 7：自摸
     {
       tehai: ['1m', '2m', '3m', '4m', '5m', '6m', '7p', '8p', '9p', '1s', '2s', '3s', '9m', '9m'],
       recommendations: [
@@ -253,7 +251,7 @@ function generateMockData(counter: number): FullRecommendationData {
         { action: 'none', confidence: 0.01 },
       ],
     },
-    // Scenario 8: Kita (North Pull)
+    // 场景 8：拔北
     {
       tehai: ['1m', '2m', '3m', '5m', '6m', '7m', '1p', '2p', '3p', '9p', '9p', 'N', 'E'],
       recommendations: [
@@ -262,7 +260,7 @@ function generateMockData(counter: number): FullRecommendationData {
         { action: 'E', confidence: 0.05 },
       ],
     },
-    // Scenario 9: Ryuukyoku (Kyuushu Kyuuhai)
+    // 场景 9：流局（九种九牌）
     {
       tehai: ['1m', '9m', '1p', '9p', '1s', '9s', 'E', 'S', 'W', 'N', 'P', 'F', 'C', '1m'],
       recommendations: [
@@ -273,15 +271,16 @@ function generateMockData(counter: number): FullRecommendationData {
     },
   ];
 
-  // Cycle through scenarios
+  // 轮换场景
   const scenario = scenarios[counter % scenarios.length];
 
-  // Cycle through status states for visual verification
-  const statusStates = [
-    { engine_type: 'akagi-ot', fallback_used: false, circuit_open: false }, // Online (Green)
+  // 轮换状态用于可视化验证
+  const statusStates: Array<Omit<FullRecommendationData, 'recommendations'>> = [
+    { engine_type: 'akagiot', fallback_used: false, circuit_open: false }, // Online (Green)
     { engine_type: 'mortal', fallback_used: false, circuit_open: false }, // Local (Blue)
-    { engine_type: 'akagi-ot', fallback_used: true, circuit_open: false }, // Fallback (Yellow)
-    { engine_type: 'akagi-ot', fallback_used: false, circuit_open: true }, // Circuit Open (Red)
+    { engine_type: 'akagiot', fallback_used: true, circuit_open: false }, // Fallback (Yellow)
+    { engine_type: 'akagiot', fallback_used: true, circuit_open: true }, // Circuit Open (Red)
+    { engine_type: 'null', fallback_used: false, circuit_open: false }, // Null Engine (Gray)
   ];
   const status = statusStates[counter % statusStates.length];
 

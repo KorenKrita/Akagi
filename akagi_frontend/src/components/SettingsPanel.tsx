@@ -40,7 +40,7 @@ const SettingsPanel: FC<SettingsPanelProps> = memo(({ open, onClose }) => {
 
   const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false);
 
-  // Refresh from backend every time panel opens to ensure consistency
+  // 每次打开面板时从后端刷新，确保一致性
   useEffect(() => {
     if (open) {
       refreshSettings();
@@ -55,12 +55,21 @@ const SettingsPanel: FC<SettingsPanelProps> = memo(({ open, onClose }) => {
       <ModalHeader>
         <ModalTitle>{t('app.settings_title')}</ModalTitle>
         <ModalDescription>{t('app.settings_desc')}</ModalDescription>
+        {restartRequired && (
+          <StatusBar
+            variant='warning'
+            className='mt-4 items-center justify-center text-center'
+            icon={AlertTriangle}
+          >
+            {t('settings.restart_required')}
+          </StatusBar>
+        )}
       </ModalHeader>
 
       <ModalContent>
         <ErrorBoundary
           fallback={() => (
-            <div className='settings-error-state'>
+            <div className='flex flex-col items-center justify-center p-8 text-center'>
               <AlertTriangle className='text-destructive mb-4 h-10 w-10' />
               <h3 className='text-destructive mb-2 text-lg font-semibold'>
                 {t('common.connection_failed')}
@@ -72,17 +81,7 @@ const SettingsPanel: FC<SettingsPanelProps> = memo(({ open, onClose }) => {
           )}
         >
           <div className='space-y-8'>
-            {restartRequired && (
-              <StatusBar
-                variant='warning'
-                className='items-center justify-center text-center'
-                icon={AlertTriangle}
-              >
-                {t('settings.restart_required')}
-              </StatusBar>
-            )}
-
-            <div className='settings-grid'>
+            <div className='grid grid-cols-1 gap-6 md:grid-cols-2'>
               <GeneralSection
                 settings={settings}
                 updateSetting={updateSetting}

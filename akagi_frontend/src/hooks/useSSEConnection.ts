@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { SSE_INITIAL_BACKOFF_MS, SSE_MAX_BACKOFF_MS, SSE_MAX_RETRIES } from '@/config/constants';
 import type { FullRecommendationData, NotificationItem, SSEErrorCode } from '@/types';
@@ -131,5 +131,8 @@ export function useSSEConnection(url: string | null): UseSSEConnectionResult {
     };
   }, [url]);
 
-  return { data, notifications, isConnected, error };
+  return useMemo(
+    () => ({ data, notifications, isConnected, error }),
+    [data, notifications, isConnected, error],
+  );
 }

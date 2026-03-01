@@ -20,7 +20,7 @@ const Recommendation: FC<Recommendation> = ({
   const hasSimCandidates = sim_candidates && sim_candidates.length > 0;
 
   // 确定配置：优先精确匹配（reach、pon 等），否则默认切牌样式
-  const effectiveConfig = config || ACTION_CONFIG['discard'];
+  const effectiveConfig = config ?? ACTION_CONFIG.discard;
 
   const displayLabel = t(effectiveConfig.label);
   const labelLength = displayLabel.length;
@@ -56,12 +56,7 @@ const Recommendation: FC<Recommendation> = ({
       {/* 2. Main Container (Glassmorphism) */}
       <div className='glass-card'>
         {/* Decoration: Left Strip */}
-        <div
-          className={cn(
-            'absolute top-0 bottom-0 left-0 w-2 bg-linear-to-b',
-            effectiveConfig.gradient,
-          )}
-        />
+        <div className={cn('accent-strip', effectiveConfig.gradient)} />
 
         {/* Left: Action Label */}
         <div className='z-10 mr-2 flex h-full w-52 flex-col items-center justify-center'>

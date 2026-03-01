@@ -30,7 +30,7 @@ interface GeneralSectionProps {
 
 export const GeneralSection: FC<GeneralSectionProps> = memo(
   ({ settings, updateSetting, updateSettingsBatch }) => {
-    const { t, i18n } = useTranslation();
+    const { t } = useTranslation();
     const { theme, setTheme } = useTheme();
     return (
       <div className='space-y-4'>
@@ -40,7 +40,6 @@ export const GeneralSection: FC<GeneralSectionProps> = memo(
           <Select
             value={settings.locale || 'zh-CN'}
             onValueChange={(val) => {
-              i18n.changeLanguage(val);
               updateSetting(['locale'], val);
             }}
           >

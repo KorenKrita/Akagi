@@ -17,17 +17,26 @@ export const Modal: FC<ModalProps> = ({ open, onOpenChange, children, className 
   // 监听 Escape 键
   useEffect(() => {
     if (open) {
-      document.body.style.overflow = 'hidden';
+      const body = document.body;
+      const count = Number(body.dataset.modalOpenCount ?? '0');
+      const nextCount = count + 1;
+      body.dataset.modalOpenCount = String(nextCount);
+      body.style.overflow = 'hidden';
       const handleEscape = (e: KeyboardEvent) => {
         if (e.key === 'Escape') onOpenChange(false);
       };
       document.addEventListener('keydown', handleEscape);
       return () => {
-        document.body.style.overflow = 'unset';
         document.removeEventListener('keydown', handleEscape);
+        const currentCount = Number(body.dataset.modalOpenCount ?? '1');
+        const updatedCount = Math.max(0, currentCount - 1);
+        if (updatedCount === 0) {
+          delete body.dataset.modalOpenCount;
+          body.style.overflow = 'unset';
+        } else {
+          body.dataset.modalOpenCount = String(updatedCount);
+        }
       };
-    } else {
-      document.body.style.overflow = 'unset';
     }
   }, [open, onOpenChange]);
 

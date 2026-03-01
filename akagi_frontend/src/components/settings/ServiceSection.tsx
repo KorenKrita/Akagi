@@ -30,7 +30,12 @@ export const ServiceSection: FC<ServiceSectionProps> = memo(({ settings, updateS
           <Input
             type='number'
             value={settings.server.port}
-            onChange={(e) => updateSetting(['server', 'port'], parseInt(e.target.value), true)}
+            onChange={(e) => {
+              const next = parseInt(e.target.value, 10);
+              if (!Number.isNaN(next)) {
+                updateSetting(['server', 'port'], next, true);
+              }
+            }}
           />
         </SettingsItem>
       </div>

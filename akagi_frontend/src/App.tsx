@@ -3,6 +3,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import { lazy, Suspense, use, useEffect, useMemo, useState } from 'react';
 import { HashRouter, Route, Routes } from 'react-router-dom';
 
+import { ConnectionProvider } from '@/components/ConnectionProvider';
 import { ExitOverlay } from '@/components/ExitOverlay';
 import { GameProvider } from '@/components/GameProvider';
 import { LaunchScreen } from '@/components/LaunchScreen';
@@ -11,6 +12,7 @@ import { ThemeProvider } from '@/components/ThemeProvider';
 import { APP_STARTUP_MIN_DELAY_MS } from '@/config/constants';
 import { useConnectionConfig } from '@/hooks/useConnectionConfig';
 import { fetchSettingsApi } from '@/hooks/useSettings';
+import { useTilePreloader } from '@/hooks/useTilePreloader';
 import { setBaseUrl } from '@/lib/api-client';
 import type { Settings } from '@/types';
 
@@ -19,12 +21,8 @@ const Hud = lazy(() => import('@/pages/HUD'));
 
 function AppContent({ settingsPromise }: { settingsPromise: Promise<Settings> }) {
   const initialSettings = use(settingsPromise);
-  const { apiBase } = useConnectionConfig();
-
-  setBaseUrl(apiBase);
-
   return (
-    <SettingsProvider apiBase={apiBase} initialSettings={initialSettings}>
+    <SettingsProvider initialSettings={initialSettings}>
       <GameProvider>
         <HashRouter>
           <Routes>
@@ -37,19 +35,27 @@ function AppContent({ settingsPromise }: { settingsPromise: Promise<Settings> })
   );
 }
 
-export default function App() {
+function AppInner() {
+  useTilePreloader();
   const { apiBase } = useConnectionConfig();
 
-  const isHud = window.location.hash === '#/hud';
+  const isHud = useMemo(() => window.location.hash === '#/hud', []);
 
-  if (isHud) {
-    document.documentElement.classList.add('is-hud');
-  }
+  useEffect(() => {
+    document.documentElement.classList.toggle('is-hud', isHud);
+    return () => {
+      document.documentElement.classList.remove('is-hud');
+    };
+  }, [isHud]);
+
+  useEffect(() => {
+    setBaseUrl(apiBase);
+  }, [apiBase]);
 
   const settingsPromise = useMemo(() => {
     const fetchSettings = (async () => {
-      setBaseUrl(apiBase);
       await window.electron.invoke('wait-for-backend');
+      setBaseUrl(apiBase);
       return fetchSettingsApi().catch((err) => {
         console.warn('Failed to fetch settings, using defaults:', err);
         return {
@@ -64,10 +70,12 @@ export default function App() {
           },
           ot: { online: false, server: '', api_key: '' },
           model_config: {
+            model_4p: '',
+            model_3p: '',
             temperature: 0.3,
             rule_based_agari_guard: true,
           },
-        } as Settings;
+        } satisfies Settings;
       });
     })();
 
@@ -76,7 +84,7 @@ export default function App() {
     }
 
     const minDelay = new Promise<void>((resolve) => setTimeout(resolve, APP_STARTUP_MIN_DELAY_MS));
-    return Promise.all([fetchSettings, minDelay]).then(([settings]) => settings as Settings);
+    return Promise.all([fetchSettings, minDelay]).then(([settings]) => settings);
   }, [apiBase, isHud]);
 
   const [isExiting, setIsExiting] = useState(false);
@@ -98,5 +106,13 @@ export default function App() {
         {isExiting && <ExitOverlay />}
       </ThemeProvider>
     </Suspense>
+  );
+}
+
+export default function App() {
+  return (
+    <ConnectionProvider>
+      <AppInner />
+    </ConnectionProvider>
   );
 }

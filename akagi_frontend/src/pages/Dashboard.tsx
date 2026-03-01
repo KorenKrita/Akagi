@@ -1,4 +1,4 @@
-import { use, useCallback, useEffect, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ToastContainer } from 'react-toastify';
 
@@ -28,23 +28,13 @@ function Dashboard({ settingsPromise }: DashboardProps) {
   const context = use(GameContext);
   if (!context) throw new Error('GameContext not found');
 
-  const { settings, updateSetting } = useSettings();
-
-  const isLanguageInitialized = useRef(false);
-  if (!isLanguageInitialized.current) {
-    if (settings && settings.locale && settings.locale !== i18n.language) {
-      i18n.changeLanguage(settings.locale);
-    }
-    isLanguageInitialized.current = true;
-  }
+  const { updateSetting } = useSettings();
 
   const handleLocaleChange = useCallback(
     async (newLocale: string) => {
-      await i18n.changeLanguage(newLocale);
-      window.electron.invoke('update-locale', newLocale);
       updateSetting(['locale'], newLocale as string);
     },
-    [i18n, updateSetting],
+    [updateSetting],
   );
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -63,12 +53,12 @@ function Dashboard({ settingsPromise }: DashboardProps) {
       setShowSplash(false);
     }, APP_SPLASH_DELAY_MS);
 
-    // Check optional/critical resources
+    // 检查可选/关键资源
     window.electron.invoke('check-resource-status').then((status) => {
       setResourceStatus(status as ResourceStatus);
     });
 
-    // Listen for HUD visibility changes from Electron (e.g. window closed/hidden)
+    // 监听来自 Electron 的 HUD 可见性变化（例如窗口关闭/隐藏）
     const unsubHud = window.electron.on('hud-visibility-changed', (visible) => {
       context.setIsHudActive(visible as boolean);
     });
@@ -79,7 +69,7 @@ function Dashboard({ settingsPromise }: DashboardProps) {
     };
   }, [context]);
 
-  // Resource status notifications
+  // 资源状态通知
   useEffect(() => {
     if (!resourceStatus) return;
 
@@ -97,10 +87,10 @@ function Dashboard({ settingsPromise }: DashboardProps) {
   const handleLaunchGame = useCallback(async () => {
     setIsLaunching(true);
     try {
-      // Re-fetch settings to ensure we have the latest configuration before launching
+      // 启动前重新拉取设置，确保配置最新
       const currentSettings = await fetchSettingsApi().catch(() => initialSettings);
 
-      // Pass the configured URL, MITM status and platform to Electron
+      // 将 URL、MITM 状态与平台配置传给 Electron
       await window.electron.invoke('start-game', {
         url: currentSettings.game_url,
         useMitm: currentSettings.mitm.enabled,
@@ -148,7 +138,7 @@ function Dashboard({ settingsPromise }: DashboardProps) {
 
       <div
         className={cn(
-          'flex h-full flex-col transition-all duration-1000 ease-out',
+          'ease-premium flex h-full flex-col transition-all duration-1000',
           isMounted ? 'blur-0 opacity-100' : 'opacity-0 blur-xl',
         )}
       >

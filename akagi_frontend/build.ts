@@ -3,10 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 try {
-  // 1. Get version from Python package
-  // We use python command to print the version.
-  // This assumes 'akagi-ng' is installed in the environment, OR we parse pyproject.toml directly.
-  // Parsing pyproject.toml is safer as it doesn't require the package to be installed.
+  // 1. 从 Python 包中读取版本
+  // 通过读取 pyproject.toml 获取版本，避免依赖已安装的包
 
   const pyprojectPath = path.join(process.cwd(), '..', 'akagi_backend', 'pyproject.toml');
   const pyprojectContent = fs.readFileSync(pyprojectPath, 'utf-8');
@@ -21,8 +19,8 @@ try {
 
   console.log(`Detected Akagi-NG version: ${version}`);
 
-  // 2. Set environment variable and run build
-  // We use cross-platform way by passing it to the command or using child_process env
+  // 2. 设置环境变量并执行构建
+  // 通过 child_process 环境变量传递版本号
 
   console.log('Running: tsc && vite build');
   execSync('tsc && vite build', {

@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 
 import { SETTINGS_DEBOUNCE_MS, TOAST_DURATION_DEFAULT } from '@/config/constants';
 import { SettingsContext } from '@/contexts/SettingsContext';
@@ -12,7 +12,7 @@ import i18n from '@/i18n/i18n';
 import { notify } from '@/lib/notify';
 import type { Paths, PathValue, Settings } from '@/types';
 
-// --- Types & Reducer ---
+// --- 类型与归约器 ---
 
 type SaveStatus = 'saved' | 'saving' | 'error';
 
@@ -20,28 +20,23 @@ interface State {
   settings: Settings;
   saveStatus: SaveStatus;
   restartRequired: boolean;
-  // 'lastUpdatedBy' helps us distinguish who triggered the change
-  // to decide if we should save/broadcast.
-  lastUpdatedBy: 'init' | 'user' | 'remote' | 'restore';
-  // A timestamp or ID to trigger side effects
-  updateId: number;
-  // Controls if the current pending save should be debounced
-  saveDebounceMode: boolean;
+  // 可用模型列表
+  availableModels: string[];
 }
 
 type Action =
   | { type: 'INIT_SYNC'; payload: Settings }
   | { type: 'REMOTE_UPDATE'; payload: { locale: string } }
-  | { type: 'USER_UPDATE'; path: readonly string[]; value: unknown; shouldDebounce?: boolean }
+  | { type: 'USER_UPDATE'; path: readonly string[]; value: unknown }
   | {
       type: 'USER_UPDATE_BATCH';
       updates: { path: readonly string[]; value: unknown }[];
-      shouldDebounce?: boolean;
     }
   | { type: 'RESTORE_START' }
   | { type: 'RESTORE_SUCCESS'; payload: Settings }
   | { type: 'SET_SAVE_STATUS'; status: SaveStatus }
-  | { type: 'SET_RESTART_REQUIRED' };
+  | { type: 'SET_RESTART_REQUIRED' }
+  | { type: 'SET_AVAILABLE_MODELS'; payload: string[] };
 
 function setByPath(root: Record<string, unknown>, path: readonly string[], value: unknown) {
   let current: Record<string, unknown> = root;
@@ -64,9 +59,6 @@ function settingsReducer(state: State, action: Action): State {
       return {
         ...state,
         settings: action.payload,
-        lastUpdatedBy: 'init',
-        updateId: state.updateId + 1,
-        saveDebounceMode: false,
       };
 
     case 'REMOTE_UPDATE':
@@ -74,9 +66,6 @@ function settingsReducer(state: State, action: Action): State {
       return {
         ...state,
         settings: { ...state.settings, locale: action.payload.locale },
-        lastUpdatedBy: 'remote',
-        updateId: state.updateId + 1,
-        saveDebounceMode: false,
       };
 
     case 'USER_UPDATE': {
@@ -85,9 +74,6 @@ function settingsReducer(state: State, action: Action): State {
       return {
         ...state,
         settings: nextSettings as unknown as Settings,
-        lastUpdatedBy: 'user',
-        updateId: state.updateId + 1,
-        saveDebounceMode: action.shouldDebounce ?? false,
       };
     }
 
@@ -97,9 +83,6 @@ function settingsReducer(state: State, action: Action): State {
       return {
         ...state,
         settings: nextSettings as unknown as Settings,
-        lastUpdatedBy: 'user',
-        updateId: state.updateId + 1,
-        saveDebounceMode: action.shouldDebounce ?? false,
       };
     }
 
@@ -108,9 +91,6 @@ function settingsReducer(state: State, action: Action): State {
         ...state,
         settings: action.payload,
         restartRequired: true,
-        lastUpdatedBy: 'restore',
-        updateId: state.updateId + 1,
-        saveDebounceMode: false,
       };
 
     case 'SET_SAVE_STATUS':
@@ -119,53 +99,77 @@ function settingsReducer(state: State, action: Action): State {
     case 'SET_RESTART_REQUIRED':
       return { ...state, restartRequired: true };
 
+    case 'SET_AVAILABLE_MODELS':
+      return { ...state, availableModels: action.payload };
+
     default:
       return state;
   }
 }
 
-// --- Component ---
+// --- 组件 ---
 
 interface SettingsProviderProps {
   children: ReactNode;
-  apiBase: string;
   initialSettings: Settings;
 }
 
-export function SettingsProvider({ children, apiBase, initialSettings }: SettingsProviderProps) {
+export function SettingsProvider({ children, initialSettings }: SettingsProviderProps) {
   const [state, dispatch] = useReducer(settingsReducer, {
     settings: initialSettings,
     saveStatus: 'saved',
     restartRequired: false,
-    lastUpdatedBy: 'init',
-    updateId: 0,
-    saveDebounceMode: false,
+    availableModels: [],
   });
 
-  const { settings, saveStatus, restartRequired, lastUpdatedBy, updateId, saveDebounceMode } =
-    state;
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const { settings, saveStatus, restartRequired, availableModels } = state;
 
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);
   const toastId = useRef<string | number | null>(null);
+  const saveSeq = useRef(0);
 
-  // --- Effects: Logic ---
+  // --- Effects ---
 
-  // 1. Sync Prop changes (Initial Load / Backgound Re-fetch)
-  // safe due to check inside reducer
+  // 1. 同步外部属性变更（初次加载/后台刷新）
   useEffect(() => {
     dispatch({ type: 'INIT_SYNC', payload: initialSettings });
   }, [initialSettings]);
 
-  // 2. Handle Side Effects (Save & Broadcast) when 'user' updates
+  // 2. i18n 同步与广播
+  // 保持界面语言与状态一致
   useEffect(() => {
-    if (lastUpdatedBy !== 'user') return;
+    const targetLocale = settings?.locale;
+    if (!targetLocale) return;
 
-    // A. Saving
+    // 本地引擎始终保持同步
+    if (i18n.language !== targetLocale) {
+      i18n.changeLanguage(targetLocale).catch(console.error);
+    }
+  }, [settings.locale]);
+
+  // 3. 远程监听（进程间通信）
+  useEffect(() => {
+    const unsub = window.electron.on('locale-changed', (newLocale) => {
+      dispatch({ type: 'REMOTE_UPDATE', payload: { locale: newLocale } });
+    });
+    return () => unsub();
+  }, []);
+
+  // 4. 初始模型列表获取
+  useEffect(() => {
+    fetchModelsApi()
+      .then((models) => dispatch({ type: 'SET_AVAILABLE_MODELS', payload: models }))
+      .catch(console.error);
+  }, []);
+
+  // --- 核心方法 ---
+
+  const triggerSave = useCallback((nextSettings: Settings) => {
     const performSave = async () => {
+      const currentSaveId = ++saveSeq.current;
       dispatch({ type: 'SET_SAVE_STATUS', status: 'saving' });
 
-      // Toast UI
+      // 提示弹窗
       if (toastId.current) {
         notify.update(toastId.current, {
           render: i18n.t('settings.status_saving'),
@@ -176,7 +180,8 @@ export function SettingsProvider({ children, apiBase, initialSettings }: Setting
       }
 
       try {
-        const result = await saveSettingsApi(settings);
+        const result = await saveSettingsApi(nextSettings);
+        if (currentSaveId !== saveSeq.current) return;
         if (result.restartRequired) dispatch({ type: 'SET_RESTART_REQUIRED' });
 
         dispatch({ type: 'SET_SAVE_STATUS', status: 'saved' });
@@ -190,6 +195,7 @@ export function SettingsProvider({ children, apiBase, initialSettings }: Setting
           toastId.current = null;
         }
       } catch (e) {
+        if (currentSaveId !== saveSeq.current) return;
         console.error('Save error:', e);
         dispatch({ type: 'SET_SAVE_STATUS', status: 'error' });
         if (toastId.current !== null) {
@@ -204,60 +210,18 @@ export function SettingsProvider({ children, apiBase, initialSettings }: Setting
       }
     };
 
-    // Debounce Logic
+    // 防抖逻辑
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
-
-    if (saveDebounceMode) {
-      debounceTimer.current = setTimeout(performSave, SETTINGS_DEBOUNCE_MS);
-    } else {
-      performSave().catch(console.error);
-    }
-
-    // Cleanup
-    return () => {
-      if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    };
-  }, [settings, lastUpdatedBy, updateId, saveDebounceMode, apiBase]);
-
-  // 3. i18n Synchronization & Broadcasting
-  // This effect ensures UI translation matches State, AND handles broadcasting
-  useEffect(() => {
-    const targetLocale = settings?.locale;
-    if (!targetLocale) return;
-
-    // Always keep local engine in sync
-    if (i18n.language !== targetLocale) {
-      i18n.changeLanguage(targetLocale).catch(console.error);
-    }
-
-    // Only broadcast if the change came from USER interaction in THIS window
-    if (lastUpdatedBy === 'user') {
-      window.electron.invoke('update-locale', targetLocale).catch(console.error);
-    }
-  }, [settings.locale, lastUpdatedBy]); // updateId not needed, settings.locale stable enough
-
-  // 4. Remote Listener (IPC)
-  useEffect(() => {
-    const unsub = window.electron.on('locale-changed', (newLocale) => {
-      if (typeof newLocale === 'string') {
-        dispatch({ type: 'REMOTE_UPDATE', payload: { locale: newLocale } });
-      }
-    });
-    return () => unsub();
+    debounceTimer.current = setTimeout(performSave, SETTINGS_DEBOUNCE_MS);
   }, []);
 
-  // 5. Initial Model Fetch
-  useEffect(() => {
-    fetchModelsApi().then(setAvailableModels).catch(console.error);
-  }, []);
-
-  // --- Public API ---
+  // --- 对外接口 ---
 
   const refreshSettings = useCallback(async () => {
     try {
       const [data, models] = await Promise.all([fetchSettingsApi(), fetchModelsApi()]);
       dispatch({ type: 'INIT_SYNC', payload: data });
-      setAvailableModels(models);
+      dispatch({ type: 'SET_AVAILABLE_MODELS', payload: models });
     } catch (e) {
       console.error('Failed to refresh settings or models:', e);
     }
@@ -279,32 +243,80 @@ export function SettingsProvider({ children, apiBase, initialSettings }: Setting
       value: PathValue<Settings, P>,
       shouldDebounce = false,
     ) => {
-      dispatch({ type: 'USER_UPDATE', path, value, shouldDebounce });
+      dispatch({ type: 'USER_UPDATE', path, value });
+
+      // 计算变更后的设置用于触发保存
+      const nextSettings = structuredClone(settings) as unknown as Record<string, unknown>;
+      setByPath(nextSettings, path, value);
+
+      const localePath =
+        path.length > 0 && path[0] === 'locale' && value && typeof value === 'string';
+      if (localePath) {
+        window.electron.invoke('update-locale', value).catch(console.error);
+      }
+
+      if (shouldDebounce) {
+        triggerSave(nextSettings as unknown as Settings);
+      } else {
+        // 立即保存时我们走防抖为 0 即可
+        triggerSave(nextSettings as unknown as Settings);
+      }
     },
-    [],
+    [settings, triggerSave],
   );
 
   const updateSettingsBatch = useCallback(
     (updates: { path: readonly string[]; value: unknown }[], shouldDebounce = false) => {
-      dispatch({ type: 'USER_UPDATE_BATCH', updates, shouldDebounce });
+      dispatch({ type: 'USER_UPDATE_BATCH', updates });
+
+      // 计算变更后的设置用于触发保存
+      const nextSettings = structuredClone(settings) as unknown as Record<string, unknown>;
+      let hasLocaleChange = false;
+      let newLocale = '';
+
+      updates.forEach(({ path, value }) => {
+        setByPath(nextSettings, path, value);
+        if (path.length > 0 && path[0] === 'locale' && value && typeof value === 'string') {
+          hasLocaleChange = true;
+          newLocale = value;
+        }
+      });
+
+      if (hasLocaleChange) {
+        window.electron.invoke('update-locale', newLocale).catch(console.error);
+      }
+
+      if (shouldDebounce) {
+        triggerSave(nextSettings as unknown as Settings);
+      } else {
+        triggerSave(nextSettings as unknown as Settings);
+      }
     },
-    [],
+    [settings, triggerSave],
   );
 
-  return (
-    <SettingsContext.Provider
-      value={{
-        settings,
-        saveStatus,
-        restartRequired,
-        updateSetting,
-        updateSettingsBatch,
-        restoreDefaults,
-        refreshSettings,
-        availableModels,
-      }}
-    >
-      {children}
-    </SettingsContext.Provider>
+  const contextValue = useMemo(
+    () => ({
+      settings,
+      saveStatus,
+      restartRequired,
+      updateSetting,
+      updateSettingsBatch,
+      restoreDefaults,
+      refreshSettings,
+      availableModels,
+    }),
+    [
+      settings,
+      saveStatus,
+      restartRequired,
+      updateSetting,
+      updateSettingsBatch,
+      restoreDefaults,
+      refreshSettings,
+      availableModels,
+    ],
   );
+
+  return <SettingsContext.Provider value={contextValue}>{children}</SettingsContext.Provider>;
 }

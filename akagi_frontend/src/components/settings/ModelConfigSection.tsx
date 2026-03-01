@@ -30,13 +30,8 @@ export const ModelConfigSection: FC<ModelConfigSectionProps> = memo(
     const { t } = useTranslation();
     const { availableModels } = useSettings();
     const [tempInput, setTempInput] = useState(settings.model_config.temperature.toString());
-    const [prevTemp, setPrevTemp] = useState(settings.model_config.temperature);
-
-    // Derived state: reset local state when props update
-    if (settings.model_config.temperature !== prevTemp) {
-      setPrevTemp(settings.model_config.temperature);
-      setTempInput(settings.model_config.temperature.toString());
-    }
+    const [isEditingTemp, setIsEditingTemp] = useState(false);
+    const displayTemp = isEditingTemp ? tempInput : settings.model_config.temperature.toString();
 
     return (
       <div className='space-y-6'>
@@ -55,7 +50,7 @@ export const ModelConfigSection: FC<ModelConfigSectionProps> = memo(
             </SettingsItem>
 
             {settings.ot.online ? (
-              <div className='animate-in fade-in slide-in-from-top-2 space-y-4 transition-all'>
+              <div className='animate-in fade-in slide-in-from-top-2 ease-premium space-y-4 transition-all duration-500'>
                 <div className='space-y-4'>
                   <SettingsItem label={t('settings.model_config.server_url')}>
                     <Input
@@ -75,7 +70,7 @@ export const ModelConfigSection: FC<ModelConfigSectionProps> = memo(
                 </div>
               </div>
             ) : (
-              <div className='animate-in fade-in slide-in-from-bottom-2 space-y-4 transition-all'>
+              <div className='animate-in fade-in slide-in-from-bottom-2 ease-premium space-y-4 transition-all duration-500'>
                 <SettingsItem label={t('settings.model_config.model_4p')}>
                   <Select
                     value={settings.model_config.model_4p}
@@ -153,12 +148,16 @@ export const ModelConfigSection: FC<ModelConfigSectionProps> = memo(
                 />
                 <Input
                   className='w-16 text-center tabular-nums'
-                  value={tempInput}
+                  value={displayTemp}
+                  onFocus={() => {
+                    setIsEditingTemp(true);
+                    setTempInput(settings.model_config.temperature.toString());
+                  }}
                   onChange={(e) => setTempInput(e.target.value)}
                   onBlur={() => {
+                    setIsEditingTemp(false);
                     let val = parseFloat(tempInput);
                     if (isNaN(val)) {
-                      setTempInput(settings.model_config.temperature.toString());
                       return;
                     }
                     val = Math.max(0.1, Math.min(1.3, val));
