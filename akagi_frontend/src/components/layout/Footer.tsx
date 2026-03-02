@@ -23,12 +23,12 @@ export const Footer: FC = memo(() => {
             <span>GitHub</span>
           </a>
           <a
-            href='https://github.com/shinkuan/Akagi/blob/ng/LICENSE'
+            href='https://github.com/shinkuan/Akagi/blob/ng/LICENSE.txt'
             onClick={(e) => {
               e.preventDefault();
               window.electron.invoke(
                 'open-external',
-                'https://github.com/shinkuan/Akagi/blob/ng/LICENSE',
+                'https://github.com/shinkuan/Akagi/blob/ng/LICENSE.txt',
               );
             }}
             className='footer-link'
