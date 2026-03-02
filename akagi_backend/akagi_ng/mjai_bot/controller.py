@@ -43,7 +43,6 @@ class Controller:
                 return
             case StartGameEvent():
                 self._handle_start_game_event(event)
-                return
             # 2. 安全检查：如果从未收到过 start_game 或 bot 激活失败，则报错
             case MJAIEventBase():
                 if self.bot is None:
@@ -89,10 +88,7 @@ class Controller:
             self.status.set_flag(NotificationCode.BOT_SWITCH_FAILED)
             return
 
-        if self.pending_start_game_event:
-            logger.debug(f"Replaying cached start_game to new {target_name} bot.")
-            self.bot.react(self.pending_start_game_event)
-        else:
+        if not self.pending_start_game_event:
             logger.error(f"No pending start_game event to replay for {target_name} bot activation.")
             self.status.set_flag(NotificationCode.MODEL_LOAD_FAILED)
 
