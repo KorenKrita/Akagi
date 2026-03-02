@@ -1,7 +1,7 @@
 {
   "name": "akagi-ng-desktop",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Akagi-NG Electron Desktop App",
   "main": "../dist/main/main.js",
   "repository": {
@@ -30,14 +30,14 @@
   "license": "SEE LICENSE IN LICENSE.txt",
   "devDependencies": {
     "concurrently": "^9.2.1",
-    "devtools-protocol": "^0.0.1589152",
+    "devtools-protocol": "^0.0.1591961",
     "electron": "40.6.1",
     "electron-builder": "^26.8.1",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-simple-import-sort": "^12.1.1",
     "eslint-plugin-unused-imports": "^4.3.0",
-    "globals": "^17.3.0",
+    "globals": "^17.4.0",
     "prettier": "^3.8.1",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3",
