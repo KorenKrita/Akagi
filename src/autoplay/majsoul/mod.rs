@@ -777,11 +777,15 @@ mod tests {
     #[test]
     fn pass_button_clicks_at_slot_zero() {
         // Pass is in legal_actions only when riichienv is in WaitResponse
-        // and there's something to claim/pass on. Synthesise that state:
-        let snap = snapshot_with_hand(0, vec!["1m"]);
+        // and there's an actual claim option. Synthesise that state:
+        let mut snap = snapshot_with_hand(0, vec!["1m"]);
+        snap.phase = Phase::WaitResponse;
         let act = MjaiEvent::None;
         let cfg_ref = cfg();
-        let legal = vec![Action::new(ActionType::Pass, None, vec![], Some(0))];
+        let legal = vec![
+            Action::new(ActionType::Pass, None, vec![], Some(0)),
+            Action::new(ActionType::Pon, None, vec![], Some(0)),
+        ];
         let ctx = ctx_for(
             &act, &snap, &legal, Some("1m"), None, false, ReachState::Idle, &cfg_ref,
         );
