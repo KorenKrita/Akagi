@@ -43,3 +43,6 @@ tests/mortal_zip_layout.rs
 
 # Test
 test
+
+# Local release helper
+scripts/tag_release.sh
