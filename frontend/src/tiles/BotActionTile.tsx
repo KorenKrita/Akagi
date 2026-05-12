@@ -147,7 +147,7 @@ function describe(r: BotResponse, t: (k: string, opts?: Record<string, unknown>)
         glyphColor: '#e9a2c3',
         labelKey: 'mahjong.kita',
         extra: t('mahjong.kita'),
-        mahgen: 'N',
+        mahgen: mjaiToMahgen(['N']),
       }
     case 'none':
       return {
