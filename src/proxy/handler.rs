@@ -180,22 +180,26 @@ impl HttpHandler for ProxyHandler {
         req.into()
     }
 
-    /// Skip MITM when the CONNECT authority is an IP literal.
+    /// Skip MITM only for the narrow case of `CONNECT <ip-literal>:443`.
     ///
     /// Some game / app clients (catfood-studio Mahjong Soul Steam build)
-    /// resolve DNS themselves and connect to a CDN by raw IP, but still
-    /// send SNI = real hostname so the multi-tenant CDN can route. If we
-    /// MITM, hudsucker's `normalize_request` strips the original Host
-    /// header and hyper rebuilds it from the URI (= IP), and rustls uses
-    /// the URI host (= IP) as SNI. The CDN then doesn't know which tenant
-    /// the request is for and returns 404 / 403 to whichever default
-    /// tenant owns the IP. By raw-tunneling IP-literal CONNECTs we let
-    /// the client's own TLS/HTTP go through untouched, preserving its
-    /// SNI and Host header end-to-end.
+    /// resolve DNS themselves and connect to a CDN by raw IP, but the CDN
+    /// is multi-tenant and routes by SNI / Host. If we MITM, hudsucker's
+    /// `normalize_request` strips the original Host header and hyper
+    /// rebuilds it from the URI (= IP); rustls uses the URI host (= IP)
+    /// as SNI. The CDN can't pick a tenant from that and serves the
+    /// default 404 / 403. Raw-tunneling lets the client's own TLS / Host
+    /// header reach the CDN untouched.
     ///
-    /// Hostnames continue to be MITM'd — the WebSocket gateways we
-    /// actually want to capture (`*.maj-soul.com`, `*.mahjongsoul.com`,
-    /// `tenhou.net`) are all hostname-addressed.
+    /// We only do this on port 443 because that's where multi-tenant CDN
+    /// fronts live. Game-specific gateways and APIs use alt ports (8443
+    /// for the maj-soul WS gateway, 7201 for HTTPDNS, …), are
+    /// single-tenant, and need MITM to be captured. Without the port
+    /// narrowing we'd bypass the WS gateway too and lose all frame
+    /// capture — observed in `test/logs/20260514-132645/`.
+    ///
+    /// Hostnames are always MITM'd; the maj-soul hostname endpoints
+    /// (`mjusgs.mahjongsoul.com`, etc.) don't hit this code path.
     async fn should_intercept(
         &mut self,
         _ctx: &HttpContext,
@@ -204,15 +208,21 @@ impl HttpHandler for ProxyHandler {
         let Some(host) = req.uri().host() else {
             return true;
         };
-        if is_ip_literal_host(host) {
-            info!(
-                target: "akagi::proxy::forward",
-                "raw-tunneling IP-literal CONNECT to {}",
-                req.uri()
-            );
-            return false;
+        if !is_ip_literal_host(host) {
+            return true;
         }
-        true
+        // IPv4 CONNECT URIs always carry an explicit port; default to 443
+        // only as a defensive fallback.
+        let port = req.uri().port_u16().unwrap_or(443);
+        if port != 443 {
+            return true;
+        }
+        info!(
+            target: "akagi::proxy::forward",
+            "raw-tunneling IP-literal CONNECT to {}",
+            req.uri()
+        );
+        false
     }
 
     /// Diagnostic override of the default 502 path. The default just logs
