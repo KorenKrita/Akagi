@@ -2,6 +2,8 @@
 
 MITM HTTP/HTTPS/WebSocket proxy built on [hudsucker](https://crates.io/crates/hudsucker). Used to intercept game traffic (e.g. Majsoul WebSocket frames) for protocol parsing and AI integration.
 
+The hudsucker dependency in `Cargo.toml` opts out of default features and re-enables `rcgen-ca`, `rustls-client`, and `http2`. The `http2` flag is load-bearing: without it, both the MITM TLS server (`rcgen_authority`) and the upstream hyper-rustls connector skip `h2` ALPN / `enable_http2()`, which breaks HTTP/2-only origin servers — the Steam build of Mahjong Soul hits exactly this and stalls at "獲取[配置初始化文件]失敗 [3010]".
+
 ## Files
 
 - `mod.rs` — Public entry: `start_proxy(config, session, shutdown)`. Builds the proxy from `ProxyConfig` and shares the logging `Session`.
