@@ -1,5 +1,6 @@
 mod ca;
 mod handler;
+mod upstream;
 
 pub use handler::ProxyHandler;
 
@@ -10,7 +11,7 @@ use crate::{
     util::resolve_dir,
 };
 use anyhow::{Context, Result};
-use hudsucker::{rustls, Proxy};
+use hudsucker::Proxy;
 use std::{future::Future, net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::sync::Notify;
 use tracing::info;
@@ -40,9 +41,10 @@ where
     let proxy = Proxy::builder()
         .with_addr(addr)
         .with_ca(ca)
-        .with_rustls_connector(rustls::crypto::aws_lc_rs::default_provider())
+        .with_http_connector(upstream::http_connector())
         .with_http_handler(handler.clone())
         .with_websocket_handler(handler)
+        .with_websocket_connector(upstream::websocket_connector())
         .with_graceful_shutdown(shutdown)
         .build()
         .context("Failed to build proxy")?;
