@@ -147,7 +147,7 @@ impl ProxyHandler {
 impl HttpHandler for ProxyHandler {
     async fn handle_request(
         &mut self,
-        _ctx: &HttpContext,
+        ctx: &HttpContext,
         req: Request<Body>,
     ) -> RequestOrResponse {
         if req.uri().path() == "/ping" {
@@ -157,7 +157,54 @@ impl HttpHandler for ProxyHandler {
                 .expect("Failed to build ping response")
                 .into();
         }
+        info!(
+            target: "akagi::proxy::forward",
+            "{} {} {} v={:?} client={}",
+            req.method(),
+            req.uri().host().unwrap_or("-"),
+            req.uri(),
+            req.version(),
+            ctx.client_addr,
+        );
         req.into()
+    }
+
+    /// Diagnostic override of the default 502 path. The default just logs
+    /// `"Failed to forward request: client error (Kind)"` with no URI and
+    /// no inner cause. Walk the source chain so we can see whether a
+    /// failed upstream forward was DNS, TCP, TLS handshake, ALPN, …
+    /// Paired with the `handle_request` log above (which carries the
+    /// host) — the two lines arrive back-to-back per failed flow.
+    async fn handle_error(
+        &mut self,
+        ctx: &HttpContext,
+        err: hudsucker::hyper_util::client::legacy::Error,
+    ) -> Response<Body> {
+        let mut chain = String::new();
+        let mut next: Option<&dyn std::error::Error> = Some(&err);
+        let mut depth = 0;
+        while let Some(e) = next {
+            if depth > 0 {
+                chain.push_str(" ← ");
+            }
+            chain.push_str(&format!("{e}"));
+            next = e.source();
+            depth += 1;
+            // Guard against pathological loops.
+            if depth > 16 {
+                chain.push_str(" ← [chain truncated]");
+                break;
+            }
+        }
+        error!(
+            target: "akagi::proxy::forward",
+            "upstream forward failed: client={} chain=[{chain}]",
+            ctx.client_addr,
+        );
+        Response::builder()
+            .status(StatusCode::BAD_GATEWAY)
+            .body(Body::empty())
+            .expect("Failed to build 502")
     }
 }
 
