@@ -1,7 +1,7 @@
 //! 13-tile analysis core: waits, improves, agari rate, score, mixed-waits-score,
 //! and the `next_shanten_waits` look-ahead.
 //!
-//! Mirrors `reference/mahjong-helper/util/shanten_improve.go`. The Go original
+//! Mirrors the mahjong-helper `shanten_improve.go` algorithm. The Go original
 //! drives a recursive search tree; we replace it with a single-step look-ahead
 //! that produces the same `Hand13AnalysisResult` output fields. The inner
 //! "improves" pass (non-progressing draws that widen the wait set) is
@@ -115,8 +115,8 @@ fn next_shanten_waits(
 
 /// Improves pass.
 ///
-/// Mirrors `reference/mahjong-helper/util/shanten_improve.go` lines 260-285 +
-/// the avg-formula at lines 403-412.
+/// Mirrors the mahjong-helper `shanten_improve.go` "improves" pass (lines
+/// 260-285 in the upstream Go source) plus the avg-formula at lines 403-412.
 ///
 /// For each tile that does NOT progress shanten when drawn, try every possible
 /// discard from the resulting 14-state. If the resulting 13-state still has

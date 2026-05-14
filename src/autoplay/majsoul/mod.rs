@@ -7,8 +7,8 @@
 //! - The current `legal_actions` from the riichi engine (which buttons
 //!   are visible, plus chi/pon/kan candidate enumeration).
 //! - The current hand from `GameStateSnapshot` (sort-aware tile lookup).
-//! - The reference Akagi flow at
-//!   `reference/majsoul/autoplay_majsoul.py:140-281`.
+//! - The dispatch flow from the original Akagi Python autoplay
+//!   (`autoplay_majsoul.py`, the main action handler).
 
 pub mod coords;
 

@@ -9,10 +9,9 @@ client frames are user input and contribute no new information.
 ## Wire format at a glance
 
 Tenhou's WS frames are plain JSON: one event per frame, dispatched by `tag`.
-The complete inventory is documented in
-`reference/Akagi/mitm/bridge/tenhou/bridge.py` — that is the canonical reference
-for field semantics. The Rust port is faithful where it differs from
-ergonomic; comments call out any deliberate divergence.
+The complete tag inventory and field semantics follow the original Akagi
+Python Tenhou bridge; this is a faithful Rust port, with comments calling
+out any deliberate divergence.
 
 ### Tags we handle
 
@@ -65,15 +64,13 @@ case `(m & 0x3F) == 0x20` — handled before the structured decoder.
 
 ## Why observation only
 
-The user explicitly scoped Tenhou to "look at server messages, ignore client
-messages." Autoplay (`Bridge::build`) is intentionally not implemented — it
-returns `None`. If you want to add autoplay later, the Python reference's
-`build()` method (`bridge.py:606-650`) is a working model; you would also need
-to revisit `parse(Direction::Up, ..)` to track action acks.
+The Tenhou bridge is intentionally scoped to "look at server messages, ignore
+client messages." Autoplay (`Bridge::build`) is intentionally not implemented
+— it returns `None`. If you want to add autoplay later you would also need to
+revisit `parse(Direction::Up, ..)` to track action acks.
 
 ## References
 
-- Canonical reference: `reference/Akagi/mitm/bridge/tenhou/`
 - Bit-level meld spec: <http://tenhou.net/img/mentsu136.txt>
 - Tile-image table: <http://tenhou.net/img/tehai.js>
 - mjai event types: `src/schema/mjai/mod.rs`

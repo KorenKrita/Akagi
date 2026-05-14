@@ -1,12 +1,9 @@
 # `src/analysis/` — mahjong analysis engine
 
-Port of `reference/mahjong-helper/util/` (Go) to Rust. Reuses
-`riichienv-core` for tiles, shanten, yaku, and score primitives;
-implements the discard search, improves, agari-rate, tenpai-rate,
-and risk engine on top.
-
-See `claude_plan_analysis_engine.md` (project root) for the full
-phased plan.
+Port of the [EndlessCheng/mahjong-helper](https://github.com/EndlessCheng/mahjong-helper)
+`util/` package (Go) to Rust. Reuses `riichienv-core` for tiles, shanten, yaku,
+and score primitives; implements the discard search, improves, agari-rate,
+tenpai-rate, and risk engine on top.
 
 ## How to extend
 
@@ -22,7 +19,7 @@ phased plan.
 
 1. Implement the per-tile correction inside `risk/base.rs` as a
    method on `RiskTiles34`, mirroring the Go `FixWith*` family.
-2. Add fixtures from `reference/mahjong-helper/util/risk_base_test.go`.
+2. Add fixtures from the corresponding Go test (`risk_base_test.go`).
 
 ### Updating riichienv-core
 
@@ -57,6 +54,5 @@ shanten / parser API, only those modules need to follow.
 ## License note
 
 Algorithms and numerical tables are facts and are not protected by
-copyright. The Go reference under `reference/mahjong-helper/` is
-consulted for behaviour but not copied verbatim. Tests reuse named
-fixture hands.
+copyright. The mahjong-helper Go source is consulted for behaviour
+but not copied verbatim. Tests reuse named fixture hands.

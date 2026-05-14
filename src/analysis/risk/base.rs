@@ -1,6 +1,6 @@
 //! Per-tile deal-in (放铳) risk against a single opponent.
 //!
-//! Source: `reference/mahjong-helper/util/risk_base.go`. Returns a `[f64; 34]`
+//! Source: the mahjong-helper Go `risk_base.go`. Returns a `[f64; 34]`
 //! risk vector that downstream callers can adjust further with the `fix_*`
 //! helpers (early-outside, point, dora, global multiplier).
 

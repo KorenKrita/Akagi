@@ -12,7 +12,8 @@
 //!
 //! Red 5s (赤ドラ) live at exactly indices **16, 52, 88** (the 0-th physical
 //! copy of 5m / 5p / 5s respectively) and serialize as `5mr`, `5pr`, `5sr` in
-//! mjai. Mirrors `reference/Akagi/mitm/bridge/tenhou/tenhou/utils/converter.py`.
+//! mjai. Mirrors the original Akagi Python Tenhou tile converter
+//! (`tenhou/utils/converter.py`).
 
 const TILES: [&str; 34] = [
     "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p", "6p", "7p",

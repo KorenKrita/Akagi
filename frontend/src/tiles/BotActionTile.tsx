@@ -39,8 +39,8 @@ type Variant = {
   mahgen: string
 }
 
-// Action colours mirror reference/Akagi/akagi/client.tcss so the HUD matches
-// the original Akagi TUI palette. Applied as a faint translucent fill.
+// Action colours mirror the original Akagi TUI palette so the HUD stays
+// visually consistent. Applied as a faint translucent fill.
 function describe(r: BotResponse, t: (k: string, opts?: Record<string, unknown>) => string): Variant | null {
   switch (r.type) {
     case 'dahai':

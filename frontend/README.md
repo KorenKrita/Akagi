@@ -1,8 +1,7 @@
 # frontend (React + Vite + react-grid-layout + shadcn/ui)
 
-Modular rebuild of the Akagi V3 frontend. Tracks the plan at
-`../claude_plan_frontend_v2.md`. The legacy vanilla-JS UI under `../frontend/`
-keeps working until cutover (see "Cutover" below).
+Modular rebuild of the Akagi V3 frontend. The legacy vanilla-JS UI under
+`../frontend/` keeps working until cutover (see "Cutover" below).
 
 ## Stack
 

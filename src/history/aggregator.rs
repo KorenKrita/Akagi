@@ -1,6 +1,6 @@
 //! Event-stream → `GameRecord` aggregator.
 //!
-//! Ports `reference/Mortal/libriichi/src/stat.rs::from_game` to operate on
+//! Ports `Stat::from_game` from Mortal's `libriichi` to operate on
 //! `crate::schema::MjaiEvent` directly and produce a `GameRecord`. Walks
 //! the event list once, accumulating per-seat scores via `deltas` (with
 //! the same conventions: riichi cost paid via `ReachAccepted`; `Hora` /

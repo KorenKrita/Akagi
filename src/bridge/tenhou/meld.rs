@@ -1,7 +1,7 @@
 //! Tenhou meld bitfield (`m` value of `<N/>` tags) → structured form.
 //!
-//! Faithful port of `reference/Akagi/mitm/bridge/tenhou/tenhou/utils/decoder.py`
-//! (`Meld.parse_meld`). Bit layout per <http://tenhou.net/img/mentsu136.txt>:
+//! Faithful port of the original Akagi Python Tenhou `Meld.parse_meld` (in
+//! `tenhou/utils/decoder.py`). Bit layout per <http://tenhou.net/img/mentsu136.txt>:
 //!
 //! - bit 2 set → chi
 //! - bit 3 set → pon

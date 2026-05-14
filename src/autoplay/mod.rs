@@ -1,10 +1,13 @@
 //! Autoplay: translate bot decisions into UI clicks via CDP.
 //!
-//! Architecture and design rationale:
-//! `claude_plan_autoplay-majsoul-input-mutable-codd.md` (the approved
-//! plan covers data flow, two-step reach handling, and the rationale
-//! for sourcing action availability from `riichienv-core` rather than
-//! the platform-protocol parser).
+//! Data flow: bot decision (an `MjaiEvent`) joins the latest
+//! `GameStateSnapshot` and `legal_actions` from the `riichienv-core` game
+//! state, and the platform impl plans a sequence of click `Step`s. Action
+//! availability is sourced from the riichi engine, not from the platform
+//! protocol parser, so the same logic works across platforms.
+//!
+//! Reach is handled in two steps (declare → discard) so the UI's reach
+//! popup is acknowledged before the actual discard is clicked.
 //!
 //! Module layout:
 //! - [`context`] — shared state between the chromium capture backend

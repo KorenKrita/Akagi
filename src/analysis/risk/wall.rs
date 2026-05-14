@@ -1,6 +1,6 @@
 //! Wall analysis: NC (no chance), OC (one chance), DNC (double no chance).
 //!
-//! Source: `reference/mahjong-helper/util/risk_wall.go`. Each function takes
+//! Source: the mahjong-helper Go `risk_wall.go`. Each function takes
 //! the 34-count `left_tiles` (live wall + opponents' hands) and returns the
 //! list of tiles that are "safe" against ryanmen-shape waits because their
 //! enabling neighbours are partially or fully unavailable.

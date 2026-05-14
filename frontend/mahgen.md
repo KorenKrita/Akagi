@@ -57,7 +57,7 @@ img.style.objectFit = 'contain';
 img.style.display = 'block';
 ```
 
-### Native tile dimensions (`reference/mahgen/res/`)
+### Native tile dimensions (mahgen `res/` assets)
 
 ```
 Normal portrait tile:    70 × 100   (e.g. 1m.png)
@@ -68,8 +68,8 @@ Space:                  ~70 × ...   (used as filler in melds)
 
 ### River-mode layout
 
-`reference/mahgen/src/JimpWorker.ts` lines 24–40: river-mode lays at most 6
-tiles per row, then wraps to a new row. So a river image's natural dimensions:
+The upstream mahgen `JimpWorker.ts` lays at most 6 tiles per row in river
+mode, then wraps to a new row. So a river image's natural dimensions:
 
 ```
 N tiles, N <= 6:     naturalW = N × 70,    naturalH = 100

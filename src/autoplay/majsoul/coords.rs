@@ -1,8 +1,9 @@
 //! Hand-calibrated 16:9-normalised coordinates for Majsoul UI elements.
 //!
-//! Ported from `reference/majsoul/autoplay_majsoul.py:13-65`. The Python
-//! file has years of production validation — DO NOT change these values
-//! without screen-tested re-calibration.
+//! Ported from the original Akagi Python autoplay coordinate table
+//! (`autoplay_majsoul.py`, the `LOCATION` block near the top of the file).
+//! That table has years of production validation — DO NOT change these
+//! values without screen-tested re-calibration.
 //!
 //! Coordinate system: the Majsoul canvas is laid out in a 16x9 logical
 //! grid regardless of actual pixel resolution (letterboxed). To convert

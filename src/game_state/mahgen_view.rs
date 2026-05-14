@@ -5,7 +5,8 @@
 //! in Rust so every UI surface (HUD, replay viewer, future web panel)
 //! consumes one canonical string format.
 //!
-//! See `claude_research_mahgen.md` for the full mahgen DSL reference.
+//! See [eric200203/mahgen](https://github.com/eric200203/mahgen) for the
+//! upstream DSL the strings target.
 //!
 //! # Output shape
 //!
@@ -173,7 +174,7 @@ fn encode_hand(p: &PlayerSnapshot, our_seat: Option<u8>) -> String {
 /// `caller_seat` is the seat owning this meld (used to translate `from_who`
 /// into a relative direction).
 ///
-/// Conventions (per `reference/mahgen/README.md`):
+/// Conventions (per the upstream mahgen DSL):
 ///
 /// - **Chi**: `_` at position determined by from_who. Hand tiles fill
 ///   remaining slots in ascending numerical order.

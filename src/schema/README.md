@@ -6,8 +6,8 @@ here so it isn't owned by a single subsystem.
 
 ## Existing schemas
 
-- `mjai/` — `MjaiEvent` enum covering all 15 mjai event variants from
-  `reference/reference_mjai.md` **plus** the 3p-only `Kita` variant
+- `mjai/` — `MjaiEvent` enum covering all 15 mjai event variants from the
+  mjai protocol spec **plus** the 3p-only `Kita` variant
   (北抜き / nukidora). Used by
   `bridge::Bridge` to expose parsed game events, and by anything
   downstream that consumes them (AI bots, loggers, frontend HUD). Tiles

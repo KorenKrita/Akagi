@@ -1,5 +1,5 @@
 //! Reference ron-point baselines used by the risk weighter and the score
-//! expectation. Source: `reference/mahjong-helper/util/point_data.go`.
+//! expectation. Source: the mahjong-helper Go `point_data.go` table.
 
 /// Average non-dealer ron point baseline (reach, no ippatsu).
 pub const RON_POINT_RIICHI: f64 = 5172.0;

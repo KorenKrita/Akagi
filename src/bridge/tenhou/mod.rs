@@ -5,8 +5,8 @@
 //! `REACH`, `AGARI`, `RYUUKYOKU`, …). Single-frame heartbeat is the literal
 //! bytes `<Z/>`.
 //!
-//! Faithful Rust port of the observation half of
-//! `reference/Akagi/mitm/bridge/tenhou/bridge.py`. AkagiV3 uses the bridge in
+//! Faithful Rust port of the observation half of the original Akagi Python
+//! Tenhou bridge. AkagiV3 uses the bridge in
 //! observe-only mode: only `Direction::Down` (server → client) is parsed,
 //! `Direction::Up` and [`build`](Bridge::build) are no-ops. The rationale is
 //! that all game state we need to feed analysis / bots arrives on server

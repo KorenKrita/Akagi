@@ -1,12 +1,11 @@
 //! AI bot integration.
 //!
 //! Wires `MjaiEvent`s from the platform bridge to AI bots speaking the
-//! [mjai JSONL protocol](../../reference/reference_mjai.md). Each bot runs
-//! in its own subprocess (Python, by default) so AGPL-licensed bots like
-//! Mortal stay legally separated from Akagi's binary.
+//! [mjai JSONL protocol](https://gimite.net/pukiwiki/index.php?Mjai%20%E9%BA%BB%E9%9B%80AI%E5%AF%BE%E6%88%A6%E3%82%B5%E3%83%BC%E3%83%90).
+//! Each bot runs in its own subprocess (Python, by default) so AGPL-licensed
+//! bots like Mortal stay legally separated from Akagi's binary.
 //!
-//! See `claude_plan_bot_runner.md` for the full design and `README.md` in
-//! this directory for the contributor-facing how-to.
+//! See `README.md` in this directory for the contributor-facing how-to.
 
 pub mod install;
 pub mod manager;

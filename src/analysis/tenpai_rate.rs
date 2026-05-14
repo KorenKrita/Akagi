@@ -1,6 +1,6 @@
 //! Open-hand tenpai-rate estimate.
 //!
-//! Source: `reference/mahjong-helper/util/tenpai_rate.go`. Closed (dama) hands
+//! Source: the mahjong-helper Go `tenpai_rate.go`. Closed (dama) hands
 //! are approximated by the turn count; open hands look up
 //! `data::tenpai::rate(melds, turn, tedashi)`.
 

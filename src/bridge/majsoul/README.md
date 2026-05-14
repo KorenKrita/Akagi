@@ -108,7 +108,7 @@ separate action. When `is_liqi` (or `is_wliqi`, double riichi) is true on
 `reach_accepted` event in `pending_reach_accepted` (Actor of the
 declarer).
 
-Per the mjai spec (`reference_mjai.md` §12 + state machine), the points
+Per the mjai spec (riichi declaration §12 + state machine), the points
 deduction is bookkept by `reach_accepted` only **after** the declaration
 tile passes through. The bridge implements that as: on the *next*
 ActionPrototype event, `handle_action_prototype` prepends
@@ -354,7 +354,9 @@ The proxy handler (`src/proxy/handler.rs`) constructs a fresh
 
 ## References
 
-- `reference/MajsoulMax-rs/src/parser.rs` — original Rust parser for the
-  same protocol (GPL-3.0; protocol layout only, do not copy code).
-- `reference/Akagi/mitm/bridge/majsoul/bridge.py` — Python mjai mapping
-  (AGPL; reference only).
+- Majsoul `liqi.proto` (published in the game's web bundle) — canonical
+  wire schema, embedded directly via `proto/liqi.proto` in this directory.
+- mjai protocol spec — used as the canonical event-type reference.
+
+Third-party Rust / Python parsers exist for the same protocol under
+copyleft licences; none of their source code is copied into this tree.

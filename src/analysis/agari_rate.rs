@@ -1,6 +1,6 @@
 //! Per-wait agari rate.
 //!
-//! Mirrors `reference/mahjong-helper/util/agari_rate.go`. Returns a percentage
+//! Mirrors the mahjong-helper `agari_rate.go` table. Returns a percentage
 //! probability for each wait tile, given:
 //!   - the player's own discards (used to classify each tile's suji status),
 //!   - the dora indicator-derived dora set,

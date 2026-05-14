@@ -427,7 +427,8 @@ type PlayerMahgenView = {
 };
 ```
 
-See `claude_research_mahgen.md` for the full DSL reference. Quick recap:
+See the [eric200203/mahgen](https://github.com/eric200203/mahgen) project for
+the full DSL reference. Quick recap:
 
 - **Meld syntax** — `_` at position 1/2/3 (kamicha/toimen/shimocha) for chi/pon. Daiminkan: pos 1/2/4 (skipping 3 for shimocha). Kakan replaces `_` with `^`/`v0`/`v5`. Ankan: `0z<digit><digit><suit>0z`.
 - **River syntax** — `^` = tsumogiri, `_` = riichi declaration, `v` = riichi via tsumogiri, blank = manual cut.
@@ -617,12 +618,6 @@ Mahgen invocation:
 | `src/ipc/commands.rs` | All `#[tauri::command]` handlers |
 | `src/ipc/mod.rs` | Forwarder wiring |
 | `src/event_bus.rs` | Channel definitions |
-
-Companion docs:
-- `claude_research_mahgen.md` — full mahgen DSL syntax reference
-- `claude_research_mahjong_helper.md` — analysis engine algorithm reference
-- `claude_plan_analysis_engine.md` — analysis engine porting plan
-- `claude_history.md` — chronological change log
 
 ---
 

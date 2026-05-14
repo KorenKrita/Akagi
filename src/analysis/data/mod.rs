@@ -1,4 +1,4 @@
-//! Numerical tables ported from `reference/mahjong-helper/util/`.
+//! Numerical tables ported from the mahjong-helper Go `util/` package.
 //!
 //! Contents are facts (statistical estimates from public mahjong literature)
 //! and not subject to copyright. See per-file headers for source citations.

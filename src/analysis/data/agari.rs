@@ -1,8 +1,8 @@
 //! Agari-rate table (per-wait win probability lookup) and supporting
 //! tile-type classification for the 27 number tiles.
 //!
-//! Source: `reference/mahjong-helper/util/agari_rate_data.go` and
-//! `reference/mahjong-helper/util/risk_data.go`. Values are derived from
+//! Source: the mahjong-helper Go tables `agari_rate_data.go` and
+//! `risk_data.go`. Values are derived from
 //! "勝つための現代麻雀技術論" / "「統計学」のマージャン戦術" (i.e. published
 //! statistical estimates), used as factual numerical references.
 
@@ -124,7 +124,7 @@ pub const RYANMEN_MULTI: f64 = 0.91;
 /// Classify number tiles 0..27 into a tileType, given an array of 34 booleans
 /// describing which tiles have already shown up as our own discards.
 ///
-/// Mirrors `calcTileType27` in `reference/mahjong-helper/util/risk_base.go`.
+/// Mirrors `calcTileType27` from the mahjong-helper Go `risk_base.go`.
 pub fn classify_tile_type_27(safe_tiles_34: &[bool; 34]) -> [TileTypeKind; 27] {
     let mut out = [TileTypeKind::NoSuji5; 27];
     let safe = |i: usize| if safe_tiles_34[i] { 1usize } else { 0usize };

@@ -1,6 +1,6 @@
 //! Deal-in (放铳) risk tables.
 //!
-//! Source: `reference/mahjong-helper/util/risk_data.go`. The tile-type
+//! Source: the mahjong-helper Go `risk_data.go` table. The tile-type
 //! enum and the suit-only `TILE_TYPE_TABLE` already live in
 //! [`super::agari`]; this module adds:
 //!   - `RISK_RATE[turn][type]` — the percentage deal-in rate per (round, type).

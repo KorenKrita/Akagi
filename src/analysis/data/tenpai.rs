@@ -1,6 +1,6 @@
 //! Tenpai-rate tables for opened-hand opponents.
 //!
-//! Source: `reference/mahjong-helper/util/tenpai_data.go`. Indexed by
+//! Source: the mahjong-helper Go `tenpai_data.go` table. Indexed by
 //! `[melds 1..=3][turn 1..=18][tedashi-after-last-meld 0..]`. Values are
 //! published statistical estimates for 4p mahjong.
 

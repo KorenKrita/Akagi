@@ -3,7 +3,7 @@
 //! `GameRecord` is what `crate::history::recorder` writes to
 //! `<history_root>/index.jsonl` (one JSON line per finalised game) and what
 //! the frontend reads back via Tauri commands. It mirrors the shape of
-//! `reference/Mortal/libriichi/src/stat.rs::Stat` for per-game counts so
+//! the `Stat` record from Mortal's `libriichi` for per-game counts so
 //! summing across records gives stat-equivalent aggregates.
 //!
 //! Wire format is internally-tagged where useful (`Platform`, `KyokuMode`,

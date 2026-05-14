@@ -13,8 +13,7 @@ use riichienv_core::action::Action;
 /// One step in the click sequence the manager will execute.
 ///
 /// The 16:9-normalised coordinates match the convention used by the
-/// reference Akagi `LOCATION` table — see
-/// `reference/majsoul/autoplay_majsoul.py:13-65`.
+/// original Akagi Python autoplay `LOCATION` table.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
     /// Click at a normalised 16:9 point on the game canvas.
@@ -25,8 +24,10 @@ pub enum Step {
     Sleep { duration_ms: u32 },
 }
 
-/// State machine for handling Majsoul's fused reach+discard. See
-/// `claude_plan_autoplay-majsoul-input-mutable-codd.md` §7.
+/// State machine for handling Majsoul's fused reach+discard: the platform
+/// emits one reach action that combines the declaration and the discard,
+/// so we click reach first, await the bot's follow-up `Dahai`, then click
+/// the discard tile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReachState {
     Idle,

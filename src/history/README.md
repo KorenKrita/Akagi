@@ -33,7 +33,7 @@ History tab shows only complete games).
 ## Modules
 
 - **`aggregator.rs`** — Pure function `aggregate(events, ...) -> Option<GameRecord>`.
-  Ports `reference/Mortal/libriichi/src/stat.rs::from_game`. Score derivation:
+  Ports the `Stat::from_game` aggregator from Mortal's `libriichi`. Score derivation:
   walk `Reach`/`ReachAccepted`/`Hora`/`Ryukyoku` deltas, then normalise totals
   to 100k (4p) / 105k (3p) by topping up the rank-1 seat. Stat counts mirror
   `Stat`'s field set, scoped to one game.

@@ -1,6 +1,6 @@
 // Aggregation helpers over GameRecord[]. Mirrors the totals/derivations
-// from `reference/Mortal/libriichi/src/stat.rs` but consumes per-game
-// `GameStats` already produced by the backend aggregator.
+// from Mortal's `libriichi` Stat module but consumes per-game `GameStats`
+// already produced by the backend aggregator.
 //
 // All rates returned in the [0, 1] range. `null` when the denominator
 // is zero (frontend renders these as "—").

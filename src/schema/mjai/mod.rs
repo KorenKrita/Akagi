@@ -28,8 +28,8 @@ fn default_num_players() -> u8 {
 
 /// One mjai event. Serialized as `{"type":"<snake_case>", ...}` with `type` first.
 ///
-/// Mirrors the 15 event types in `reference/reference_mjai.md` plus the
-/// 3p-only `Kita` variant from `reference/reference_mjai_3p.md`.
+/// Mirrors the 15 event types from the mjai protocol spec plus the
+/// 3p-only `Kita` variant from the mjai 3p extension.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

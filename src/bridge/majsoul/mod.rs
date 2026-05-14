@@ -828,7 +828,7 @@ impl MajsoulBridge {
     ///
     /// Notes:
     /// - No `tile` field — kita is always the North tile, so we hardcode
-    ///   `pai = "N"` per `reference/reference_mjai_3p.md`.
+    ///   `pai = "N"` per the mjai 3p extension.
     /// - `doras: []` — kita does NOT flip a new dora indicator (Tenhou
     ///   rule, confirmed live). Skip dora bookkeeping entirely.
     /// - `last_revealed_tile_actor` is updated so a follow-up ron-on-kita
@@ -2475,7 +2475,7 @@ mod tests {
 
     /// Real captured 3p `ActionNoTile` payload (1 tenpai / 2 noten).
     /// `delta_scores: [2000, -1000, -1000]` → length-3 deltas, no padding.
-    /// Tenpai pool 2000 split per `reference/reference_mjai_3p.md`.
+    /// Tenpai pool 2000 split per the mjai 3p extension.
     #[test]
     fn action_no_tile_three_player_real_payload() {
         let mut bridge = MajsoulBridge::new(None, None);

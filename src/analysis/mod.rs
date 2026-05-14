@@ -1,15 +1,15 @@
-//! Analysis engine — port of `reference/mahjong-helper/util/`.
+//! Analysis engine — Rust port of the mahjong-helper Go `util/` package.
 //!
 //! Phase 1 (current): tiles, hand input, shanten, per-tile waits.
 //! Later phases add Hand13/Hand14 search, agari rate, point expectation,
-//! and the risk engine. See `claude_plan_analysis_engine.md` for the
-//! full roadmap.
+//! and the risk engine. See `README.md` in this directory for the
+//! contributor-facing layout.
 //!
 //! ## License note
 //!
 //! Algorithms and numerical tables are facts and are not subject to
-//! copyright. The Go reference under `reference/mahjong-helper/` is
-//! consulted for behaviour but not copied verbatim. See `README.md`.
+//! copyright. The mahjong-helper Go source is consulted for behaviour
+//! but not copied verbatim. See `README.md`.
 
 pub mod agari_rate;
 pub mod data;

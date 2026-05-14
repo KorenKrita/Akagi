@@ -1,7 +1,8 @@
 # Bridge Module
 
 Platform-specific protocol bridges between game wire protocols and the
-[mjai JSONL protocol](../../reference/reference_mjai.md) consumed by AI bots.
+[mjai JSONL protocol](https://gimite.net/pukiwiki/index.php?Mjai%20%E9%BA%BB%E9%9B%80AI%E5%AF%BE%E6%88%A6%E3%82%B5%E3%83%BC%E3%83%90)
+consumed by AI bots.
 
 ## Trait
 
@@ -44,6 +45,5 @@ inside `handle_websocket` so per-flow state is isolated.
   WS frames into `ParsedMessage { msg_type, msg_id, method_name, payload }`;
   `mod.rs` logs them but doesn't emit mjai yet (state machine is a
   separate phase). See `majsoul/parser.rs` module docs for the 5-layer
-  wire format and `reference/Akagi/mitm/bridge/majsoul/bridge.py` for the
-  mjai mapping. GPL-3.0 / AGPL references — protocol layout only, do
-  **not** copy code.
+  wire format. Protocol layout follows the published Majsoul `liqi.proto`
+  schema; no third-party source code is copied.

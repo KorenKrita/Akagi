@@ -40,7 +40,7 @@ ca_dir = "./ca"
 
 Edit `handler.rs::ProxyHandler::handle_message`. The `WebSocketContext` distinguishes upstream (`ClientToServer`) vs downstream (`ServerToClient`) frames. Return `Some(msg)` to forward unchanged, return a modified `Message` to inject changes, or return `None` to drop.
 
-For protobuf parsing, see `reference/MajsoulMax-rs/src/parser.rs` — Majsoul WS frames use a 5-layer format: `[type byte][BaseMessage protobuf][inner message][XOR-encrypted action]`. Reference only — do not copy code (GPL-3.0).
+For protobuf parsing, see `src/bridge/majsoul/parser.rs` — Majsoul WS frames use a 5-layer format: `[type byte][BaseMessage protobuf][inner message][XOR-encrypted action]`.
 
 ## Adding state to the handler
 
