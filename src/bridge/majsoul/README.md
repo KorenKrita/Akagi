@@ -244,8 +244,7 @@ The bridge emits:
 
 Notes:
 
-- Majsoul's payload omits the tile field — kita is always the North wind,
-  so we hardcode `pai = "N"` per `reference/reference_mjai_3p.md`.
+- Majsoul's payload omits the tile field — kita is always the North wind.
 - `doras: []` in the captured payload — kita does **not** flip a new dora
   marker (Tenhou rule, confirmed live). `consume_new_dora` skipped.
 - `last_revealed_tile_actor` updated to the kita declarer so a follow-up

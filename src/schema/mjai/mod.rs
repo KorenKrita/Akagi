@@ -1,8 +1,5 @@
 //! mjai JSONL protocol types.
 //!
-//! See `reference/reference_mjai.md` for the 4-player spec and
-//! `reference/reference_mjai_3p.md` for the 3-player (sanma) variant.
-//! `reference/Mortal/libriichi/src/mjai/event.rs` is a richer reference
 //! impl (typed `Tile`, bounded actor, augmentation, metadata).
 //!
 //! This impl keeps tiles as `String` so the bridge can stay decoupled from any

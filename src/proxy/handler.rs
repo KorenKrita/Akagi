@@ -10,7 +10,7 @@ use base64::Engine as _;
 use chrono::Local;
 use hudsucker::{
     futures::{Sink, SinkExt, Stream, StreamExt},
-    hyper::{Request, Response, StatusCode, Uri},
+    hyper::{self, Request, Response, StatusCode, Uri},
     tokio_tungstenite::tungstenite::{self, Message},
     Body, HttpContext, HttpHandler, RequestOrResponse, WebSocketContext, WebSocketHandler,
 };
@@ -157,16 +157,62 @@ impl HttpHandler for ProxyHandler {
                 .expect("Failed to build ping response")
                 .into();
         }
+        // Pull Host header for diagnostics. The CDN routes by SNI/Host,
+        // not by URI path, so when URIs come in as IP literals the Host
+        // header is the only place the real hostname could survive — log
+        // it next to the URI so we can tell at a glance whether a stuck
+        // request had a real hostname or just an IP.
+        let host_hdr = req
+            .headers()
+            .get(hyper::header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("-");
         info!(
             target: "akagi::proxy::forward",
-            "{} {} {} v={:?} client={}",
+            "{} uri_host={} host_hdr={} {} v={:?} client={}",
             req.method(),
             req.uri().host().unwrap_or("-"),
+            host_hdr,
             req.uri(),
             req.version(),
             ctx.client_addr,
         );
         req.into()
+    }
+
+    /// Skip MITM when the CONNECT authority is an IP literal.
+    ///
+    /// Some game / app clients (catfood-studio Mahjong Soul Steam build)
+    /// resolve DNS themselves and connect to a CDN by raw IP, but still
+    /// send SNI = real hostname so the multi-tenant CDN can route. If we
+    /// MITM, hudsucker's `normalize_request` strips the original Host
+    /// header and hyper rebuilds it from the URI (= IP), and rustls uses
+    /// the URI host (= IP) as SNI. The CDN then doesn't know which tenant
+    /// the request is for and returns 404 / 403 to whichever default
+    /// tenant owns the IP. By raw-tunneling IP-literal CONNECTs we let
+    /// the client's own TLS/HTTP go through untouched, preserving its
+    /// SNI and Host header end-to-end.
+    ///
+    /// Hostnames continue to be MITM'd — the WebSocket gateways we
+    /// actually want to capture (`*.maj-soul.com`, `*.mahjongsoul.com`,
+    /// `tenhou.net`) are all hostname-addressed.
+    async fn should_intercept(
+        &mut self,
+        _ctx: &HttpContext,
+        req: &Request<Body>,
+    ) -> bool {
+        let Some(host) = req.uri().host() else {
+            return true;
+        };
+        if is_ip_literal_host(host) {
+            info!(
+                target: "akagi::proxy::forward",
+                "raw-tunneling IP-literal CONNECT to {}",
+                req.uri()
+            );
+            return false;
+        }
+        true
     }
 
     /// Diagnostic override of the default 502 path. The default just logs
@@ -395,4 +441,58 @@ fn uri_path_slug(uri: &Uri) -> String {
             }
         })
         .collect()
+}
+
+/// `true` when `host` (as returned by `Uri::host`) is a literal IPv4 or
+/// IPv6 address. IPv6 hosts come back from `Uri::host` wrapped in `[…]`
+/// per RFC 3986; `IpAddr::from_str` rejects the brackets so we strip them
+/// before parsing.
+fn is_ip_literal_host(host: &str) -> bool {
+    let stripped = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+    stripped.parse::<std::net::IpAddr>().is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_ip_literal_host;
+
+    #[test]
+    fn ipv4_literal_is_detected() {
+        assert!(is_ip_literal_host("156.238.128.60"));
+        assert!(is_ip_literal_host("127.0.0.1"));
+        assert!(is_ip_literal_host("0.0.0.0"));
+    }
+
+    #[test]
+    fn ipv6_literal_with_brackets_is_detected() {
+        // `Uri::host` returns IPv6 wrapped in brackets.
+        assert!(is_ip_literal_host("[::1]"));
+        assert!(is_ip_literal_host("[2001:db8::1]"));
+        assert!(is_ip_literal_host("[fe80::1234:5678:9abc:def0]"));
+    }
+
+    #[test]
+    fn hostnames_are_not_ip_literals() {
+        // The hosts we explicitly do want MITM'd.
+        assert!(!is_ip_literal_host("game.maj-soul.com"));
+        assert!(!is_ip_literal_host("mjusgs.mahjongsoul.com"));
+        assert!(!is_ip_literal_host("tenhou.net"));
+        assert!(!is_ip_literal_host("localhost"));
+        // Numeric-leading hostname (real-world: `3839.com` style).
+        assert!(!is_ip_literal_host("4399.cn"));
+    }
+
+    #[test]
+    fn edge_cases_do_not_panic() {
+        // Empty / malformed inputs return false rather than panicking.
+        assert!(!is_ip_literal_host(""));
+        assert!(!is_ip_literal_host("["));
+        assert!(!is_ip_literal_host("[]"));
+        assert!(!is_ip_literal_host("[not-an-ip]"));
+        // Trailing dot on a hostname.
+        assert!(!is_ip_literal_host("example.com."));
+    }
 }
