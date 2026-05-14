@@ -84,19 +84,19 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # tauri-cli build is slow (~3 min). Use cargo-binstall to grab the
-      # prebuilt binary from GitHub releases instead — sidesteps GitHub
-      # Actions' cache scope rules (tag pushes can only read caches from
-      # the tag ref or the default branch, which here is v2 and never
-      # runs this workflow, so a cargo-install cache never hits).
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
+      # tauri-cli build is slow (~3 min). Pull the prebuilt binary via
+      # taiki-e/install-action instead — sidesteps GitHub Actions' cache
+      # scope rules (tag pushes can only read caches from the tag ref or
+      # the default branch, which here is v2 and never runs this workflow,
+      # so a cargo-install cache never hits). We previously used
+      # cargo-bins/cargo-binstall directly, but on macos-14 runners with
+      # Homebrew rustup pre-installed the `cargo` proxy resolves to
+      # rustup-init and `cargo binstall` fails; taiki-e/install-action
+      # invokes the binstall binary with an absolute path and avoids that.
       - name: Install tauri-cli
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: cargo binstall -y --force 'tauri-cli@^2'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli@^2
 
       - name: Linux system deps
         if: runner.os == 'Linux'
