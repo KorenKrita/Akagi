@@ -96,7 +96,7 @@ jobs:
       - name: Install tauri-cli
         uses: taiki-e/install-action@v2
         with:
-          tool: tauri-cli@^2
+          tool: tauri-cli@2.11.1
 
       - name: Linux system deps
         if: runner.os == 'Linux'
