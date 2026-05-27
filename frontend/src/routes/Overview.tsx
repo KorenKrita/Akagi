@@ -8,6 +8,7 @@ import { useCaptureStore } from '@/stores/captureStore'
 import { useConfigStore } from '@/stores/configStore'
 import { useAnalysisStore } from '@/stores/analysisStore'
 import { fmtTime } from '@/lib/format'
+import { AkagiWordmark } from '@/components/BrandLogo'
 
 const DOT: Record<string, string> = {
   ready:    'bg-emerald-500',
@@ -31,6 +32,9 @@ export function Overview() {
 
   return (
     <div className="p-6 flex flex-col gap-6 w-full">
+      <div className="flex justify-center pt-2 pb-1">
+        <AkagiWordmark className="h-14" />
+      </div>
       <header>
         <h1 className="text-2xl font-semibold">{t('overview.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('overview.description')}</p>

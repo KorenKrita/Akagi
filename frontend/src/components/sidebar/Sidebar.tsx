@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/tooltip'
 import { useSidebar } from '@/hooks/useSidebar'
 import { GithubMark, DiscordMark } from '@/components/BrandMarks'
+import { AkagiIcon, AkagiWordmark } from '@/components/BrandLogo'
 import { AKAGI_GITHUB_URL, AKAGI_DISCORD_URL, openExternal } from '@/lib/external'
 import { HAS_TAURI } from '@/lib/tauri'
 import { LANG_LABELS, SUPPORTED_LANGS, type SupportedLang } from '@/i18n'
@@ -72,11 +73,13 @@ export function Sidebar() {
             )}
             aria-label="Akagi"
           >
-            <BrandLogo />
-            {open && (
-              <span className="font-bold text-lg whitespace-nowrap">
-                Akagi <span className="text-xs text-muted-foreground font-normal">V3</span>
+            {open ? (
+              <span className="flex items-center gap-1.5 whitespace-nowrap">
+                <AkagiWordmark className="h-7" />
+                <span className="text-xs text-muted-foreground font-normal">V3</span>
               </span>
+            ) : (
+              <AkagiIcon className="h-7" />
             )}
           </Link>
           {open && (
@@ -195,20 +198,5 @@ function CommunityIconButton({
         {collapsed && <TooltipContent side="right">{label}</TooltipContent>}
       </Tooltip>
     </TooltipProvider>
-  )
-}
-
-function BrandLogo() {
-  return (
-    <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true" className="shrink-0">
-      <defs>
-        <linearGradient id="sidebarLogoGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#34d399" />
-          <stop offset="100%" stopColor="#0ea5a4" />
-        </linearGradient>
-      </defs>
-      <path d="M4 26 L16 4 L28 26 L22 26 L16 14 L10 26 Z" fill="url(#sidebarLogoGrad)" />
-      <path d="M12 22 L20 22 L20 24 L12 24 Z" fill="#0a1116" />
-    </svg>
   )
 }
