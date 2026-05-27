@@ -285,12 +285,6 @@ validates `bot.py`, and runs `uv sync` once. Subsequent launches are
 fast — the sync is gated by a stamp at
 `mjai_bot/<name>/.akagi/synced.stamp`.
 
-`bot.py` is the only hard requirement. If the installed archive is also
-missing `pyproject.toml` and/or `manifest.toml`, the install still
-completes but raises a **warning** — those files are what a complete
-Akagi bot ships, so their absence usually means the wrong repo/release
-was selected. Double-check the target if you see it.
-
 > [!IMPORTANT]
 > Because of GitHub's file-size limit, the Mortal weights bundled in
 > the release zip are a small, weak **placeholder model** — useful to
