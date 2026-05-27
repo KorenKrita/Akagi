@@ -3,11 +3,11 @@
 <br/>
 
 <p align="center">
-  <!-- Icon in design — replace src once asset is ready. -->
-  <img src="https://github.com/shinkuan/RandomStuff/assets/35415788/db94b436-c3d4-4c57-893e-8db2074d2d22" width="50%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/akagi-logo-dark.png">
+    <img alt="Akagi" src="assets/logo/akagi-logo-light.png" width="55%">
+  </picture>
 </p>
-
-<h1 align="center">Akagi</h1>
 
 <p align="center">
   <i>「死ねば助かるのに………」 - 赤木しげる</i>
