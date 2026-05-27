@@ -190,6 +190,10 @@ Behaviour:
   zips like `mortal-v0.5.0/…`), strips it.
 - Validates that the extracted layout contains `bot.py` at the top.
 - Atomic rename into `mjai_bot/<name>/`.
+- After the rename, checks for the recommended `pyproject.toml` and
+  `manifest.toml`. These are not required (only `bot.py` is), but if any
+  are absent the install raises a `warn` toast — the target probably
+  isn't the bot the user meant to install. The install still succeeds.
 - Post-install: if a `PythonRuntime` is available and the extracted bot
   has a `pyproject.toml`, runs `uv sync` so dependency failures surface
   here instead of at game-start. On failure the bot dir stays in place
