@@ -190,6 +190,7 @@ export function Bots() {
           name={editing}
           open
           onOpenChange={(open) => !open && setEditing(null)}
+          onEnvChanged={refresh}
         />
       )}
 
@@ -335,7 +336,7 @@ function InstallFromGithubDialog({ onInstalled }: { onInstalled: () => void }) {
   )
 }
 
-function BotSettingsDrawer({ name, open, onOpenChange }: { name: string; open: boolean; onOpenChange: (open: boolean) => void }) {
+function BotSettingsDrawer({ name, open, onOpenChange, onEnvChanged }: { name: string; open: boolean; onOpenChange: (open: boolean) => void; onEnvChanged: () => void }) {
   const { t } = useTranslation()
   const [data, setData] = useState<BotSettings | null>(null)
   const [values, setValues] = useState<Record<string, unknown>>({})
@@ -371,6 +372,9 @@ function BotSettingsDrawer({ name, open, onOpenChange }: { name: string; open: b
     setErr(null)
     try {
       await withInstallBlock(() => invoke('sync_bot_deps', { name, force: true }))
+      // Re-list bots so `env_ready` reflects the freshly-synced env and the
+      // activation switch becomes enabled without a manual refresh.
+      onEnvChanged()
     } catch (e) {
       setErr(String(e))
     } finally {
