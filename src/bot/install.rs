@@ -156,6 +156,27 @@ pub async fn install_from_github_release(
 
     install_result?;
 
+    // Heads-up (non-fatal): a complete Akagi bot ships `pyproject.toml`
+    // (deps / `uv sync`) and `manifest.toml` (settings schema). `bot.py`
+    // alone clears `validate_layout`, but if these are also missing the user
+    // most likely pointed the installer at the wrong repo/release. Warn so
+    // they can double-check rather than silently ending up with a bot that
+    // has no deps and no settings.
+    let missing = missing_recommended_files(&dest_dir);
+    if !missing.is_empty() {
+        let _ = notify.send(
+            Notification::warn(format!("{target_name} may not be a valid bot"))
+                .body(format!(
+                    "Installed from {} but it is missing {}. This might not be the \
+                     target you intended to install — a complete Akagi bot ships both \
+                     pyproject.toml and manifest.toml.",
+                    spec.repo,
+                    missing.join(" and "),
+                ))
+                .id(format!("{notify_id}-layout")),
+        );
+    }
+
     // Post-install: run `uv sync` so dependency failures surface here rather
     // than at game-start. Skip silently for pyproject-less bots — only the
     // explicit Reinstall-environment path treats that as an error.
@@ -365,6 +386,23 @@ pub fn validate_layout(bot_root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Files a well-formed Akagi bot is expected to ship alongside `bot.py`:
+/// `pyproject.toml` (Python deps / `uv sync`) and `manifest.toml` (settings
+/// schema + metadata). Recommended, not required — `validate_layout` only
+/// hard-fails on a missing `bot.py`. When these are also absent the install
+/// target is most likely not the bot the user meant to install.
+const RECOMMENDED_FILES: [&str; 2] = ["pyproject.toml", "manifest.toml"];
+
+/// Return the [`RECOMMENDED_FILES`] that are *not* present at the top level
+/// of `bot_root`, in declaration order. An empty vec means the layout looks
+/// like a complete bot.
+pub fn missing_recommended_files(bot_root: &Path) -> Vec<&'static str> {
+    RECOMMENDED_FILES
+        .into_iter()
+        .filter(|name| !bot_root.join(name).is_file())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,5 +550,25 @@ mod tests {
 
         std::fs::write(tmp.path().join("bot.py"), b"").unwrap();
         validate_layout(tmp.path()).unwrap();
+    }
+
+    #[test]
+    fn missing_recommended_files_flags_absent_files() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("bot.py"), b"").unwrap();
+
+        // Neither recommended file present → both reported, in order.
+        assert_eq!(
+            missing_recommended_files(tmp.path()),
+            vec!["pyproject.toml", "manifest.toml"],
+        );
+
+        // Only pyproject present → manifest still flagged.
+        std::fs::write(tmp.path().join("pyproject.toml"), b"").unwrap();
+        assert_eq!(missing_recommended_files(tmp.path()), vec!["manifest.toml"]);
+
+        // Both present → nothing flagged.
+        std::fs::write(tmp.path().join("manifest.toml"), b"").unwrap();
+        assert!(missing_recommended_files(tmp.path()).is_empty());
     }
 }
