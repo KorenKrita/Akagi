@@ -444,7 +444,8 @@
     "drawer_loading": "読み込み中…",
     "drawer_reinstall": "環境を再構築",
     "drawer_reinstall_tooltip": "この Bot の Python virtualenv を消去して再構築",
-    "drawer_reinstalling": "再構築中…"
+    "drawer_reinstalling": "再構築中…",
+    "env_not_ready_tooltip": "環境がまだインストールされていません。有効化する前にインストール／同期してください。"
   },
   "overview": {
     "title": "概要",
@@ -546,5 +547,9 @@
       "clear_skipped": "スキップを解除",
       "none_skipped": "なし"
     }
+  },
+  "install_overlay": {
+    "title": "インストール中…",
+    "warning": "インストールが完了するまで、アプリを閉じたり対局を開始しないでください。"
   }
 }

@@ -444,7 +444,8 @@
     "drawer_loading": "Loading…",
     "drawer_reinstall": "Reinstall environment",
     "drawer_reinstall_tooltip": "Wipe and recreate the Python virtualenv for this bot",
-    "drawer_reinstalling": "Reinstalling…"
+    "drawer_reinstalling": "Reinstalling…",
+    "env_not_ready_tooltip": "Environment not installed yet — install or sync it before activating."
   },
   "overview": {
     "title": "Overview",
@@ -546,5 +547,9 @@
       "clear_skipped": "Clear skipped version",
       "none_skipped": "None"
     }
+  },
+  "install_overlay": {
+    "title": "Installing…",
+    "warning": "Please don’t close the app or start a game until the installation finishes."
   }
 }

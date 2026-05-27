@@ -60,6 +60,7 @@ fn entry_to_info(e: &BotEntry) -> BotInfo {
         name: e.name.clone(),
         dir: e.dir.to_string_lossy().into_owned(),
         has_pyproject: e.pyproject.is_some(),
+        env_ready: runtime::is_synced(&e.dir),
         manifest: e.manifest.clone(),
     }
 }
@@ -252,12 +253,30 @@ pub async fn update_bot_settings(
 /// next `start_game` event anyway, and picks the matching mode bot then.
 ///
 /// Empty `name` clears that mode's active bot (analysis-only in that mode).
+///
+/// Refuses to activate a bot whose Python environment isn't installed yet:
+/// otherwise the bot's first in-game spawn would run `uv sync`, which can
+/// exceed the react time limit and error. Clearing (empty `name`) is always
+/// allowed.
 #[tauri::command]
 pub async fn set_active_bot(
     mode: String,
     name: String,
     state: State<'_, AppState>,
 ) -> CmdResult<()> {
+    if !name.is_empty() {
+        let dir = state.config.read().await.bot.dir.clone();
+        let resolved = resolve_dir(Path::new(&dir));
+        let registry = BotRegistry::scan(&resolved).map_err(|e| format!("scan bots: {e:#}"))?;
+        let entry = registry
+            .find(&name)
+            .ok_or_else(|| format!("bot {name:?} not found"))?;
+        if !runtime::is_synced(&entry.dir) {
+            return Err(format!(
+                "Bot {name:?}'s Python environment isn't installed yet — install or sync it before setting it active."
+            ));
+        }
+    }
     {
         let mut cfg = state.config.write().await;
         match mode.as_str() {

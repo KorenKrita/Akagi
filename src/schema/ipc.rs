@@ -201,6 +201,12 @@ pub struct BotInfo {
     pub name: String,
     pub dir: String,
     pub has_pyproject: bool,
+    /// `true` when the bot's Python environment is already installed (no
+    /// `pyproject.toml`, or its venv + sync stamp are up to date). The UI
+    /// blocks activating a bot whose env isn't ready so a game never picks
+    /// a bot that would need a slow first-spawn `uv sync`.
+    #[serde(default)]
+    pub env_ready: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest: Option<crate::bot::manifest::Manifest>,
 }

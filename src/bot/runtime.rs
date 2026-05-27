@@ -190,6 +190,35 @@ fn scrub_python_env(cmd: &mut Command) {
     cmd.env_remove("PYTHONHOME").env_remove("PYTHONPATH");
 }
 
+/// True when `bot_dir`'s Python environment is already installed — i.e.
+/// `ensure_synced` would short-circuit instead of running `uv sync`. A bot
+/// with no `pyproject.toml` has nothing to install and is always ready.
+///
+/// Inspects only the on-disk stamp + venv (no `uv`, no async), so it's cheap
+/// enough to call while listing bots or gating activation. Deliberately does
+/// NOT require `venv_python_alive`: a dangling venv symlink (the AppImage
+/// mount-changed case) is repaired by a cheap repoint inside `ensure_synced`,
+/// not a slow full re-sync, so it shouldn't block a bot from being activated.
+pub fn is_synced(bot_dir: &Path) -> bool {
+    let pyproject = bot_dir.join("pyproject.toml");
+    if !pyproject.is_file() {
+        return true;
+    }
+    let lock = bot_dir.join("uv.lock");
+    let venv = bot_dir.join(AKAGI_DIR).join(VENV_DIR);
+    let stamp_path = bot_dir.join(AKAGI_DIR).join(STAMP_FILE);
+    let Ok(current) = current_signature(&pyproject, &lock) else {
+        return false;
+    };
+    if !venv.is_dir() {
+        return false;
+    }
+    match std::fs::read_to_string(&stamp_path) {
+        Ok(saved) => saved.trim() == current,
+        Err(_) => false,
+    }
+}
+
 /// Wipe the stamp file and the venv so the next `ensure_synced` runs from
 /// scratch. Used by the user-triggered "Reinstall environment" path —
 /// stamp-only invalidation lets `uv sync` re-run, but uv's sync is
@@ -567,6 +596,52 @@ mod tests {
             !cfg.contains("mount_OLD"),
             "pyvenv.cfg must not retain the stale mount path, got:\n{cfg}"
         );
+    }
+
+    #[test]
+    fn is_synced_true_without_pyproject() {
+        let tmp = TempDir::new().unwrap();
+        // No pyproject.toml → nothing to install → always ready.
+        assert!(is_synced(tmp.path()));
+    }
+
+    #[test]
+    fn is_synced_false_when_venv_and_stamp_missing() {
+        let tmp = TempDir::new().unwrap();
+        write(&tmp.path().join("pyproject.toml"), "[project]\nname='a'\n");
+        // Has deps but no venv / stamp → not installed yet.
+        assert!(!is_synced(tmp.path()));
+    }
+
+    #[test]
+    fn is_synced_tracks_stamp_signature() {
+        let tmp = TempDir::new().unwrap();
+        let py = tmp.path().join("pyproject.toml");
+        write(&py, "[project]\nname='a'\n");
+        let lock = tmp.path().join("uv.lock");
+        let sig = current_signature(&py, &lock).unwrap();
+
+        let akagi = tmp.path().join(AKAGI_DIR);
+        std::fs::create_dir_all(akagi.join(VENV_DIR)).unwrap();
+        std::fs::write(akagi.join(STAMP_FILE), &sig).unwrap();
+        assert!(is_synced(tmp.path()), "matching stamp + venv → ready");
+
+        // Stale stamp (e.g. pyproject changed since last sync) → not ready.
+        std::fs::write(akagi.join(STAMP_FILE), "v1|stale").unwrap();
+        assert!(!is_synced(tmp.path()));
+    }
+
+    #[test]
+    fn is_synced_false_when_stamp_present_but_venv_missing() {
+        let tmp = TempDir::new().unwrap();
+        let py = tmp.path().join("pyproject.toml");
+        write(&py, "[project]\nname='a'\n");
+        let sig = current_signature(&py, &tmp.path().join("uv.lock")).unwrap();
+        let akagi = tmp.path().join(AKAGI_DIR);
+        std::fs::create_dir_all(&akagi).unwrap();
+        std::fs::write(akagi.join(STAMP_FILE), &sig).unwrap();
+        // Stamp matches but the venv dir is gone → must re-sync.
+        assert!(!is_synced(tmp.path()));
     }
 
     #[tokio::test]

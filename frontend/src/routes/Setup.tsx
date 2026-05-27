@@ -13,7 +13,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Toaster } from '@/components/ui/sonner'
+import { InstallBlockingOverlay } from '@/components/InstallBlockingOverlay'
 import { invoke } from '@/lib/tauri'
+import { withInstallBlock } from '@/lib/install'
 import { useTauriBridge } from '@/hooks/useTauriBridge'
 import { useConfigStore } from '@/stores/configStore'
 import { ManifestField } from '@/components/ManifestField'
@@ -154,6 +156,7 @@ export function Setup() {
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-6">
       <Toaster />
+      <InstallBlockingOverlay />
       <Card className="w-full max-w-2xl">
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -605,11 +608,13 @@ function BotsStep() {
       return rest
     })
     try {
-      await invoke('install_bot_from_github', {
-        repo: BOT_REPO,
-        assetGlob: mode === '4p' ? BOT_4P_ASSET : BOT_3P_ASSET,
-        name: mode === '4p' ? BOT_4P_NAME : BOT_3P_NAME,
-      })
+      await withInstallBlock(() =>
+        invoke('install_bot_from_github', {
+          repo: BOT_REPO,
+          assetGlob: mode === '4p' ? BOT_4P_ASSET : BOT_3P_ASSET,
+          name: mode === '4p' ? BOT_4P_NAME : BOT_3P_NAME,
+        }),
+      )
       await refresh()
     } catch (e) {
       setErrors((prev) => ({ ...prev, [mode]: String(e) }))
