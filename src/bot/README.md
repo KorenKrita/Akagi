@@ -282,6 +282,17 @@ Frontend → backend: `set_active_bot(mode, name)` IPC command, where
 `mode` is `"4p"` or `"3p"` and `name` is the bot subdir name (or `""`
 to clear the slot). The Bots route shows two switches per row.
 
+`set_active_bot` refuses to activate a bot whose Python environment isn't
+installed yet (`runtime::is_synced` is false — `pyproject.toml` present but
+no up-to-date `.akagi/venv` + `synced.stamp`). Otherwise the bot's first
+in-game spawn would run `uv sync`, which can exceed the react time limit and
+error. `BotInfo.env_ready` surfaces this to the frontend, which disables the
+activation switch (and shows a tooltip) until the env is installed. A bot with
+no `pyproject.toml` has nothing to install and is always `env_ready`. The
+install/sync IPC paths run `uv sync` to completion before returning, and the
+frontend shows a non-dismissible blocking overlay for their whole duration, so
+the user can't navigate away or start a game mid-install.
+
 Pre-3p config files with a single `[bot] active = "..."` key are
 migrated on load: the legacy value is moved to `active_4p` once via
 `BotConfig::migrate_legacy_active`, and the on-disk file is rewritten

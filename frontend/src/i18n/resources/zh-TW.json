@@ -444,7 +444,8 @@
     "drawer_loading": "載入中…",
     "drawer_reinstall": "重建環境",
     "drawer_reinstall_tooltip": "清除並重建這個 Bot 的 Python 虛擬環境",
-    "drawer_reinstalling": "重建中…"
+    "drawer_reinstalling": "重建中…",
+    "env_not_ready_tooltip": "環境尚未安裝完成——啟用前請先安裝或同步環境。"
   },
   "overview": {
     "title": "總覽",
@@ -546,5 +547,9 @@
       "clear_skipped": "清除跳過記錄",
       "none_skipped": "無"
     }
+  },
+  "install_overlay": {
+    "title": "安裝中…",
+    "warning": "安裝完成前，請勿關閉程式或前往對局。"
   }
 }

@@ -29,6 +29,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { invoke } from '@/lib/tauri'
+import { withInstallBlock } from '@/lib/install'
 import { useBotStore } from '@/stores/botStore'
 import { useConfigStore } from '@/stores/configStore'
 import type { AppConfig, BotInfo, BotSettings } from '@/types'
@@ -134,18 +135,25 @@ export function Bots() {
                 <TableCell className="font-mono text-xs">{bot.manifest?.bot.version ?? '—'}</TableCell>
                 <TableCell>{bot.manifest ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : '—'}</TableCell>
                 <TableCell>
-                  <Switch
-                    checked={isActive4p}
-                    disabled={!supportsMode(bot, '4p')}
-                    onCheckedChange={(v) => void setActive('4p', v ? bot.name : '')}
-                  />
+                  <span title={!bot.env_ready && !isActive4p ? t('bots.env_not_ready_tooltip') : undefined}>
+                    <Switch
+                      checked={isActive4p}
+                      // Block activating a bot whose env isn't installed yet,
+                      // but still allow turning one OFF (env may have been
+                      // wiped while it was active).
+                      disabled={!supportsMode(bot, '4p') || (!bot.env_ready && !isActive4p)}
+                      onCheckedChange={(v) => void setActive('4p', v ? bot.name : '')}
+                    />
+                  </span>
                 </TableCell>
                 <TableCell>
-                  <Switch
-                    checked={isActive3p}
-                    disabled={!supportsMode(bot, '3p')}
-                    onCheckedChange={(v) => void setActive('3p', v ? bot.name : '')}
-                  />
+                  <span title={!bot.env_ready && !isActive3p ? t('bots.env_not_ready_tooltip') : undefined}>
+                    <Switch
+                      checked={isActive3p}
+                      disabled={!supportsMode(bot, '3p') || (!bot.env_ready && !isActive3p)}
+                      onCheckedChange={(v) => void setActive('3p', v ? bot.name : '')}
+                    />
+                  </span>
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
@@ -257,11 +265,13 @@ function InstallFromGithubDialog({ onInstalled }: { onInstalled: () => void }) {
     setBusy(true)
     setErr(null)
     try {
-      await invoke('install_bot_from_github', {
-        repo,
-        assetGlob: glob || undefined,
-        name: name || undefined,
-      })
+      await withInstallBlock(() =>
+        invoke('install_bot_from_github', {
+          repo,
+          assetGlob: glob || undefined,
+          name: name || undefined,
+        }),
+      )
       setOpen(false)
       setRepo('')
       setName('')
@@ -360,7 +370,7 @@ function BotSettingsDrawer({ name, open, onOpenChange }: { name: string; open: b
     setResyncing(true)
     setErr(null)
     try {
-      await invoke('sync_bot_deps', { name, force: true })
+      await withInstallBlock(() => invoke('sync_bot_deps', { name, force: true }))
     } catch (e) {
       setErr(String(e))
     } finally {

@@ -153,6 +153,8 @@ export type BotInfo = {
   name: string
   dir: string
   has_pyproject: boolean
+  /** Bot's Python environment is installed and ready (no slow first-spawn sync). */
+  env_ready: boolean
   manifest?: Manifest
 }
 

@@ -18,6 +18,7 @@ import { useAnalysisStore } from '@/stores/analysisStore'
 import { useBotStore } from '@/stores/botStore'
 import { useCaptureStore } from '@/stores/captureStore'
 import { useNotifyStore } from '@/stores/notifyStore'
+import { useInstallStore } from '@/stores/installStore'
 import { useConfigStore } from '@/stores/configStore'
 import { useHistoryStore } from '@/stores/historyStore'
 import { toast, type ToastSeverity } from '@/components/ui/sonner'
@@ -123,6 +124,12 @@ export function useTauriBridge() {
 
     listen<Notification>('notify', (n) => {
       useNotifyStore.getState().pushToast(n)
+      // Feed env install/sync progress to the blocking overlay (which is
+      // shown for the duration of `withInstallBlock`). Ids: `bot-install-*`
+      // (GitHub install/reinstall) and `bot-sync-*` ("Reinstall environment").
+      if (n.id && (n.id.startsWith('bot-install-') || n.id.startsWith('bot-sync-'))) {
+        useInstallStore.getState().setProgress(n)
+      }
       toast[TOAST_SEVERITY[n.level]](n.title, {
         description: n.body,
         id: n.id,
