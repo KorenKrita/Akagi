@@ -71,7 +71,12 @@
 
 /* ---------------- Zen Inspired (default) — light ---------------- */
 :root {
-    --background: oklch(1 0 0);
+    /* Page background is dropped one notch below pure white so `--card`
+     * (still `oklch(1 0 0)`) reads as a distinct surface — the tweakcn
+     * source ships both at pure white and relies on `--border` alone,
+     * which is too faint on the dense GameDashboard grid. The sidebar
+     * shares this value, keeping the page/sidebar continuity intact. */
+    --background: oklch(0.985 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
