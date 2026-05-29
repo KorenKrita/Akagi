@@ -303,7 +303,7 @@ mod tests {
         let info = evaluate_hora_4p(&s, 0, true).expect("winning shape");
         assert!(info.han >= 1, "han = {}", info.han);
         assert!(info.points > 0, "points = {}", info.points);
-        assert!(info.points % 100 == 0, "points = {}", info.points);
+        assert!(info.points.is_multiple_of(100), "points = {}", info.points);
     }
 
     #[test]

@@ -57,12 +57,6 @@ struct ManagerState {
     cached_our_seat: Option<u8>,
 }
 
-impl Default for ReachState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
 impl AutoplayManager {
     pub fn new(
         cfg: Arc<RwLock<AppConfig>>,

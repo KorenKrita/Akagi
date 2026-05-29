@@ -136,7 +136,7 @@ impl HistoryStore {
     pub fn list(&self, filter: &HistoryFilter, limit: u32, offset: u32) -> Result<Vec<GameRecord>> {
         let mut all = self.read_all()?;
         // Newest first.
-        all.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        all.sort_by_key(|b| std::cmp::Reverse(b.started_at));
         let off = offset as usize;
         let it = all.into_iter().filter(|r| filter.matches(r)).skip(off);
         Ok(if limit == NO_LIMIT {

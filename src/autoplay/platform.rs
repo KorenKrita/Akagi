@@ -28,8 +28,9 @@ pub enum Step {
 /// emits one reach action that combines the declaration and the discard,
 /// so we click reach first, await the bot's follow-up `Dahai`, then click
 /// the discard tile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReachState {
+    #[default]
     Idle,
     /// Path B: we clicked the reach button and injected a synthetic
     /// `Reach` event into MjaiBus. The next `Dahai` from the bot is the
