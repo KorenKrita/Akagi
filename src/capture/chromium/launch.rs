@@ -1,16 +1,17 @@
 //! Spawn the controlled Chromium process and read its CDP endpoint.
 //!
 //! Lifecycle:
-//! 1. `spawn` runs the chrome binary with `--user-data-dir`, `--remote-debugging-port=0`,
-//!    and assorted "don't be annoying" flags.
-//! 2. `wait_for_devtools_port` polls `<user-data-dir>/DevToolsActivePort`
-//!    (Chrome writes it ~50ms after start) and returns a `ws://...` URL
-//!    suitable for `chromiumoxide::Browser::connect`.
+//! 1. `spawn` runs the chrome binary with `--user-data-dir`, a remote debugging
+//!    port, and assorted "don't be annoying" flags.
+//! 2. `wait_for_devtools_endpoint` polls `DevToolsActivePort` and, when the
+//!    port is known, the browser's HTTP discovery endpoint. It returns a
+//!    `ws://...` URL suitable for `chromiumoxide::Browser::connect`.
 //! 3. `terminate` does the staged shutdown: SIGTERM (Unix) / `taskkill`
 //!    (Windows) → wait → SIGKILL.
 
 use crate::config::ChromiumConfig;
 use anyhow::{anyhow, Context, Result};
+use std::net::TcpListener;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::{Child, Command};
@@ -19,14 +20,29 @@ use tracing::{debug, warn};
 const DEVTOOLS_FILE: &str = "DevToolsActivePort";
 const PORT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 const PORT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const HTTP_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(1);
 const TERM_GRACE: Duration = Duration::from_secs(5);
 const KILL_GRACE: Duration = Duration::from_secs(2);
 
-pub fn spawn(exe: &Path, profile: &Path, cfg: &ChromiumConfig) -> Result<Child> {
+pub struct SpawnedChromium {
+    pub child: Child,
+    pub remote_debugging_port: Option<u16>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RemoteDebuggingConfig {
+    arg: Option<String>,
+    port: Option<u16>,
+}
+
+pub fn spawn(exe: &Path, profile: &Path, cfg: &ChromiumConfig) -> Result<SpawnedChromium> {
+    let remote_debugging = remote_debugging_config(&cfg.extra_args)?;
     let mut cmd = Command::new(exe);
-    cmd.arg(format!("--user-data-dir={}", profile.display()))
-        .arg("--remote-debugging-port=0")
-        .arg("--no-first-run")
+    cmd.arg(format!("--user-data-dir={}", profile.display()));
+    if let Some(arg) = &remote_debugging.arg {
+        cmd.arg(arg);
+    }
+    cmd.arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-features=TranslateUI,InterestFeedContentSuggestions")
         .arg("--disable-search-engine-choice-screen")
@@ -63,14 +79,98 @@ pub fn spawn(exe: &Path, profile: &Path, cfg: &ChromiumConfig) -> Result<Child> 
     let child = cmd
         .spawn()
         .with_context(|| format!("failed to spawn chromium binary at {}", exe.display()))?;
-    debug!("spawned chromium pid={:?}", child.id());
-    Ok(child)
+    debug!(
+        "spawned chromium pid={:?} remote_debugging_port={}",
+        child.id(),
+        remote_debugging
+            .port
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "auto".to_string())
+    );
+    Ok(SpawnedChromium {
+        child,
+        remote_debugging_port: remote_debugging.port,
+    })
 }
 
-/// Poll the `DevToolsActivePort` file until Chromium writes its CDP
-/// endpoint, then return the `ws://...` URL.
-pub async fn wait_for_devtools_port(profile: &Path) -> Result<String> {
+fn remote_debugging_config(extra_args: &[String]) -> Result<RemoteDebuggingConfig> {
+    let mut user_port = None;
+    for (idx, arg) in extra_args.iter().enumerate() {
+        if let Some(port) = arg.strip_prefix("--remote-debugging-port=") {
+            user_port = Some(parse_remote_debugging_port(port)?);
+        } else if arg == "--remote-debugging-port" {
+            let Some(port) = extra_args.get(idx + 1) else {
+                return Err(anyhow!("--remote-debugging-port requires a value"));
+            };
+            user_port = Some(parse_remote_debugging_port(port)?);
+        }
+    }
+
+    if let Some(port) = user_port {
+        return Ok(RemoteDebuggingConfig {
+            arg: None,
+            port: port.nonzero(),
+        });
+    }
+
+    let port = pick_remote_debugging_port()?;
+    Ok(RemoteDebuggingConfig {
+        arg: Some(format!("--remote-debugging-port={port}")),
+        port: Some(port),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteDebuggingPort {
+    Auto,
+    Fixed(u16),
+}
+
+impl RemoteDebuggingPort {
+    fn nonzero(self) -> Option<u16> {
+        match self {
+            RemoteDebuggingPort::Auto => None,
+            RemoteDebuggingPort::Fixed(port) => Some(port),
+        }
+    }
+}
+
+fn parse_remote_debugging_port(value: &str) -> Result<RemoteDebuggingPort> {
+    let port: u16 = value
+        .parse()
+        .with_context(|| format!("invalid --remote-debugging-port value: {value}"))?;
+    if port == 0 {
+        Ok(RemoteDebuggingPort::Auto)
+    } else {
+        Ok(RemoteDebuggingPort::Fixed(port))
+    }
+}
+
+fn pick_remote_debugging_port() -> Result<u16> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .context("failed to choose a chromium remote debugging port")?;
+    let port = listener
+        .local_addr()
+        .context("failed to read chromium remote debugging port")?
+        .port();
+    if port == 0 {
+        return Err(anyhow!("operating system returned port 0"));
+    }
+    Ok(port)
+}
+
+/// Poll Chromium until its CDP endpoint is ready, then return the `ws://...` URL.
+pub async fn wait_for_devtools_endpoint(
+    profile: &Path,
+    remote_debugging_port: Option<u16>,
+) -> Result<String> {
     let port_file = profile.join(DEVTOOLS_FILE);
+    let version_url =
+        remote_debugging_port.map(|port| format!("http://127.0.0.1:{port}/json/version"));
+    let client = reqwest::Client::builder()
+        .timeout(HTTP_DISCOVERY_TIMEOUT)
+        .build()
+        .context("creating chromium devtools HTTP client")?;
     let start = std::time::Instant::now();
     loop {
         if let Ok(body) = std::fs::read_to_string(&port_file) {
@@ -78,15 +178,43 @@ pub async fn wait_for_devtools_port(profile: &Path) -> Result<String> {
                 return Ok(endpoint);
             }
         }
+        if let Some(version_url) = &version_url {
+            if let Ok(endpoint) = fetch_devtools_endpoint(&client, version_url).await {
+                return Ok(endpoint);
+            }
+        }
         if start.elapsed() > PORT_WAIT_TIMEOUT {
+            let wait_target = if let Some(version_url) = &version_url {
+                format!("{} or {}", port_file.display(), version_url)
+            } else {
+                port_file.display().to_string()
+            };
             return Err(anyhow!(
                 "timed out after {:?} waiting for {}",
                 PORT_WAIT_TIMEOUT,
-                port_file.display()
+                wait_target
             ));
         }
         tokio::time::sleep(PORT_POLL_INTERVAL).await;
     }
+}
+
+async fn fetch_devtools_endpoint(client: &reqwest::Client, url: &str) -> Result<String> {
+    let json: serde_json::Value = client
+        .get(url)
+        .send()
+        .await
+        .context("requesting chromium devtools version endpoint")?
+        .error_for_status()
+        .context("chromium devtools version endpoint returned an error")?
+        .json()
+        .await
+        .context("parsing chromium devtools version response")?;
+    let endpoint = json
+        .get("webSocketDebuggerUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("missing webSocketDebuggerUrl in chromium devtools response"))?;
+    Ok(endpoint.to_string())
 }
 
 /// Parse the two-line `DevToolsActivePort` content into a `ws://...` URL.
@@ -243,6 +371,65 @@ mod tests {
         // No Default/ — should not panic, should not create anything.
         clear_session_state(dir.path());
         assert!(!dir.path().join("Default").exists());
+    }
+
+    #[test]
+    fn picks_nonzero_remote_debugging_port() {
+        let port = pick_remote_debugging_port().unwrap();
+        assert_ne!(port, 0);
+    }
+
+    #[test]
+    fn remote_debugging_config_defaults_to_nonzero_port() {
+        let cfg = remote_debugging_config(&[]).unwrap();
+        let arg = cfg.arg.unwrap();
+        assert!(arg.starts_with("--remote-debugging-port="), "got {arg}");
+        assert_ne!(cfg.port, Some(0));
+        assert!(cfg.port.is_some());
+    }
+
+    #[test]
+    fn remote_debugging_config_respects_user_fixed_port() {
+        let cfg = remote_debugging_config(&["--remote-debugging-port=9223".to_string()]).unwrap();
+        assert_eq!(
+            cfg,
+            RemoteDebuggingConfig {
+                arg: None,
+                port: Some(9223)
+            }
+        );
+    }
+
+    #[test]
+    fn remote_debugging_config_respects_user_split_fixed_port() {
+        let cfg =
+            remote_debugging_config(&["--remote-debugging-port".to_string(), "9224".to_string()])
+                .unwrap();
+        assert_eq!(
+            cfg,
+            RemoteDebuggingConfig {
+                arg: None,
+                port: Some(9224)
+            }
+        );
+    }
+
+    #[test]
+    fn remote_debugging_config_respects_user_auto_port() {
+        let cfg = remote_debugging_config(&["--remote-debugging-port=0".to_string()]).unwrap();
+        assert_eq!(
+            cfg,
+            RemoteDebuggingConfig {
+                arg: None,
+                port: None
+            }
+        );
+    }
+
+    #[test]
+    fn remote_debugging_config_rejects_malformed_user_port() {
+        assert!(remote_debugging_config(&["--remote-debugging-port=abc".to_string()]).is_err());
+        assert!(remote_debugging_config(&["--remote-debugging-port".to_string()]).is_err());
     }
 
     #[test]
