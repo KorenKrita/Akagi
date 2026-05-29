@@ -304,22 +304,13 @@ suggestion).
 
 ### Write your own
 
-```
-mjai_bot/<name>/
-├── bot.py            # JSONL stdin → JSONL stdout
-├── pyproject.toml    # requires-python = ">=3.12"
-├── manifest.toml     # optional — supported_modes, settings schema
-└── README.md
-```
-
-`bot.py` reads one JSON array of mjai events per line and writes one
-mjai action object per line (`{"type":"none"}` when no action is owed).
-Akagi pumps stderr into the application log under `bot=<name>`.
-
-See [`src/bot/README.md`](./src/bot/README.md) for the full contract,
-the manifest schema, and the secret-field handling.
-[`mjai_bot/example/`](./mjai_bot/example/) is a working rule-based
-reference that ships in tree.
+A bot is a standalone subprocess that talks JSONL over stdin/stdout — Akagi
+feeds it the game as mjai events and it replies with an action plus optional
+HUD data. The full developer guide lives in
+**[`mjai_bot/README.md`](./mjai_bot/README.md)**: the I/O protocol, the mjai
+event stream, the reaction and `meta` HUD format, toast notifications, and
+`manifest.toml` settings. [`mjai_bot/example/`](./mjai_bot/example/) is a
+working rule-based bot you can copy.
 
 ### AGPL boundary
 

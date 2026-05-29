@@ -28,6 +28,49 @@ from mahjong.hand_calculating.hand_config import HandConfig
 from mahjong.meld import Meld
 from mahjong.shanten import Shanten
 
+# ---------- Akagi frontend notifications ----------
+#
+# Akagi reads the bot's stdout strictly as one mjai reaction per line, so a
+# bot must NOT print anything else there. stderr, however, is a free-form
+# side-channel: any line prefixed with NOTIFY_PREFIX followed by a JSON
+# object is parsed by Akagi and surfaced as a toast in the app's bottom-right
+# corner. Every other stderr line is treated as a normal diagnostic log line.
+#
+# Severity levels: "info", "success", "warn", "error".
+
+NOTIFY_PREFIX = "@@AKAGI_NOTIFY@@ "
+
+
+def notify(
+    level: str,
+    title: str,
+    body: str | None = None,
+    *,
+    sticky: bool = False,
+    id: str | None = None,
+) -> None:
+    """Send a toast notification to the Akagi frontend.
+
+    Args:
+        level: one of "info", "success", "warn", "error".
+        title: short headline shown in bold.
+        body: optional longer description.
+        sticky: if True the toast stays until dismissed (use for long-running
+            states); otherwise it auto-dismisses.
+        id: stable key — a later notification with the same id replaces the
+            earlier toast instead of stacking a new one (use for progress).
+    """
+    payload: dict[str, object] = {"level": level, "title": title}
+    if body is not None:
+        payload["body"] = body
+    if sticky:
+        payload["sticky"] = True
+    if id is not None:
+        payload["id"] = id
+    sys.stderr.write(NOTIFY_PREFIX + json.dumps(payload, separators=(",", ":")) + "\n")
+    sys.stderr.flush()
+
+
 # ---------- mjai tile string ↔ 34-array index ----------
 
 # 0-8 m, 9-17 p, 18-26 s, 27 E, 28 S, 29 W, 30 N, 31 P, 32 F, 33 C
@@ -142,6 +185,13 @@ class State:
         if t == "start_game":
             if "id" in e:
                 self.actor_id = int(e["id"])
+            # Demonstrates the frontend notification channel — a toast pops in
+            # the app's bottom-right corner. Remove or repurpose at will.
+            notify(
+                "info",
+                "Example bot ready",
+                f"Seated at player {self.actor_id}.",
+            )
         elif t == "start_kyoku":
             self.oya = e["oya"]
             self.bakaze = e["bakaze"]

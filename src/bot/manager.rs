@@ -382,6 +382,7 @@ impl BotManager {
             self.runtime.clone(),
             &entry.dir,
             actor_id,
+            self.notify_tx.clone(),
         )
         .await
         {
