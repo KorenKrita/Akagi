@@ -3,12 +3,12 @@
 //!
 //! One canonical struct per pipeline stage:
 //!
-//! - `WsFrame`     — raw bytes the proxy or chromium capture saw,
-//!                   with the bridge's first-pass parsed view alongside.
-//! - `MjaiEvent`   — translated game event from `mjai_bus`.
+//! - `WsFrame` — raw bytes the proxy or chromium capture saw, with the
+//!   bridge's first-pass parsed view alongside.
+//! - `MjaiEvent` — translated game event from `mjai_bus`.
 //! - `BotReaction` — bot's response with the triggering mjai event and
-//!                   reaction latency, so "why did the bot do that?" is
-//!                   answerable from a single record.
+//!   reaction latency, so "why did the bot do that?" is answerable from a
+//!   single record.
 //!
 //! Same shape on the wire (live tail over `tauri::ipc::Channel`) and on
 //! disk (`<session>/inspector.jsonl`). The on-disk file is the source of
