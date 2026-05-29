@@ -639,6 +639,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn ctx_for<'a>(
         action: &'a MjaiEvent,
         snapshot: &'a GameStateSnapshot,

@@ -104,8 +104,10 @@ mod tests {
 
     #[test]
     fn yonma_seat_round_trip() {
-        let mut s = State::default();
-        s.seat = 2;
+        let s = State {
+            seat: 2,
+            ..Default::default()
+        };
         for abs in 0..4u8 {
             let rel = s.abs_to_rel(abs);
             assert_eq!(s.rel_to_abs(rel), abs);
@@ -116,10 +118,12 @@ mod tests {
     /// wire positions including the ghost. Our seat is always real.
     #[test]
     fn sanma_seat_round_trip() {
-        let mut s = State::default();
-        s.num_players = 3;
-        s.is_3p = true;
-        s.seat = 1;
+        let s = State {
+            num_players: 3,
+            is_3p: true,
+            seat: 1,
+            ..Default::default()
+        };
         for abs in 0..4u8 {
             let rel = s.abs_to_rel(abs);
             assert_eq!(s.rel_to_abs(rel), abs);
