@@ -57,9 +57,15 @@ async fn spawn_example(actor_id: u8) -> Option<SubprocessBot> {
         RuntimeMode::System,
     );
     Some(
-        SubprocessBot::spawn_with_command(cmd, runtime, &bot_dir, actor_id)
-            .await
-            .expect("spawn example bot"),
+        SubprocessBot::spawn_with_command(
+            cmd,
+            runtime,
+            &bot_dir,
+            actor_id,
+            akagi::event_bus::notify_bus(),
+        )
+        .await
+        .expect("spawn example bot"),
     )
 }
 
