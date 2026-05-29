@@ -1,7 +1,7 @@
 //! Chromium capture backend.
 //!
 //! Launches a Chromium-family browser with `--user-data-dir` (so it
-//! doesn't collide with the user's existing Chrome) and `--remote-debugging-port=0`,
+//! doesn't collide with the user's existing Chrome) and a remote debugging port,
 //! then connects to it via the Chrome DevTools Protocol and intercepts
 //! `Network.webSocketFrameReceived/Sent` for binary frames. Frames are
 //! routed into the platform [`crate::bridge::Bridge`] just as the
@@ -93,12 +93,14 @@ impl CaptureBackend for ChromiumBackend {
             profile_dir.display()
         );
 
-        let mut child =
+        let launched =
             launch::spawn(&exe, &profile_dir, &self.cfg).context("launching chromium")?;
+        let mut child = launched.child;
 
-        let cdp_endpoint = launch::wait_for_devtools_port(&profile_dir)
-            .await
-            .context("reading DevToolsActivePort (chromium failed to start?)")?;
+        let cdp_endpoint =
+            launch::wait_for_devtools_endpoint(&profile_dir, launched.remote_debugging_port)
+                .await
+                .context("reading chromium CDP endpoint (chromium failed to start?)")?;
         info!("chromium CDP endpoint: {cdp_endpoint}");
 
         let bridges = Arc::new(FlowBridges::<cdp::FlowKey>::new(
