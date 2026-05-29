@@ -316,6 +316,13 @@ mjai_bot/<name>/
 mjai action object per line (`{"type":"none"}` when no action is owed).
 Akagi pumps stderr into the application log under `bot=<name>`.
 
+A bot can also push a **toast notification** to the UI (it pops in the
+bottom-right corner) by writing a single stderr line prefixed with
+`@@AKAGI_NOTIFY@@ ` followed by a JSON object with a `level`
+(`info` / `success` / `warn` / `error`), a `title`, and an optional
+`body`. See [`mjai_bot/README.md`](./mjai_bot/README.md) for the full
+notification protocol and a copy-pasteable helper.
+
 See [`src/bot/README.md`](./src/bot/README.md) for the full contract,
 the manifest schema, and the secret-field handling.
 [`mjai_bot/example/`](./mjai_bot/example/) is a working rule-based

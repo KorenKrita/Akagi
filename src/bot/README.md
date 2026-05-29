@@ -32,7 +32,12 @@ bridge to them.
   over stdin/stdout, pumps stderr into `tracing` (`bot=<name>` field),
   enforces a 5 s default react timeout, and `kill_on_drop(true)` so a
   dropped runner can't leak children. `reset()` writes `[{"end_game"}]`,
-  waits 500 ms, then SIGKILL's and respawns.
+  waits 500 ms, then SIGKILL's and respawns. The stderr pump doubles as a
+  bot→frontend notification channel: a line prefixed with `NOTIFY_PREFIX`
+  (`@@AKAGI_NOTIFY@@ `) followed by a JSON `Notification` is parsed and
+  forwarded onto the `NotifyBus` (→ `notify` Tauri event → bottom-right
+  toast); every other line is logged as before, and a malformed payload
+  after the prefix is dropped with a `warn!`.
 - `manager` — `BotManager`: subscribes to the `MjaiBus`, accumulates
   events between decision points (own tsumo / others' dahai-or-kakan /
   reach_accepted / hora / ryukyoku / end_kyoku / end_game), flushes the
@@ -63,6 +68,10 @@ mjai_bot/<name>/
   `{"type":"none"}` when no action is owed)
 - print **only** protocol JSON to stdout; logs go to stderr
 - exit cleanly when it sees `{"type":"end_game"}` in a batch
+
+A bot MAY also surface a toast in the UI by writing an
+`@@AKAGI_NOTIFY@@ {…}` line to stderr (level / title / body — see
+[`mjai_bot/README.md`](../../mjai_bot/README.md)).
 
 The bot's seat is delivered three ways (pick whichever fits):
 
