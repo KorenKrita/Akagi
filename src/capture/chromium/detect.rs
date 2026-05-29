@@ -41,7 +41,21 @@ pub struct DetectedBrowser {
 pub fn detect_system_browsers() -> Vec<DetectedBrowser> {
     let mut found = Vec::new();
     detect_into(&mut found);
-    found.dedup_by(|a, b| a.path == b.path);
+    dedup_by_path(found)
+}
+
+/// Drop duplicate paths, keeping the first (highest-priority) occurrence.
+///
+/// `detect_into` emits in priority order (Chrome → … → CfT), not path
+/// order, and several probes can resolve to the same binary — e.g.
+/// `google-chrome` and `google-chrome-stable`, or `chromium` and
+/// `chromium-browser`, are commonly symlinks to one executable. Those
+/// duplicates aren't necessarily adjacent, so `Vec::dedup_by` (which only
+/// collapses *consecutive* runs) would let them through; a seen-set retain
+/// dedups regardless of position while preserving priority order.
+fn dedup_by_path(mut found: Vec<DetectedBrowser>) -> Vec<DetectedBrowser> {
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|b| seen.insert(b.path.clone()));
     found
 }
 
@@ -214,5 +228,49 @@ mod tests {
         let mut u = unique;
         u.dedup();
         assert_eq!(paths.len(), u.len(), "detect_system_browsers must dedup");
+    }
+
+    /// Hermetic regression for the dedup bug surfaced by CI: probes emit in
+    /// priority order, so a duplicate path can be non-adjacent — the case
+    /// `Vec::dedup_by` misses. `dedup_by_path` must drop it and keep the
+    /// first (higher-priority) occurrence. Fake paths per CLAUDE.md #8.
+    #[test]
+    fn dedup_by_path_keeps_first_nonadjacent_occurrence() {
+        use BrowserKind::*;
+        let input = vec![
+            DetectedBrowser {
+                kind: Chrome,
+                path: "/usr/bin/x".into(),
+            },
+            DetectedBrowser {
+                kind: Edge,
+                path: "/usr/bin/edge".into(),
+            },
+            // Same path as index 0 but non-adjacent — dedup_by would miss it.
+            DetectedBrowser {
+                kind: Chromium,
+                path: "/usr/bin/x".into(),
+            },
+            DetectedBrowser {
+                kind: Brave,
+                path: "/usr/bin/brave".into(),
+            },
+            DetectedBrowser {
+                kind: Chrome,
+                path: "/usr/bin/edge".into(),
+            },
+        ];
+        let out = dedup_by_path(input);
+        let paths: Vec<_> = out.iter().map(|b| b.path.clone()).collect();
+        assert_eq!(
+            paths,
+            [
+                PathBuf::from("/usr/bin/x"),
+                PathBuf::from("/usr/bin/edge"),
+                PathBuf::from("/usr/bin/brave"),
+            ]
+        );
+        // First occurrence wins: /usr/bin/x keeps Chrome, not Chromium.
+        assert_eq!(out[0].kind, Chrome);
     }
 }
