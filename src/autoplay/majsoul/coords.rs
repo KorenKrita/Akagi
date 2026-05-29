@@ -82,18 +82,18 @@ pub const CANDIDATES_KAN: [(f64, f64); 7] = [
 /// first (rightmost / bottom-rightmost). Source:
 /// `autoplay_majsoul.py:67-81`. Indices align with `MajsoulOpType`.
 pub const ACTION_PRIORITY: [u32; 12] = [
-    0, // None       — pass / cancel button (always rightmost)
+    0,  // None       — pass / cancel button (always rightmost)
     99, // Discard   — no button
-    4, // Chi
-    3, // Pon
-    3, // Ankan
-    2, // Daiminkan
-    3, // Kakan
-    2, // Reach
-    1, // Zimo (tsumo agari)
-    1, // Ron
-    5, // Ryukyoku
-    4, // Nukidora
+    4,  // Chi
+    3,  // Pon
+    3,  // Ankan
+    2,  // Daiminkan
+    3,  // Kakan
+    2,  // Reach
+    1,  // Zimo (tsumo agari)
+    1,  // Ron
+    5,  // Ryukyoku
+    4,  // Nukidora
 ];
 
 /// Numeric type codes used by the priority table above. These match the
@@ -332,10 +332,25 @@ mod tests {
 
     #[test]
     fn op_type_from_engine_action_types() {
-        assert_eq!(MajsoulOpType::from_engine(ActionType::Riichi), Some(MajsoulOpType::Reach));
-        assert_eq!(MajsoulOpType::from_engine(ActionType::Tsumo), Some(MajsoulOpType::Zimo));
-        assert_eq!(MajsoulOpType::from_engine(ActionType::Ron), Some(MajsoulOpType::Ron));
-        assert_eq!(MajsoulOpType::from_engine(ActionType::KyushuKyuhai), Some(MajsoulOpType::Ryukyoku));
-        assert_eq!(MajsoulOpType::from_engine(ActionType::Pass), Some(MajsoulOpType::None));
+        assert_eq!(
+            MajsoulOpType::from_engine(ActionType::Riichi),
+            Some(MajsoulOpType::Reach)
+        );
+        assert_eq!(
+            MajsoulOpType::from_engine(ActionType::Tsumo),
+            Some(MajsoulOpType::Zimo)
+        );
+        assert_eq!(
+            MajsoulOpType::from_engine(ActionType::Ron),
+            Some(MajsoulOpType::Ron)
+        );
+        assert_eq!(
+            MajsoulOpType::from_engine(ActionType::KyushuKyuhai),
+            Some(MajsoulOpType::Ryukyoku)
+        );
+        assert_eq!(
+            MajsoulOpType::from_engine(ActionType::Pass),
+            Some(MajsoulOpType::None)
+        );
     }
 }

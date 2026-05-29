@@ -540,7 +540,11 @@ mod tests {
             pai: "3m".into(),
         })
         .unwrap();
-        t.handle(&AkagiEvent::Reach { actor: 0, pai: None }).unwrap();
+        t.handle(&AkagiEvent::Reach {
+            actor: 0,
+            pai: None,
+        })
+        .unwrap();
         t.handle(&AkagiEvent::Dahai {
             actor: 0,
             pai: "1m".into(),

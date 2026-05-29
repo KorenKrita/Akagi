@@ -32,9 +32,7 @@ use crate::bot::runtime::PythonRuntime;
 use crate::bot::sync_guard::SyncGuard;
 use crate::event_bus::{BotResponseBus, BotStatusBus, NotifyBus};
 use crate::inspector::InspectorWriter;
-use crate::schema::{
-    BotReaction, BotStatus, InspectorEntry, LoadStage, MjaiEvent, Notification,
-};
+use crate::schema::{BotReaction, BotStatus, InspectorEntry, LoadStage, MjaiEvent, Notification};
 use anyhow::{bail, Context, Result};
 use chrono::Local;
 use std::collections::HashSet;

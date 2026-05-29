@@ -12,12 +12,12 @@
 use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, Utc};
-use tokio::sync::broadcast::{Receiver, error::RecvError};
+use tokio::sync::broadcast::{error::RecvError, Receiver};
 use tracing::{info, warn};
 use ulid::Ulid;
 
 use crate::event_bus::HistoryBus;
-use crate::history::aggregator::{AggregateInput, aggregate};
+use crate::history::aggregator::{aggregate, AggregateInput};
 use crate::history::store::HistoryStore;
 use crate::schema::{HistoryEvent, MjaiEvent, Platform};
 
@@ -192,7 +192,7 @@ impl RecorderState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event_bus::{DEFAULT_CAPACITY, HistoryBus};
+    use crate::event_bus::{HistoryBus, DEFAULT_CAPACITY};
     use crate::schema::{HistoryFilter, MjaiEvent};
     use tempfile::TempDir;
     use tokio::sync::broadcast;
@@ -231,7 +231,13 @@ mod tests {
         let store_clone = store.clone();
         let bus_clone = history_tx.clone();
         let handle = tokio::spawn(async move {
-            drive_loop(store_clone, bus_clone, shared_platform(Platform::Majsoul), rx).await
+            drive_loop(
+                store_clone,
+                bus_clone,
+                shared_platform(Platform::Majsoul),
+                rx,
+            )
+            .await
         });
 
         tx.send(start_game()).unwrap();
@@ -249,9 +255,7 @@ mod tests {
         // Give the loop a tick to drain.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let records = store
-            .list(&HistoryFilter::default(), 100, 0)
-            .unwrap();
+        let records = store.list(&HistoryFilter::default(), 100, 0).unwrap();
         assert_eq!(records.len(), 1, "exactly one record after end_game");
         assert_eq!(records[0].our_rank, Some(1));
         assert_eq!(records[0].our_delta, Some(8000));
@@ -270,7 +274,13 @@ mod tests {
         let store_clone = store.clone();
         let bus_clone = history_tx.clone();
         let handle = tokio::spawn(async move {
-            drive_loop(store_clone, bus_clone, shared_platform(Platform::Majsoul), rx).await
+            drive_loop(
+                store_clone,
+                bus_clone,
+                shared_platform(Platform::Majsoul),
+                rx,
+            )
+            .await
         });
 
         tx.send(start_game()).unwrap();
@@ -286,9 +296,7 @@ mod tests {
         drop(tx);
         let _ = handle.await;
 
-        let records = store
-            .list(&HistoryFilter::default(), 100, 0)
-            .unwrap();
+        let records = store.list(&HistoryFilter::default(), 100, 0).unwrap();
         assert!(records.is_empty(), "no record without end_game");
     }
 
@@ -302,7 +310,13 @@ mod tests {
         let store_clone = store.clone();
         let bus_clone = history_tx.clone();
         let handle = tokio::spawn(async move {
-            drive_loop(store_clone, bus_clone, shared_platform(Platform::Majsoul), rx).await
+            drive_loop(
+                store_clone,
+                bus_clone,
+                shared_platform(Platform::Majsoul),
+                rx,
+            )
+            .await
         });
 
         // First game starts but never ends.
@@ -325,9 +339,7 @@ mod tests {
         drop(tx);
         let _ = handle.await;
 
-        let records = store
-            .list(&HistoryFilter::default(), 100, 0)
-            .unwrap();
+        let records = store.list(&HistoryFilter::default(), 100, 0).unwrap();
         assert_eq!(records.len(), 1, "only the cleanly-ended second game");
     }
 }

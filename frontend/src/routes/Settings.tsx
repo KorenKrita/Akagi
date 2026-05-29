@@ -61,6 +61,8 @@ export function Settings() {
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
+    // Sync the editable draft from the store when it (re)loads.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (stored) setDraft(stored)
   }, [stored])
 
@@ -770,6 +772,8 @@ function CaptureCard({
 
   useEffect(() => {
     if (mode === 'chromium' && detected === null) {
+      // probe() sets detecting/detected state; intentional on mode switch.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       probe()
     }
   }, [mode]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -961,6 +965,8 @@ function CftPanel({
   }
 
   useEffect(() => {
+    // Mount-time load of the installed-bots list; refresh() sets state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh()
   }, [])
 

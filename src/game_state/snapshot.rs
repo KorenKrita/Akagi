@@ -177,7 +177,11 @@ impl GameStateSnapshot {
                     double_riichi: p.double_riichi_declared,
                     riichi_declaration_index: p.riichi_declaration_index,
                     kita_tiles: Vec::new(),
-                    drawn_tile: if i as u8 == s.current_player { s.drawn_tile.map(tid_to_mjai) } else { None },
+                    drawn_tile: if i as u8 == s.current_player {
+                        s.drawn_tile.map(tid_to_mjai)
+                    } else {
+                        None
+                    },
                 }
             })
             .collect();
@@ -236,7 +240,11 @@ impl GameStateSnapshot {
                     double_riichi: p.double_riichi_declared,
                     riichi_declaration_index: p.riichi_declaration_index,
                     kita_tiles: p.kita_tiles.iter().copied().map(tid_to_mjai).collect(),
-                    drawn_tile: if i as u8 == s.current_player { s.drawn_tile.map(tid_to_mjai) } else { None },
+                    drawn_tile: if i as u8 == s.current_player {
+                        s.drawn_tile.map(tid_to_mjai)
+                    } else {
+                        None
+                    },
                 }
             })
             .collect();

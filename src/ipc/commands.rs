@@ -108,8 +108,7 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
         *state
             .history_platform
             .write()
-            .expect("history platform lock poisoned") =
-            crate::schema::Platform::from(new_platform);
+            .expect("history platform lock poisoned") = crate::schema::Platform::from(new_platform);
     }
 
     if capture_changed || proxy_changed || platform_changed {
@@ -574,10 +573,7 @@ pub async fn get_log_dir(state: State<'_, AppState>) -> CmdResult<PathBuf> {
 /// child, so a missing tool surfaces only if `spawn` itself fails. The
 /// frontend already wraps this in try/catch.
 #[tauri::command]
-pub async fn open_log_folder(
-    session: Option<String>,
-    state: State<'_, AppState>,
-) -> CmdResult<()> {
+pub async fn open_log_folder(session: Option<String>, state: State<'_, AppState>) -> CmdResult<()> {
     let target = match session {
         Some(name) if !name.is_empty() => {
             // Defense-in-depth: only allow the canonical session name
@@ -641,10 +637,13 @@ fn is_session_name(name: &str) -> bool {
         return false;
     }
     let bytes = name.as_bytes();
-    bytes
-        .iter()
-        .enumerate()
-        .all(|(i, &b)| if i == 8 { b == b'-' } else { b.is_ascii_digit() })
+    bytes.iter().enumerate().all(|(i, &b)| {
+        if i == 8 {
+            b == b'-'
+        } else {
+            b.is_ascii_digit()
+        }
+    })
 }
 
 /// List every session directory under the active log root. Newest first.
@@ -755,7 +754,11 @@ pub async fn read_log_session(
         let target_filters: Vec<String> = req.targets.unwrap_or_default();
         let search_lc = req.search.as_deref().map(|s| s.to_lowercase());
         // 0 → use a sane default (1000); otherwise hard-cap at 2000.
-        let limit = if req.limit == 0 { 1000 } else { req.limit.min(2000) };
+        let limit = if req.limit == 0 {
+            1000
+        } else {
+            req.limit.min(2000)
+        };
 
         let mut skipped_malformed: u32 = 0;
         let mut total_match: usize = 0;
@@ -844,7 +847,11 @@ pub async fn read_inspector(
             req.kinds.as_ref().map(|v| v.iter().cloned().collect());
         let actor = req.actor;
         let search_lc = req.search.as_deref().map(|s| s.to_lowercase());
-        let limit = if req.limit == 0 { 1000 } else { req.limit.min(2000) };
+        let limit = if req.limit == 0 {
+            1000
+        } else {
+            req.limit.min(2000)
+        };
 
         let mut skipped_malformed: u32 = 0;
         let mut total_match: usize = 0;
@@ -1194,10 +1201,7 @@ pub async fn get_game_history_events(
 /// `HistoryEvent::Deleted` on the history bus so the frontend can drop
 /// the row from its cache without a refetch.
 #[tauri::command]
-pub async fn delete_game_history_entry(
-    id: String,
-    state: State<'_, AppState>,
-) -> CmdResult<bool> {
+pub async fn delete_game_history_entry(id: String, state: State<'_, AppState>) -> CmdResult<bool> {
     let store = state.history_store.clone();
     let id_for_blocking = id.clone();
     let removed = tokio::task::spawn_blocking(move || store.delete(&id_for_blocking))

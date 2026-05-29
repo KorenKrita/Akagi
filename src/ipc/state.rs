@@ -23,8 +23,8 @@ use crate::event_bus::{
     AnalysisBus, BotResponseBus, BotStatusBus, CaptureStatusBus, HistoryBus, MjaiBus, NotifyBus,
 };
 use crate::game_state::GameTracker;
-use crate::history::HistoryStore;
 use crate::history::recorder::SharedPlatform;
+use crate::history::HistoryStore;
 use crate::logger::Session;
 use crate::schema::{BotStatus, CaptureStatus};
 use std::collections::HashSet;

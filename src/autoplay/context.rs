@@ -56,10 +56,7 @@ impl CanvasRect {
     /// Sanity check for a normalised point — clamps off-canvas requests
     /// before we hand them to CDP.
     pub fn contains(&self, x: f64, y: f64) -> bool {
-        x >= self.x
-            && x <= self.x + self.width
-            && y >= self.y
-            && y <= self.y + self.height
+        x >= self.x && x <= self.x + self.width && y >= self.y && y <= self.y + self.height
     }
 }
 
@@ -69,13 +66,23 @@ mod tests {
 
     #[test]
     fn pixel_translation_centre() {
-        let rect = CanvasRect { x: 0.0, y: 0.0, width: 1600.0, height: 900.0 };
+        let rect = CanvasRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1600.0,
+            height: 900.0,
+        };
         assert_eq!(rect.pixel(8.0, 4.5), (800.0, 450.0));
     }
 
     #[test]
     fn pixel_translation_with_offset() {
-        let rect = CanvasRect { x: 100.0, y: 50.0, width: 1280.0, height: 720.0 };
+        let rect = CanvasRect {
+            x: 100.0,
+            y: 50.0,
+            width: 1280.0,
+            height: 720.0,
+        };
         let (px, py) = rect.pixel(8.0, 4.5);
         assert!((px - (100.0 + 640.0)).abs() < 1e-9);
         assert!((py - (50.0 + 360.0)).abs() < 1e-9);
@@ -83,13 +90,23 @@ mod tests {
 
     #[test]
     fn contains_inside() {
-        let rect = CanvasRect { x: 0.0, y: 0.0, width: 1600.0, height: 900.0 };
+        let rect = CanvasRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1600.0,
+            height: 900.0,
+        };
         assert!(rect.contains(800.0, 450.0));
     }
 
     #[test]
     fn contains_outside() {
-        let rect = CanvasRect { x: 0.0, y: 0.0, width: 1600.0, height: 900.0 };
+        let rect = CanvasRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1600.0,
+            height: 900.0,
+        };
         assert!(!rect.contains(-1.0, 0.0));
         assert!(!rect.contains(0.0, 1000.0));
     }
