@@ -19,4 +19,14 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // shadcn/ui primitives intentionally export a variants helper (e.g.
+    // `buttonVariants`) or a small utility (`toast`) alongside the
+    // component. react-refresh's only-export-components rule guards HMR
+    // fast-refresh, not correctness, so it's safe to relax here.
+    files: ['src/components/ui/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

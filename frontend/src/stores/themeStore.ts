@@ -264,7 +264,7 @@ function parseTheme(raw: unknown): CustomTheme {
         const trimmed = v.trim()
         // Legacy shadcn HSL triplet — no function wrapper, e.g. "240 5% 10%".
         const looksLikeHslTriplet =
-          /^[\d.\-]+\s+[\d.]+%\s+[\d.]+%(\s*\/\s*[\d.%]+)?$/.test(trimmed)
+          /^[\d.-]+\s+[\d.]+%\s+[\d.]+%(\s*\/\s*[\d.%]+)?$/.test(trimmed)
         out[key] = looksLikeHslTriplet ? `hsl(${trimmed})` : trimmed
       }
     }

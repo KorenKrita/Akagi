@@ -63,6 +63,8 @@ export function Setup() {
   const isRerun = params.get('rerun') === '1' || stored?.general.first_run_completed === true
 
   useEffect(() => {
+    // Sync the editable draft from the store when it (re)loads.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (stored) setDraft(stored)
   }, [stored])
 
@@ -87,7 +89,7 @@ export function Setup() {
       } catch (e) {
         // Surface the first failure to the wizard's error strip; let
         // the user retry. Don't proceed to Finish with stale settings.
-        throw new Error(`Save failed for ${name}: ${e}`)
+        throw new Error(`Save failed for ${name}: ${e}`, { cause: e })
       }
     }
   }
@@ -481,6 +483,8 @@ function ChromiumConfigStep({
   }
 
   useEffect(() => {
+    // Mount-time load; refresh() sets state internally.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh()
   }, [])
 
@@ -604,7 +608,8 @@ function BotsStep() {
   const install = async (mode: '4p' | '3p') => {
     setInstalling(mode)
     setErrors((e) => {
-      const { [mode]: _, ...rest } = e
+      const rest = { ...e }
+      delete rest[mode]
       return rest
     })
     try {

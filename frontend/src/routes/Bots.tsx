@@ -62,6 +62,8 @@ export function Bots() {
   }
 
   useEffect(() => {
+    // Mount-time load; refresh() flips loading/list state internally.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (list.length === 0) void refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
