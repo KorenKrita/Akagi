@@ -15,12 +15,12 @@ pub mod coords;
 use crate::autoplay::platform::{ActionContext, PlanResult, PlatformAutoplay, ReachState, Step};
 use crate::bridge::majsoul::tile::compare_pai;
 use crate::schema::MjaiEvent;
+#[cfg(test)]
+use coords::TSUMO_SPACE;
 use coords::{
     action_button_pos, candidate_pos, get_pai_coord, kan_candidate_pos, MajsoulOpType,
     ACTION_PRIORITY, TILES,
 };
-#[cfg(test)]
-use coords::TSUMO_SPACE;
 use rand::Rng;
 use riichienv_core::action::{Action, ActionType};
 use riichienv_core::parser::tid_to_mjai;
@@ -104,7 +104,12 @@ impl PlatformAutoplay for MajsoulAutoplay {
             }
             MjaiEvent::Daiminkan { actor, .. } if *actor == ctx.our_seat => {
                 push_random_pre_delay(&mut result.steps, ctx);
-                plan_meld(MajsoulOpType::Daiminkan, ActionType::Daiminkan, &mut result, ctx);
+                plan_meld(
+                    MajsoulOpType::Daiminkan,
+                    ActionType::Daiminkan,
+                    &mut result,
+                    ctx,
+                );
             }
             MjaiEvent::Ankan { actor, .. } if *actor == ctx.our_seat => {
                 push_random_pre_delay(&mut result.steps, ctx);
@@ -189,11 +194,12 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 // windows have no claimable actions — Majsoul shows no buttons at all
                 // and a ghost click would land on the wrong UI element.
                 let has_claim = ctx.legal_actions.iter().any(|a| {
-                    matches!(a.action_type,
+                    matches!(
+                        a.action_type,
                         riichienv_core::action::ActionType::Pon
-                        | riichienv_core::action::ActionType::Daiminkan
-                        | riichienv_core::action::ActionType::Ron
-                        | riichienv_core::action::ActionType::Chi
+                            | riichienv_core::action::ActionType::Daiminkan
+                            | riichienv_core::action::ActionType::Ron
+                            | riichienv_core::action::ActionType::Chi
                     )
                 });
                 if !has_claim {
@@ -256,7 +262,10 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
         sorted.sort_by(|a, b| compare_pai(a, b));
         let idx = sorted.iter().position(|x| x == pai)?;
         let (x, y) = TILES.get(idx).copied()?;
-        return Some(Step::Click { x_norm: x, y_norm: y });
+        return Some(Step::Click {
+            x_norm: x,
+            y_norm: y,
+        });
     }
 
     let tehai: Vec<String> = ctx.snapshot.players[our_seat].tehai.clone();
@@ -264,7 +273,10 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
     // (None after pon/chi/kita since no Tsumo event fires for those draws).
     // In 3p: if snapshot_drawn is "N" but last_self_tsumo is set to something
     // else, the snapshot predates the Kita; use last_self_tsumo (rinshan).
-    let snapshot_drawn = ctx.snapshot.players.get(our_seat)
+    let snapshot_drawn = ctx
+        .snapshot
+        .players
+        .get(our_seat)
         .and_then(|p| p.drawn_tile.as_deref());
     let tsumohai = match (snapshot_drawn, ctx.last_self_tsumo) {
         (Some("N"), Some(rinshan)) => Some(rinshan),
@@ -285,13 +297,18 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
         if pai == t {
             // Discarding the tsumohai: click the far-right tsumohai slot.
             let (x, y) = get_pai_coord(13, tehai.len() - 1);
-            return Some(Step::Click { x_norm: x, y_norm: y });
+            return Some(Step::Click {
+                x_norm: x,
+                y_norm: y,
+            });
         }
         // Discarding a closed-hand tile. The tsumohai sits on the far right
         // visually. Exclude the last occurrence of the tsumohai tile from
         // sorted_tehai, then find pai index in the remaining tiles.
         let tsumo_excl = sorted_tehai.iter().rposition(|x| x.as_str() == t);
-        let idx = sorted_tehai.iter().enumerate()
+        let idx = sorted_tehai
+            .iter()
+            .enumerate()
             .filter(|(i, _)| Some(*i) != tsumo_excl)
             .enumerate()
             .find(|(_, (_, x))| x.as_str() == pai)
@@ -300,7 +317,10 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
             return None;
         }
         let (x, y) = get_pai_coord(idx, tehai.len() - 1);
-        return Some(Step::Click { x_norm: x, y_norm: y });
+        return Some(Step::Click {
+            x_norm: x,
+            y_norm: y,
+        });
     }
 
     // No tsumohai: all tiles closed, click by sorted index directly.
@@ -309,7 +329,10 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
         return None;
     }
     let (x, y) = get_pai_coord(idx, tehai.len());
-    Some(Step::Click { x_norm: x, y_norm: y })
+    Some(Step::Click {
+        x_norm: x,
+        y_norm: y,
+    })
 }
 /// True for the dealer's very first discard of a kyoku — the moment
 /// when Mahjong Soul has dealt 14 tiles, played the hand-sort animation,
@@ -329,12 +352,7 @@ fn is_dealer_first_discard(ctx: &ActionContext) -> bool {
 
 /// Plan a chi/pon/daiminkan: action button click + optional candidate
 /// disambiguation when multiple consume-tile combinations are legal.
-fn plan_meld(
-    op: MajsoulOpType,
-    at: ActionType,
-    result: &mut PlanResult,
-    ctx: &ActionContext,
-) {
+fn plan_meld(op: MajsoulOpType, at: ActionType, result: &mut PlanResult, ctx: &ActionContext) {
     let Some(button) = action_button_for(op, ctx) else {
         return;
     };
@@ -378,12 +396,7 @@ fn plan_meld(
 /// Majsoul shows ONE kan button whose candidate row contains the union
 /// of both, ordered `[kakan…, ankan…]`. The candidate index for the
 /// bot's chosen tile is computed against the unified list.
-fn plan_kan(
-    op: MajsoulOpType,
-    at: ActionType,
-    result: &mut PlanResult,
-    ctx: &ActionContext,
-) {
+fn plan_kan(op: MajsoulOpType, at: ActionType, result: &mut PlanResult, ctx: &ActionContext) {
     let Some(button) = action_button_for(op, ctx) else {
         return;
     };
@@ -426,7 +439,13 @@ fn plan_kan(
     let idx = unified.iter().position(|c| {
         let any = c
             .iter()
-            .map(|t| if t.ends_with('r') { &t[..t.len() - 1] } else { t.as_str() })
+            .map(|t| {
+                if t.ends_with('r') {
+                    &t[..t.len() - 1]
+                } else {
+                    t.as_str()
+                }
+            })
             .next();
         any.map(|t| t == base).unwrap_or(false)
     });
@@ -650,8 +669,11 @@ mod tests {
         // discard layout doesn't apply — this test exercises the normal
         // tsumohai-offset path.
         let snap = snapshot_with_oya(
-            0, 1,
-            vec!["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p"],
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
         );
         let act = MjaiEvent::Dahai {
             actor: 0,
@@ -660,7 +682,14 @@ mod tests {
         };
         let cfg_ref = cfg();
         let ctx = ctx_for(
-            &act, &snap, &[], Some("1m"), Some("5p"), false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            Some("5p"),
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         // sleep + click
@@ -682,7 +711,9 @@ mod tests {
     fn dahai_suppressed_under_riichi() {
         let snap = snapshot_with_hand(
             0,
-            vec!["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p"],
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
         );
         let act = MjaiEvent::Dahai {
             actor: 0,
@@ -731,14 +762,19 @@ mod tests {
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
-        assert!(!result.steps.is_empty(), "Path B follow-up dahai must click");
+        assert!(
+            !result.steps.is_empty(),
+            "Path B follow-up dahai must click"
+        );
     }
 
     #[test]
     fn reach_path_a_two_clicks() {
         let snap = snapshot_with_hand(
             0,
-            vec!["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p"],
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
         );
         let act = MjaiEvent::Reach {
             actor: 0,
@@ -748,7 +784,14 @@ mod tests {
         // Reach must be in legal_actions for the button position to resolve.
         let legal = vec![Action::new(ActionType::Riichi, None, vec![], Some(0))];
         let ctx = ctx_for(
-            &act, &snap, &legal, Some("1m"), Some("5p"), false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &legal,
+            Some("1m"),
+            Some("5p"),
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         // sleep + reach btn + sleep + tile click
@@ -761,11 +804,21 @@ mod tests {
     #[test]
     fn reach_path_b_signals_inject() {
         let snap = snapshot_with_hand(0, vec!["1m"]);
-        let act = MjaiEvent::Reach { actor: 0, pai: None };
+        let act = MjaiEvent::Reach {
+            actor: 0,
+            pai: None,
+        };
         let cfg_ref = cfg();
         let legal = vec![Action::new(ActionType::Riichi, None, vec![], Some(0))];
         let ctx = ctx_for(
-            &act, &snap, &legal, Some("1m"), None, false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &legal,
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         // sleep + reach btn click only
@@ -787,7 +840,14 @@ mod tests {
             Action::new(ActionType::Pon, None, vec![], Some(0)),
         ];
         let ctx = ctx_for(
-            &act, &snap, &legal, Some("1m"), None, false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &legal,
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert_eq!(result.steps.len(), 2);
@@ -810,7 +870,14 @@ mod tests {
         let act = MjaiEvent::None;
         let cfg_ref = cfg();
         let ctx = ctx_for(
-            &act, &snap, &[], Some("1m"), None, false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(
@@ -831,7 +898,14 @@ mod tests {
             Action::new(ActionType::Discard, Some(4), vec![], Some(0)),
         ];
         let ctx = ctx_for(
-            &act, &snap, &legal, Some("1m"), Some("1m"), false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &legal,
+            Some("1m"),
+            Some("1m"),
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(
@@ -847,9 +921,11 @@ mod tests {
         // sorted-last tile (5p) must click TILES[13] directly, NOT
         // TILES[13] + TSUMO_SPACE.
         let snap = snapshot_with_oya(
-            0, 0,
-            vec!["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m",
-                 "1p", "2p", "3p", "4p", "5p"],
+            0,
+            0,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
         );
         let act = MjaiEvent::Dahai {
             actor: 0,
@@ -860,7 +936,14 @@ mod tests {
         // Even with last_self_tsumo set, dealer-first-discard layout
         // must override the tsumohai-offset path.
         let ctx = ctx_for(
-            &act, &snap, &[], None, Some("5p"), false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &[],
+            None,
+            Some("5p"),
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert_eq!(result.steps.len(), 2);
@@ -878,9 +961,11 @@ mod tests {
     #[test]
     fn dealer_first_discard_pads_extra_delay() {
         let snap = snapshot_with_oya(
-            0, 0,
-            vec!["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m",
-                 "1p", "2p", "3p", "4p", "5p"],
+            0,
+            0,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
         );
         let act = MjaiEvent::Dahai {
             actor: 0,
@@ -889,7 +974,14 @@ mod tests {
         };
         let cfg_ref = cfg_with_dealer_delay(2000);
         let ctx = ctx_for(
-            &act, &snap, &[], None, None, false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &[],
+            None,
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         // [pre-delay sleep, dealer-pad sleep, click]
@@ -905,16 +997,20 @@ mod tests {
         // After dealer's first discard, future turns are 13 closed + 1
         // tsumohai with the standard offset — same as non-dealer.
         let mut snap = snapshot_with_oya(
-            0, 0,
-            vec!["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m",
-                 "1p", "2p", "3p", "4p", "5p"],
+            0,
+            0,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
         );
         // Mark a prior discard so river is non-empty (not first discard).
-        snap.players[0].river.push(crate::game_state::snapshot::DiscardEntry {
-            tile: "9m".into(),
-            tedashi: true,
-            is_riichi: false,
-        });
+        snap.players[0]
+            .river
+            .push(crate::game_state::snapshot::DiscardEntry {
+                tile: "9m".into(),
+                tedashi: true,
+                is_riichi: false,
+            });
         let act = MjaiEvent::Dahai {
             actor: 0,
             pai: "5p".into(),
@@ -922,7 +1018,14 @@ mod tests {
         };
         let cfg_ref = cfg();
         let ctx = ctx_for(
-            &act, &snap, &[], Some("9m"), Some("5p"), false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &[],
+            Some("9m"),
+            Some("5p"),
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         match &result.steps.last().unwrap() {
@@ -941,9 +1044,11 @@ mod tests {
         // 13 closed + 1 tsumohai with TSUMO_SPACE — Majsoul does not
         // run the dealer-only sort animation.
         let snap = snapshot_with_oya(
-            1, 0, // we're seat 1, dealer is seat 0
-            vec!["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m",
-                 "1p", "2p", "3p", "4p", "5p"],
+            1,
+            0, // we're seat 1, dealer is seat 0
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
         );
         let act = MjaiEvent::Dahai {
             actor: 1,
@@ -952,7 +1057,14 @@ mod tests {
         };
         let cfg_ref = cfg_with_dealer_delay(2000);
         let ctx = ctx_for(
-            &act, &snap, &[], None, Some("5p"), false, ReachState::Idle, &cfg_ref,
+            &act,
+            &snap,
+            &[],
+            None,
+            Some("5p"),
+            false,
+            ReachState::Idle,
+            &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         // No dealer pad: just [pre-delay, click].
@@ -961,7 +1073,12 @@ mod tests {
 
     #[test]
     fn pixel_translation_in_canvas_rect() {
-        let rect = CanvasRect { x: 0.0, y: 0.0, width: 1600.0, height: 900.0 };
+        let rect = CanvasRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1600.0,
+            height: 900.0,
+        };
         // Centre of the canvas at (8.0, 4.5) norm.
         assert_eq!(rect.pixel(8.0, 4.5), (800.0, 450.0));
     }

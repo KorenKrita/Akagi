@@ -221,9 +221,7 @@ impl TenhouBridge {
         let mut events = Vec::with_capacity(2);
         if self.state.pending_start_game {
             self.state.pending_start_game = false;
-            let names: Vec<String> = (0..self.state.num_players)
-                .map(|i| i.to_string())
-                .collect();
+            let names: Vec<String> = (0..self.state.num_players).map(|i| i.to_string()).collect();
             events.push(MjaiEvent::StartGame {
                 names,
                 kyoku_first: None,
@@ -275,12 +273,7 @@ impl TenhouBridge {
     /// `<D7/>`, `<E/>`, `<f12/>` — dahai.
     /// `tsumogiri_uppercase` is true when the tag's leading letter is uppercase
     /// (Tenhou's signal that the discard is just-drawn).
-    fn on_dahai(
-        &mut self,
-        actor_rel: u8,
-        tag: &str,
-        tsumogiri_uppercase: bool,
-    ) -> Vec<MjaiEvent> {
+    fn on_dahai(&mut self, actor_rel: u8, tag: &str, tsumogiri_uppercase: bool) -> Vec<MjaiEvent> {
         if actor_rel >= 4 {
             return Vec::new();
         }
@@ -391,14 +384,22 @@ impl TenhouBridge {
                 actor,
                 target,
                 pai,
-                consumed: [consumed[0].clone(), consumed[1].clone(), consumed[2].clone()],
+                consumed: [
+                    consumed[0].clone(),
+                    consumed[1].clone(),
+                    consumed[2].clone(),
+                ],
             },
             MeldKind::Kakan => {
                 self.state.last_revealed_tile_actor = Some(actor); // chankan target
                 MjaiEvent::Kakan {
                     actor,
                     pai,
-                    consumed: [consumed[0].clone(), consumed[1].clone(), consumed[2].clone()],
+                    consumed: [
+                        consumed[0].clone(),
+                        consumed[1].clone(),
+                        consumed[2].clone(),
+                    ],
                 }
             }
             MeldKind::Ankan => MjaiEvent::Ankan {
@@ -440,9 +441,11 @@ impl TenhouBridge {
             return Vec::new();
         }
         // step arrives as a string in the Python reference (`message['step'] == '1'`).
-        let step = msg
-            .get("step")
-            .and_then(|v| v.as_str().and_then(|s| s.parse::<u8>().ok()).or(v.as_u64().map(|n| n as u8)));
+        let step = msg.get("step").and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<u8>().ok())
+                .or(v.as_u64().map(|n| n as u8))
+        });
         let events = match step {
             Some(1) => vec![MjaiEvent::Reach { actor, pai: None }],
             Some(2) => {
@@ -756,9 +759,18 @@ mod tests {
         parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"1"}"#);
         let init = r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"1","hai":"0,4,8,36,40,44,72,76,80,108,112,116,120"}"#;
         let events = parse_one(&mut b, init);
-        assert_eq!(events.len(), 2, "yonma first INIT emits start_game + start_kyoku");
+        assert_eq!(
+            events.len(),
+            2,
+            "yonma first INIT emits start_game + start_kyoku"
+        );
         match &events[0] {
-            MjaiEvent::StartGame { id, num_players, names, .. } => {
+            MjaiEvent::StartGame {
+                id,
+                num_players,
+                names,
+                ..
+            } => {
                 assert_eq!(*id, Some(3));
                 assert_eq!(*num_players, 4);
                 assert_eq!(names.len(), 4);
@@ -861,7 +873,10 @@ mod tests {
                 _ => None,
             })
             .expect("start_game emitted alongside first INIT");
-        assert_eq!(sg_num_players, 3, "start_game.num_players must reflect sanma");
+        assert_eq!(
+            sg_num_players, 3,
+            "start_game.num_players must reflect sanma"
+        );
         let sk = events
             .iter()
             .find_map(|e| match e {
@@ -899,7 +914,11 @@ mod tests {
         let init = r#"{"tag":"INIT","seed":"1,0,0,1,2,4","ten":"400,0,300,0","oya":"0","hai":"0,4,8,36,40,44,72,76,80,108,112,116,120"}"#;
         let events = parse_one(&mut b, init);
         match &events[0] {
-            MjaiEvent::StartKyoku { scores, num_players, .. } => {
+            MjaiEvent::StartKyoku {
+                scores,
+                num_players,
+                ..
+            } => {
                 assert_eq!(*num_players, 3);
                 assert_eq!(
                     scores,
@@ -1064,19 +1083,27 @@ mod tests {
         let hora = events
             .iter()
             .find_map(|e| match e {
-                MjaiEvent::Hora { actor, target, deltas, ura_markers } => {
-                    Some((*actor, *target, deltas.clone(), ura_markers.clone()))
-                }
+                MjaiEvent::Hora {
+                    actor,
+                    target,
+                    deltas,
+                    ura_markers,
+                } => Some((*actor, *target, deltas.clone(), ura_markers.clone())),
                 _ => None,
             })
             .expect("hora event emitted");
         assert_eq!(hora.0, 0, "winner is seat 0");
-        assert_eq!(hora.1, 2, "ron target is seat 2 — fromWho must parse case-sensitively");
+        assert_eq!(
+            hora.1, 2,
+            "ron target is seat 2 — fromWho must parse case-sensitively"
+        );
         // Ura dora indicator field is also camelCase; verify it survives the
         // same casing fix. Tile id 45 / 4 = 11 → 3p in 34-space; mjai's
         // string for `id % 4` variants of 3p is "3p".
         assert_eq!(
-            hora.3.as_deref().map(|v| v.iter().map(String::as_str).collect::<Vec<_>>()),
+            hora.3
+                .as_deref()
+                .map(|v| v.iter().map(String::as_str).collect::<Vec<_>>()),
             Some(vec!["3p"]),
             "doraHaiUra must parse a single-marker CSV",
         );
@@ -1096,7 +1123,10 @@ mod tests {
         );
         let e1 = parse_one(&mut b, r#"{"tag":"REACH","who":"0","step":"1"}"#);
         assert!(matches!(e1[0], MjaiEvent::Reach { actor: 0, .. }));
-        let e2 = parse_one(&mut b, r#"{"tag":"REACH","who":"0","step":"2","ten":"240,250,250,260"}"#);
+        let e2 = parse_one(
+            &mut b,
+            r#"{"tag":"REACH","who":"0","step":"2","ten":"240,250,250,260"}"#,
+        );
         assert!(matches!(e2[0], MjaiEvent::ReachAccepted { actor: 0 }));
     }
 
@@ -1174,12 +1204,19 @@ mod tests {
         // start_game (deferred from TAIKYOKU) + start_kyoku.
         assert_eq!(init.len(), 2);
         let sg = match &init[0] {
-            MjaiEvent::StartGame { id, num_players, names, .. } => {
-                (*id, *num_players, names.len())
-            }
+            MjaiEvent::StartGame {
+                id,
+                num_players,
+                names,
+                ..
+            } => (*id, *num_players, names.len()),
             other => panic!("expected StartGame first, got {other:?}"),
         };
-        assert_eq!(sg, (Some(1), 3, 3), "sanma start_game with id=1 (wire-abs of South seat) and num_players=3");
+        assert_eq!(
+            sg,
+            (Some(1), 3, 3),
+            "sanma start_game with id=1 (wire-abs of South seat) and num_players=3"
+        );
 
         let sk = match &init[1] {
             MjaiEvent::StartKyoku {
@@ -1203,7 +1240,10 @@ mod tests {
         };
         assert_eq!(sk.0, "E");
         assert_eq!(sk.1, 1);
-        assert_eq!(sk.2, 0, "E1 dealer at wire-abs 0 (East), not collapsed onto our seat");
+        assert_eq!(
+            sk.2, 0,
+            "E1 dealer at wire-abs 0 (East), not collapsed onto our seat"
+        );
         assert_eq!(
             sk.3,
             vec![35_000, 35_000, 35_000],
@@ -1229,7 +1269,11 @@ mod tests {
         // Dealer's dahai of tile 56 (6p), tsumogiri.
         let g56 = parse_one(&mut b, r#"{"tag":"g56"}"#);
         match &g56[0] {
-            MjaiEvent::Dahai { actor, pai, tsumogiri } => {
+            MjaiEvent::Dahai {
+                actor,
+                pai,
+                tsumogiri,
+            } => {
                 assert_eq!(*actor, 0);
                 assert_eq!(pai, "6p");
                 assert!(!*tsumogiri, "lowercase g → tedashi");
@@ -1251,7 +1295,11 @@ mod tests {
         // so tsumogiri must resolve to false.
         let d116 = parse_one(&mut b, r#"{"tag":"D116"}"#);
         match &d116[0] {
-            MjaiEvent::Dahai { actor, pai, tsumogiri } => {
+            MjaiEvent::Dahai {
+                actor,
+                pai,
+                tsumogiri,
+            } => {
                 assert_eq!(*actor, 1);
                 assert_eq!(pai, "W");
                 assert!(!*tsumogiri, "drew 2p but discarded W → not tsumogiri");

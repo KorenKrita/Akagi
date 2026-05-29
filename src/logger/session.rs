@@ -1,5 +1,9 @@
 use crate::inspector::{InspectorBus, InspectorWriter};
-use crate::logger::{binary::BinaryLogger, flow::FlowLogger, stream::{LogStreamHandle, LogStreamLayer}};
+use crate::logger::{
+    binary::BinaryLogger,
+    flow::FlowLogger,
+    stream::{LogStreamHandle, LogStreamLayer},
+};
 use crate::schema::{InspectorEntry, LogEntry};
 use anyhow::{Context, Result};
 use chrono::Local;
@@ -156,12 +160,9 @@ impl Session {
         // viewer can live-tail without polling. Keep `all.log` in parallel
         // for humans tailing from a terminal.
         let jsonl_path = dir.join("all.jsonl");
-        let (stream_layer, stream_handle) =
-            LogStreamLayer::open(&jsonl_path, 1024).with_context(|| {
-                format!("Failed to open {}", jsonl_path.display())
-            })?;
-        let jsonl_filter =
-            EnvFilter::try_new(all_level).unwrap_or_else(|_| EnvFilter::new("info"));
+        let (stream_layer, stream_handle) = LogStreamLayer::open(&jsonl_path, 1024)
+            .with_context(|| format!("Failed to open {}", jsonl_path.display()))?;
+        let jsonl_filter = EnvFilter::try_new(all_level).unwrap_or_else(|_| EnvFilter::new("info"));
         layers.push(stream_layer.with_filter(jsonl_filter).boxed());
 
         // Inspector pipeline timeline. Separate file from `all.jsonl`
@@ -170,10 +171,8 @@ impl Session {
         // and conflating them would multiply file size and complicate
         // filtering on either side.
         let inspector_path = dir.join("inspector.jsonl");
-        let (inspector_writer, inspector_bus) =
-            InspectorWriter::open(&inspector_path, 1024).with_context(|| {
-                format!("Failed to open {}", inspector_path.display())
-            })?;
+        let (inspector_writer, inspector_bus) = InspectorWriter::open(&inspector_path, 1024)
+            .with_context(|| format!("Failed to open {}", inspector_path.display()))?;
 
         // Per-target files.
         for t in targets {

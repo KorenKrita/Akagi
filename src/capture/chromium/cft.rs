@@ -83,9 +83,7 @@ pub fn cft_platform() -> Option<&'static str> {
 /// AppImage / read-only mounts the resolver falls back to
 /// `<user_config_root>/chrome-for-testing/`.
 pub fn install_root() -> Result<PathBuf> {
-    Ok(crate::util::resolve_dir(Path::new(
-        "./chrome-for-testing",
-    )))
+    Ok(crate::util::resolve_dir(Path::new("./chrome-for-testing")))
 }
 
 /// Per-version install dir: `<install_root>/<version>/`.

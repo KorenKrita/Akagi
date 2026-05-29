@@ -28,7 +28,6 @@ use crate::inspector::InspectorWriter;
 use crate::schema::{FrameDirection, FrameRaw, InspectorEntry};
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
-use chrono::Local;
 use chromiumoxide::page::Page;
 use chromiumoxide::{
     cdp::browser_protocol::network::{
@@ -37,6 +36,7 @@ use chromiumoxide::{
     },
     Browser,
 };
+use chrono::Local;
 use futures_util::StreamExt;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -501,7 +501,10 @@ mod tests {
     fn binary_frame_base64_decodes() {
         let raw = b"\x00\x01\x02hello";
         let b64 = base64::engine::general_purpose::STANDARD.encode(raw);
-        assert_eq!(decode_frame_payload(2, &b64), FrameDecode::Bytes(raw.to_vec()));
+        assert_eq!(
+            decode_frame_payload(2, &b64),
+            FrameDecode::Bytes(raw.to_vec())
+        );
     }
 
     #[test]
@@ -509,7 +512,10 @@ mod tests {
         // Distinguished from `Skip` so the inline branch can WARN —
         // legit malformed CDP from Chrome shouldn't be confused with
         // an intentionally-ignored control frame.
-        assert_eq!(decode_frame_payload(2, "not base64!@#"), FrameDecode::BadBase64);
+        assert_eq!(
+            decode_frame_payload(2, "not base64!@#"),
+            FrameDecode::BadBase64
+        );
     }
 
     #[test]

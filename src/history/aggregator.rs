@@ -19,9 +19,7 @@
 use chrono::{DateTime, Utc};
 use tracing::warn;
 
-use crate::schema::{
-    GameRecord, GameStats, HistoryEventLog, KyokuMode, MjaiEvent, Platform,
-};
+use crate::schema::{GameRecord, GameStats, HistoryEventLog, KyokuMode, MjaiEvent, Platform};
 
 /// 4p starting score / kyotaku-normalisation target / sanma equivalents.
 const STARTING_SCORE_4P: i32 = 25_000;
@@ -295,9 +293,7 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
         // Top up rank-1 (highest-score, then lowest-seat tiebreak).
         let top_seat = (0..n)
             .max_by(|&a, &b| {
-                cur_scores[a]
-                    .cmp(&cur_scores[b])
-                    .then_with(|| b.cmp(&a)) // lower seat wins tie
+                cur_scores[a].cmp(&cur_scores[b]).then_with(|| b.cmp(&a)) // lower seat wins tie
             })
             .unwrap_or(0);
         cur_scores[top_seat] += total - sum;
@@ -443,7 +439,10 @@ mod tests {
         let events = vec![
             start_game_4p(2),
             start_kyoku("E", 0, vec![25000, 25000, 25000, 25000]),
-            MjaiEvent::Reach { actor: 2, pai: None },
+            MjaiEvent::Reach {
+                actor: 2,
+                pai: None,
+            },
             MjaiEvent::ReachAccepted { actor: 2 },
             MjaiEvent::Dahai {
                 actor: 2,
@@ -593,7 +592,10 @@ mod tests {
         let events = vec![
             start_game_4p(0),
             start_kyoku("E", 0, vec![25000, 25000, 25000, 25000]),
-            MjaiEvent::Reach { actor: 0, pai: None },
+            MjaiEvent::Reach {
+                actor: 0,
+                pai: None,
+            },
             MjaiEvent::ReachAccepted { actor: 0 }, // -1000 to seat 0
             MjaiEvent::Ryukyoku {
                 deltas: Some(vec![1500, -1500, 0, 0]),

@@ -181,7 +181,10 @@ impl AutoplayManager {
         let rect = match self.canvas_rect_resolve().await {
             Some(r) => r,
             None => {
-                warn!("autoplay: no canvas rect — skipping click for {:?}", resp.action);
+                warn!(
+                    "autoplay: no canvas rect — skipping click for {:?}",
+                    resp.action
+                );
                 return;
             }
         };
@@ -223,7 +226,10 @@ impl AutoplayManager {
         // emit the riichi-declaring dahai we need to click next.
         if plan.inject_reach_for_followup {
             self.state.reach_state = ReachState::AwaitingDahai;
-            let synthetic = MjaiEvent::Reach { actor: our_seat, pai: None };
+            let synthetic = MjaiEvent::Reach {
+                actor: our_seat,
+                pai: None,
+            };
             if let Err(e) = self.mjai_bus.send(synthetic) {
                 // No subscribers (e.g. bot disabled) — nothing to do, but
                 // log for visibility because Path B without a downstream
@@ -309,7 +315,8 @@ impl AutoplayManager {
     /// Best-effort seat lookup. Uses the cached seat from `StartGame` first,
     /// falling back to try_lock on the tracker.
     fn our_seat_cached(&self) -> Option<u8> {
-        self.state.cached_our_seat
+        self.state
+            .cached_our_seat
             .or_else(|| self.tracker.try_lock().ok().and_then(|t| t.our_seat()))
     }
 
@@ -349,7 +356,9 @@ pub async fn run_autoplay_manager(
     mjai_bus: MjaiBus,
     response_bus: BotResponseBus,
 ) -> anyhow::Result<()> {
-    AutoplayManager::new(cfg, ctx, tracker, mjai_bus).run(response_bus).await
+    AutoplayManager::new(cfg, ctx, tracker, mjai_bus)
+        .run(response_bus)
+        .await
 }
 
 #[cfg(test)]
@@ -393,7 +402,11 @@ mod tests {
             id: Some(1),
             num_players: 4,
         });
-        assert_eq!(m.state.cached_our_seat, Some(1), "seat must be cached from StartGame");
+        assert_eq!(
+            m.state.cached_our_seat,
+            Some(1),
+            "seat must be cached from StartGame"
+        );
 
         // A Tsumo by our seat (1) before any bot response should be recorded.
         m.handle_mjai_event(&MjaiEvent::Tsumo {
@@ -433,10 +446,18 @@ mod tests {
             tehais: vec![vec!["1m".into(); 13]; 4],
             num_players: 4,
         });
-        assert_eq!(m.state.cached_our_seat, Some(2), "seat must survive StartKyoku reset");
+        assert_eq!(
+            m.state.cached_our_seat,
+            Some(2),
+            "seat must survive StartKyoku reset"
+        );
 
         m.handle_mjai_event(&MjaiEvent::EndKyoku);
-        assert_eq!(m.state.cached_our_seat, Some(2), "seat must survive EndKyoku reset");
+        assert_eq!(
+            m.state.cached_our_seat,
+            Some(2),
+            "seat must survive EndKyoku reset"
+        );
     }
 
     /// Observer/replay mode: `StartGame` with `id: None` must not cache a
@@ -462,6 +483,9 @@ mod tests {
             id: None,
             num_players: 4,
         });
-        assert!(m.state.cached_our_seat.is_none(), "stale seat must be cleared");
+        assert!(
+            m.state.cached_our_seat.is_none(),
+            "stale seat must be cleared"
+        );
     }
 }

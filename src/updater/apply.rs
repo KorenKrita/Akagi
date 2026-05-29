@@ -73,8 +73,7 @@ pub async fn download_and_apply(app: &AppHandle, info: &UpdateInfo) -> Result<()
         .ok_or_else(|| anyhow!("current_exe has no file name"))
         .map_err(UpdateError::from)?
         .to_owned();
-    let new_binary = find_binary(&extract_dir, &binary_name)
-        .ok_or(UpdateError::NoMatchingAsset)?;
+    let new_binary = find_binary(&extract_dir, &binary_name).ok_or(UpdateError::NoMatchingAsset)?;
 
     #[cfg(unix)]
     {
@@ -231,11 +230,7 @@ mod tests {
     fn find_binary_returns_none_when_absent() {
         let tmp = TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("akagi-3.0.12-linux-x64")).unwrap();
-        std::fs::write(
-            tmp.path().join("akagi-3.0.12-linux-x64/README.txt"),
-            b"hi",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("akagi-3.0.12-linux-x64/README.txt"), b"hi").unwrap();
         assert!(find_binary(tmp.path(), std::ffi::OsStr::new("akagi")).is_none());
     }
 

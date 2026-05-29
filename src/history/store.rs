@@ -65,7 +65,9 @@ impl HistoryStore {
     }
 
     fn game_log_path(&self, id: &str) -> PathBuf {
-        self.root.join(GAMES_SUBDIR).join(format!("{id}.mjai.jsonl"))
+        self.root
+            .join(GAMES_SUBDIR)
+            .join(format!("{id}.mjai.jsonl"))
     }
 
     /// Persist a finalised game: write the full event stream as
@@ -75,9 +77,8 @@ impl HistoryStore {
         let _g = self.write_lock.lock().expect("history write lock poisoned");
 
         let game_path = self.game_log_path(&record.id);
-        write_jsonl_events(&game_path, events).with_context(|| {
-            format!("failed to write game log {}", game_path.display())
-        })?;
+        write_jsonl_events(&game_path, events)
+            .with_context(|| format!("failed to write game log {}", game_path.display()))?;
 
         if let Err(e) = self.append_index_locked(record) {
             // Roll back the orphan game log so re-running the same id
@@ -110,8 +111,7 @@ impl HistoryStore {
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let f = File::open(&path)
-            .with_context(|| format!("failed to open {}", path.display()))?;
+        let f = File::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
         let mut out = Vec::new();
         for (lineno, line) in BufReader::new(f).lines().enumerate() {
             let line = line.with_context(|| format!("read error in {}", path.display()))?;
@@ -133,12 +133,7 @@ impl HistoryStore {
     /// Filtered + paginated listing, newest-first by `started_at`.
     /// `limit == NO_LIMIT` (0) returns every match; otherwise caps the
     /// result to that many records after `offset`.
-    pub fn list(
-        &self,
-        filter: &HistoryFilter,
-        limit: u32,
-        offset: u32,
-    ) -> Result<Vec<GameRecord>> {
+    pub fn list(&self, filter: &HistoryFilter, limit: u32, offset: u32) -> Result<Vec<GameRecord>> {
         let mut all = self.read_all()?;
         // Newest first.
         all.sort_by(|a, b| b.started_at.cmp(&a.started_at));
@@ -162,8 +157,7 @@ impl HistoryStore {
         if !path.exists() {
             return Ok(None);
         }
-        let f = File::open(&path)
-            .with_context(|| format!("failed to open {}", path.display()))?;
+        let f = File::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
         let mut out = Vec::new();
         for (lineno, line) in BufReader::new(f).lines().enumerate() {
             let line = line.with_context(|| format!("read error in {}", path.display()))?;
@@ -215,9 +209,8 @@ impl HistoryStore {
             }
             f.sync_data().ok();
         }
-        fs::rename(&tmp, &path).with_context(|| {
-            format!("failed to rename {} -> {}", tmp.display(), path.display())
-        })
+        fs::rename(&tmp, &path)
+            .with_context(|| format!("failed to rename {} -> {}", tmp.display(), path.display()))
     }
 }
 
@@ -284,9 +277,7 @@ mod tests {
         store.append(&r1, &sample_events()).unwrap();
         store.append(&r2, &sample_events()).unwrap();
 
-        let all = store
-            .list(&HistoryFilter::default(), NO_LIMIT, 0)
-            .unwrap();
+        let all = store.list(&HistoryFilter::default(), NO_LIMIT, 0).unwrap();
         assert_eq!(all.len(), 2);
         // Newest first.
         assert_eq!(all[0].id, "BBB");
@@ -347,7 +338,9 @@ mod tests {
     fn delete_unknown_id_no_op() {
         let tmp = TempDir::new().unwrap();
         let store = HistoryStore::new(tmp.path().to_path_buf()).unwrap();
-        store.append(&mk_record("KEEP", 0), &sample_events()).unwrap();
+        store
+            .append(&mk_record("KEEP", 0), &sample_events())
+            .unwrap();
         let removed = store.delete("NOPE").unwrap();
         assert!(!removed);
         assert_eq!(store.read_all().unwrap().len(), 1);

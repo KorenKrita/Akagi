@@ -509,10 +509,12 @@ mod tests {
             oya: 0,
             scores: vec![36_000, 28_000, 28_000, 28_000],
             tehais: vec![
-                ["C", "6p", "4m", "3p", "8s", "3m", "2p", "1m", "N", "P", "9p", "W", "7p"]
-                    .iter()
-                    .map(|s| (*s).into())
-                    .collect(),
+                [
+                    "C", "6p", "4m", "3p", "8s", "3m", "2p", "1m", "N", "P", "9p", "W", "7p",
+                ]
+                .iter()
+                .map(|s| (*s).into())
+                .collect(),
                 vec!["?".into(); 13],
                 vec!["?".into(); 13],
                 vec!["?".into(); 13],
@@ -525,19 +527,53 @@ mod tests {
         // equality; non-actor draws use "?" since the bridge feeds the
         // observer perspective.
         let turns: &[(u8, &str, &str)] = &[
-            (0, "C", "W"),     (1, "?", "6s"),  (2, "?", "2s"),  (3, "?", "7m"),
-            (0, "E", "N"),     (1, "?", "8p"),  (2, "?", "P"),   (3, "?", "6s"),
-            (0, "3p", "1m"),   (1, "?", "3s"),  (2, "?", "3m"),  (3, "?", "6s"),
-            (0, "8s", "9p"),   (1, "?", "3m"),  (2, "?", "S"),   (3, "?", "2p"),
-            (0, "5sr", "P"),   (1, "?", "E"),   (2, "?", "4s"),  (3, "?", "W"),
-            (0, "1s", "1s"),   (1, "?", "4p"),  (2, "?", "2s"),  (3, "?", "7m"),
-            (0, "7m", "7m"),   (1, "?", "8s"),  (2, "?", "2m"),  (3, "?", "3p"),
-            (0, "1p", "3p"),   (1, "?", "9m"),  (2, "?", "4s"),  (3, "?", "3s"),
-            (0, "5p", "E"),    (1, "?", "1m"),  (2, "?", "S"),   (3, "?", "F"),
-            (0, "7s", "5sr"),  (1, "?", "9p"),  (2, "?", "8m"),  (3, "?", "5m"),
+            (0, "C", "W"),
+            (1, "?", "6s"),
+            (2, "?", "2s"),
+            (3, "?", "7m"),
+            (0, "E", "N"),
+            (1, "?", "8p"),
+            (2, "?", "P"),
+            (3, "?", "6s"),
+            (0, "3p", "1m"),
+            (1, "?", "3s"),
+            (2, "?", "3m"),
+            (3, "?", "6s"),
+            (0, "8s", "9p"),
+            (1, "?", "3m"),
+            (2, "?", "S"),
+            (3, "?", "2p"),
+            (0, "5sr", "P"),
+            (1, "?", "E"),
+            (2, "?", "4s"),
+            (3, "?", "W"),
+            (0, "1s", "1s"),
+            (1, "?", "4p"),
+            (2, "?", "2s"),
+            (3, "?", "7m"),
+            (0, "7m", "7m"),
+            (1, "?", "8s"),
+            (2, "?", "2m"),
+            (3, "?", "3p"),
+            (0, "1p", "3p"),
+            (1, "?", "9m"),
+            (2, "?", "4s"),
+            (3, "?", "3s"),
+            (0, "5p", "E"),
+            (1, "?", "1m"),
+            (2, "?", "S"),
+            (3, "?", "F"),
+            (0, "7s", "5sr"),
+            (1, "?", "9p"),
+            (2, "?", "8m"),
+            (3, "?", "5m"),
         ];
         for &(actor, draw, dahai) in turns {
-            t.handle(&E::Tsumo { actor, pai: draw.into() }).unwrap();
+            t.handle(&E::Tsumo {
+                actor,
+                pai: draw.into(),
+            })
+            .unwrap();
             t.handle(&E::Dahai {
                 actor,
                 pai: dahai.into(),
@@ -547,8 +583,16 @@ mod tests {
         }
 
         // Reach + reach-discard 7s + reach_accepted for actor 0.
-        t.handle(&E::Tsumo { actor: 0, pai: "8s".into() }).unwrap();
-        t.handle(&E::Reach { actor: 0, pai: None }).unwrap();
+        t.handle(&E::Tsumo {
+            actor: 0,
+            pai: "8s".into(),
+        })
+        .unwrap();
+        t.handle(&E::Reach {
+            actor: 0,
+            pai: None,
+        })
+        .unwrap();
         t.handle(&E::Dahai {
             actor: 0,
             pai: "7s".into(),
@@ -559,14 +603,22 @@ mod tests {
 
         // One full go-around inside the ippatsu window: actor 1 then actor 2
         // discards 5mr (the ron tile).
-        t.handle(&E::Tsumo { actor: 1, pai: "?".into() }).unwrap();
+        t.handle(&E::Tsumo {
+            actor: 1,
+            pai: "?".into(),
+        })
+        .unwrap();
         t.handle(&E::Dahai {
             actor: 1,
             pai: "S".into(),
             tsumogiri: false,
         })
         .unwrap();
-        t.handle(&E::Tsumo { actor: 2, pai: "?".into() }).unwrap();
+        t.handle(&E::Tsumo {
+            actor: 2,
+            pai: "?".into(),
+        })
+        .unwrap();
         t.handle(&E::Dahai {
             actor: 2,
             pai: "5mr".into(),
@@ -627,7 +679,7 @@ mod tests {
             48, 49, // 4p 4p
             72, 73, // 1s 1s
             112, 113, // S S (28*4=112)
-            64, // 8p (lone — chiitoitsu wait)
+            64,  // 8p (lone — chiitoitsu wait)
         ];
         s.players[actor as usize].hand = hand;
 

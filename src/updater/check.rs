@@ -133,10 +133,7 @@ pub fn build_update_info(
     };
 
     let latest_version = tag.trim_start_matches('v').to_owned();
-    let digest = asset
-        .digest
-        .as_deref()
-        .and_then(parse_sha256_digest);
+    let digest = asset.digest.as_deref().and_then(parse_sha256_digest);
 
     Ok(Some(UpdateInfo {
         current: current.to_owned(),
@@ -256,7 +253,10 @@ mod tests {
     #[test]
     fn parse_sha256_digest_normalises_case() {
         let raw = "SHA256:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789";
-        assert_eq!(parse_sha256_digest(raw).unwrap(), raw[7..].to_ascii_lowercase());
+        assert_eq!(
+            parse_sha256_digest(raw).unwrap(),
+            raw[7..].to_ascii_lowercase()
+        );
     }
 
     #[test]
@@ -299,9 +299,7 @@ mod tests {
             vec![
                 asset(
                     "akagi-3.0.12-linux-x64.zip",
-                    Some(
-                        "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-                    ),
+                    Some("sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"),
                     Some(12345),
                 ),
                 asset("akagi-3.0.12-windows-x64.zip", None, None),

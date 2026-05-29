@@ -53,7 +53,10 @@ impl ParseResult {
         Self::default()
     }
     pub fn just_events(events: Vec<MjaiEvent>) -> Self {
-        Self { events, parsed: None }
+        Self {
+            events,
+            parsed: None,
+        }
     }
 }
 

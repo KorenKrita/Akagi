@@ -133,18 +133,10 @@ impl SubprocessBot {
         let mut child = cmd
             .spawn()
             .with_context(|| format!("spawn bot {bot_name}"))?;
-            
-        let stdin = child
-            .stdin
-            .take()
-            .context("child stdin missing")?;
-            
-        let stdout = BufReader::new(
-            child
-                .stdout
-                .take()
-                .context("child stdout missing")?,
-        );
+
+        let stdin = child.stdin.take().context("child stdin missing")?;
+
+        let stdout = BufReader::new(child.stdout.take().context("child stdout missing")?);
 
         if let Some(stderr) = child.stderr.take() {
             spawn_stderr_pump(stderr, bot_name.clone(), notify_tx.clone());
@@ -238,7 +230,7 @@ impl BotRunner for SubprocessBot {
             react_timeout,
             ..
         } = new;
-        
+
         self.child = child;
         self.stdin = stdin;
         self.stdout = stdout;
@@ -331,7 +323,9 @@ for line in sys.stdin:
 
     #[tokio::test]
     async fn echo_bot_returns_none() {
-        if system_python().is_none() { return; }
+        if system_python().is_none() {
+            return;
+        }
         let tmp = TempDir::new().unwrap();
         write_echo_bot(tmp.path());
 
@@ -364,9 +358,13 @@ for line in sys.stdin:
 
     #[test]
     fn parse_notify_line_ignores_plain_lines() {
-        assert!(parse_notify_line("just a normal log line").unwrap().is_none());
+        assert!(parse_notify_line("just a normal log line")
+            .unwrap()
+            .is_none());
         // A near-miss without the trailing space is NOT the sentinel.
-        assert!(parse_notify_line("@@AKAGI_NOTIFY@@no-space").unwrap().is_none());
+        assert!(parse_notify_line("@@AKAGI_NOTIFY@@no-space")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

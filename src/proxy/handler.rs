@@ -145,11 +145,7 @@ impl ProxyHandler {
 }
 
 impl HttpHandler for ProxyHandler {
-    async fn handle_request(
-        &mut self,
-        ctx: &HttpContext,
-        req: Request<Body>,
-    ) -> RequestOrResponse {
+    async fn handle_request(&mut self, ctx: &HttpContext, req: Request<Body>) -> RequestOrResponse {
         if req.uri().path() == "/ping" {
             return Response::builder()
                 .status(StatusCode::OK)
@@ -200,11 +196,7 @@ impl HttpHandler for ProxyHandler {
     ///
     /// Hostnames are always MITM'd; the maj-soul hostname endpoints
     /// (`mjusgs.mahjongsoul.com`, etc.) don't hit this code path.
-    async fn should_intercept(
-        &mut self,
-        _ctx: &HttpContext,
-        req: &Request<Body>,
-    ) -> bool {
+    async fn should_intercept(&mut self, _ctx: &HttpContext, req: &Request<Body>) -> bool {
         let Some(host) = req.uri().host() else {
             return true;
         };
@@ -365,7 +357,13 @@ impl ProxyHandler {
                     let mut b = bridge.lock().expect("bridge mutex poisoned");
                     b.parse(dir, buf)
                 };
-                self.record_frame(client, dir, FrameRaw::Text(t.to_string()), buf.len(), &result);
+                self.record_frame(
+                    client,
+                    dir,
+                    FrameRaw::Text(t.to_string()),
+                    buf.len(),
+                    &result,
+                );
                 self.dispatch_events(dir_arrow, &uri, result.events);
             }
             Message::Close(_) => debug!("{dir_arrow} {uri} close"),
