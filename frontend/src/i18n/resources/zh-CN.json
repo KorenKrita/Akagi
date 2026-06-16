@@ -170,6 +170,8 @@
     "player_n_self": "玩家 {{n}}（自家）",
     "self_hand": "自家手牌",
     "self_hand_empty": "尚无手牌 — 请先连接到游戏。",
+    "board": "牌桌",
+    "board_empty": "尚无对局 — 请先连接到游戏。",
     "recommendations": "纯算法前三推荐切牌",
     "recommendations_empty": "等待分析中。",
     "risk_chart": "综合放铳风险",

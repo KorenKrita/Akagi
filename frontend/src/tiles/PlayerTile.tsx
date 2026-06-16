@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { TileFrame } from '@/components/TileFrame'
 import { Mahgen } from '@/components/Mahgen'
 import { useGameStore } from '@/stores/gameStore'
-import { fmtScore, relativeKind, BAKAZE_LABEL } from '@/lib/format'
+import { fmtScore, relativeKind, bakazeFor } from '@/lib/format'
 import type { Breakpoint, TileId } from '@/tiles/defaults'
 
 const SEAT_TO_TILE: Record<number, TileId> = {
@@ -89,12 +89,4 @@ export function PlayerTile({ seat, bp }: { seat: number; bp: Breakpoint }) {
       )}
     </TileFrame>
   )
-}
-
-// East = oya seat. Each subsequent seat rotates S → W → N (4p) or
-// S → W (3p — sanma has no N self-wind, only E/S/W).
-function bakazeFor(seat: number, oya: number, numPlayers: number): string {
-  const order = ['E', 'S', 'W', 'N']
-  const n = Math.max(1, numPlayers)
-  return BAKAZE_LABEL[order[(seat - oya + n) % n]]
 }

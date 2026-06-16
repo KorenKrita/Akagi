@@ -1,0 +1,151 @@
+/* BoardTile — 2D top-down mahjong table.
+ *
+ * Layout strategy (see claude_plan / issue): the hero sits at the bottom; the
+ * other seats are drawn into a full-square layer that is rotated 90/180/270°
+ * about the board center. CSS `transform: rotate()` is paint-only, so each
+ * seat's mahgen container reports its pre-rotation (axis-aligned) clientWidth —
+ * which is what mahgen's sizing reads — so all four seats size identically.
+ * Nameplates are rendered in a SEPARATE, non-rotated layer so their text stays
+ * upright regardless of seat.
+ *
+ * The square pixel size is set inline by BoardTile (ResizeObserver), so every
+ * percentage below resolves against a known square. Positions/sizes are
+ * deliberately simple and tunable — refine visually in the Tauri webview. */
+
+.board-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.board-empty {
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+
+.board-square {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(21, 128, 97, 0.30), rgba(6, 38, 30, 0.55) 70%),
+    var(--card);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* ---- center info ---- */
+.board-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 56%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  pointer-events: none;
+  color: var(--foreground);
+}
+.board-center-round {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.board-center-sticks {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.board-stick {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.board-stick img {
+  height: 18px;
+}
+.board-center-dora {
+  display: flex;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+/* ---- rotated per-seat tile layer ---- */
+.board-seat {
+  position: absolute;
+  inset: 0;
+  transform-origin: center center;
+  pointer-events: none;
+}
+.board-seat-stack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1.5%;
+}
+.board-seat-river {
+  width: 42%;
+  display: flex;
+  justify-content: center;
+}
+.board-seat-melds {
+  width: 86%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: flex-end;
+  align-items: flex-end;
+}
+.board-seat-hand {
+  width: 66%;
+  display: flex;
+  justify-content: center;
+}
+
+/* ---- upright nameplates (NOT rotated) ---- */
+.board-label {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--foreground);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.board-label--bottom { bottom: 2%; left: 3%; }
+.board-label--top    { top: 2%; right: 3%; }
+.board-label--left   { left: 2%; bottom: 3%; }
+.board-label--right  { right: 2%; top: 3%; }
+.board-label--active {
+  outline: 2px solid rgba(251, 191, 36, 0.95);
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.55);
+}
+.board-label-wind { font-weight: 700; }
+.board-label-score { font-variant-numeric: tabular-nums; }
+.board-badge {
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.board-badge--riichi { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
+.board-badge--kita { background: rgba(14, 165, 233, 0.18); color: #38bdf8; }
