@@ -5,12 +5,15 @@
  * about the board center. CSS `transform: rotate()` is paint-only, so each
  * seat's mahgen container reports its pre-rotation (axis-aligned) clientWidth —
  * which is what mahgen's sizing reads — so all four seats size identically.
- * Nameplates are rendered in a SEPARATE, non-rotated layer so their text stays
- * upright regardless of seat.
  *
- * The square pixel size is set inline by BoardTile (ResizeObserver), so every
- * percentage below resolves against a known square. Positions/sizes are
- * deliberately simple and tunable — refine visually in the Tauri webview. */
+ * Each seat's hand / river / melds are absolutely positioned within the layer:
+ * the hand hugs the outer edge, the river is TOP-anchored just inside it so new
+ * rows fill DOWNWARD (the first row never shifts), and melds sit beside the hand.
+ *
+ * Scores live in a central panel (one per seat, placed on that seat's side, à la
+ * Majsoul) so they never collide. Dora sits in a top-left panel. The square
+ * pixel size is set inline by BoardTile (ResizeObserver) so every percentage
+ * below resolves against a known square. Positions/sizes are tunable. */
 
 .board-root {
   width: 100%;
@@ -36,45 +39,25 @@
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
-/* ---- center info ---- */
-.board-center {
+/* ---- dora panel (top-left) ---- */
+.board-dora {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 56%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  text-align: center;
-  pointer-events: none;
-  color: var(--foreground);
-}
-.board-center-round {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-.board-center-sticks {
+  top: 2.5%;
+  left: 2.5%;
+  z-index: 3;
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+  gap: 5px;
+  padding: 3px 7px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 8px;
 }
-.board-stick {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-.board-stick img {
-  height: 18px;
-}
-.board-center-dora {
-  display: flex;
-  justify-content: center;
-  margin-top: 2px;
+.board-dora-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
 }
 
 /* ---- rotated per-seat tile layer ---- */
@@ -84,68 +67,119 @@
   transform-origin: center center;
   pointer-events: none;
 }
-.board-seat-stack {
+.board-seat-hand {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 2%;
+  bottom: 1.5%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 52%;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 1.5%;
+  justify-content: center;
 }
 .board-seat-river {
-  width: 42%;
+  /* TOP-anchored so the river grows downward; the first row stays put. */
+  position: absolute;
+  top: 67%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 34%;
   display: flex;
   justify-content: center;
 }
 .board-seat-melds {
-  width: 86%;
+  position: absolute;
+  bottom: 1.5%;
+  right: 0.5%;
+  max-width: 46%;
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
   justify-content: flex-end;
   align-items: flex-end;
 }
-.board-seat-hand {
-  width: 66%;
-  display: flex;
-  justify-content: center;
-}
 
-/* ---- upright nameplates (NOT rotated) ---- */
-.board-label {
+/* ---- central panel: round info + each seat's score on its side ---- */
+.board-center {
   position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 31%;
+  aspect-ratio: 1;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1fr 1.25fr 1fr;
+  grid-template-rows: 1fr 1.25fr 1fr;
+  color: var(--foreground);
+  background: rgba(6, 26, 22, 0.86);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+.board-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.board-score--top    { grid-column: 2; grid-row: 1; }
+.board-score--right  { grid-column: 3; grid-row: 2; }
+.board-score--bottom { grid-column: 2; grid-row: 3; }
+.board-score--left   { grid-column: 1; grid-row: 2; }
+.board-score--active {
+  background: rgba(251, 191, 36, 0.16);
+  border-radius: 6px;
+  outline: 1px solid rgba(251, 191, 36, 0.8);
+}
+.board-score-wind {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 7px;
-  border-radius: 9999px;
-  background: rgba(0, 0, 0, 0.5);
-  color: var(--foreground);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: nowrap;
-  pointer-events: none;
-}
-.board-label--bottom { bottom: 2%; left: 3%; }
-.board-label--top    { top: 2%; right: 3%; }
-.board-label--left   { left: 2%; bottom: 3%; }
-.board-label--right  { right: 2%; top: 3%; }
-.board-label--active {
-  outline: 2px solid rgba(251, 191, 36, 0.95);
-  box-shadow: 0 0 12px rgba(251, 191, 36, 0.55);
-}
-.board-label-wind { font-weight: 700; }
-.board-label-score { font-variant-numeric: tabular-nums; }
-.board-badge {
-  padding: 0 5px;
-  border-radius: 4px;
-  font-size: 9px;
+  gap: 2px;
+  font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  opacity: 0.85;
 }
-.board-badge--riichi { background: rgba(245, 158, 11, 0.18); color: #fbbf24; }
-.board-badge--kita { background: rgba(14, 165, 233, 0.18); color: #38bdf8; }
+.board-score-riichi {
+  color: #fbbf24;
+  font-size: 8px;
+}
+.board-score-pts {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.board-center-mid {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-align: center;
+}
+.board-center-round {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.board-center-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.board-stick {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.board-stick img {
+  height: 12px;
+}

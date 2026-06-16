@@ -59,25 +59,15 @@ export function BoardTile({ bp }: { bp: Breakpoint }) {
       <div ref={rootRef} className="board-root">
         {game && view && size > 0 ? (
           <div className="board-square" style={{ width: size, height: size }}>
-            {/* center: round / sticks / dora */}
-            <div className="board-center">
-              <div className="board-center-round">{kyokuLabel(game.bakaze, game.kyoku)}</div>
-              <div className="board-center-sticks">
-                <span className="board-stick">
-                  <img src="/1000_mini.svg" alt="" />×{game.kyotaku}
-                </span>
-                <span className="board-stick">
-                  <img src="/100_mini.svg" alt="" />×{game.honba}
-                </span>
+            {/* dora indicators, top-left */}
+            {view.dora_indicators && (
+              <div className="board-dora">
+                <span className="board-dora-label">{t('tile.dora')}</span>
+                <Mahgen seq={view.dora_indicators} kind="dora" />
               </div>
-              {view.dora_indicators && (
-                <div className="board-center-dora">
-                  <Mahgen seq={view.dora_indicators} kind="dora" />
-                </div>
-              )}
-            </div>
+            )}
 
-            {/* rotated tile layer per seat */}
+            {/* rotated tile layer per seat (hand / river / melds) */}
             {Array.from({ length: numPlayers }, (_, seat) => {
               const pview = view.players[seat]
               if (!pview) return null
@@ -88,50 +78,59 @@ export function BoardTile({ bp }: { bp: Breakpoint }) {
                   className="board-seat"
                   style={{ transform: `rotate(${EDGE_ROT[edge]}deg)` }}
                 >
-                  <div className="board-seat-stack">
-                    {pview.river && (
-                      <div className="board-seat-river">
-                        <Mahgen seq={pview.river} kind="board-river" riverMode />
-                      </div>
-                    )}
-                    {pview.melds.length > 0 && (
-                      <div className="board-seat-melds">
-                        {pview.melds.map((m, i) => (
-                          <Mahgen key={i} seq={m} kind="board-meld" />
-                        ))}
-                      </div>
-                    )}
-                    {pview.hand && (
-                      <div className="board-seat-hand">
-                        <Mahgen seq={pview.hand} kind="board-hand" />
-                      </div>
-                    )}
-                  </div>
+                  {pview.river && (
+                    <div className="board-seat-river">
+                      <Mahgen seq={pview.river} kind="board-river" riverMode />
+                    </div>
+                  )}
+                  {pview.melds.length > 0 && (
+                    <div className="board-seat-melds">
+                      {pview.melds.map((m, i) => (
+                        <Mahgen key={i} seq={m} kind="board-meld" />
+                      ))}
+                    </div>
+                  )}
+                  {pview.hand && (
+                    <div className="board-seat-hand">
+                      <Mahgen seq={pview.hand} kind="board-hand" />
+                    </div>
+                  )}
                 </div>
               )
             })}
 
-            {/* upright nameplates per seat (current turn highlighted) */}
-            {Array.from({ length: numPlayers }, (_, seat) => {
-              const player = game.players[seat]
-              if (!player) return null
-              const edge = seatEdge(seat, ourSeat, numPlayers)
-              const active = game.current_player === seat
-              const kita = player.kita_tiles?.length ?? 0
-              return (
-                <div
-                  key={seat}
-                  className={`board-label board-label--${edge}${active ? ' board-label--active' : ''}`}
-                >
-                  <span className="board-label-wind">{bakazeFor(seat, game.oya, numPlayers)}</span>
-                  <span className="board-label-score">{fmtScore(player.score)}</span>
-                  {player.riichi_declared && (
-                    <span className="board-badge board-badge--riichi">{t('mahjong.riichi')}</span>
-                  )}
-                  {kita > 0 && <span className="board-badge board-badge--kita">北×{kita}</span>}
+            {/* central panel: each seat's score around it + round info */}
+            <div className="board-center">
+              {Array.from({ length: numPlayers }, (_, seat) => {
+                const player = game.players[seat]
+                if (!player) return null
+                const edge = seatEdge(seat, ourSeat, numPlayers)
+                const active = game.current_player === seat
+                return (
+                  <div
+                    key={seat}
+                    className={`board-score board-score--${edge}${active ? ' board-score--active' : ''}`}
+                  >
+                    <span className="board-score-wind">
+                      {bakazeFor(seat, game.oya, numPlayers)}
+                      {player.riichi_declared && <span className="board-score-riichi">●</span>}
+                    </span>
+                    <span className="board-score-pts">{fmtScore(player.score)}</span>
+                  </div>
+                )
+              })}
+              <div className="board-center-mid">
+                <div className="board-center-round">{kyokuLabel(game.bakaze, game.kyoku)}</div>
+                <div className="board-center-sub">
+                  <span className="board-stick">
+                    <img src="/100_mini.svg" alt="honba" />×{game.honba}
+                  </span>
+                  <span className="board-stick">
+                    <img src="/1000_mini.svg" alt="kyotaku" />×{game.kyotaku}
+                  </span>
                 </div>
-              )
-            })}
+              </div>
+            </div>
           </div>
         ) : (
           <span className="board-empty">{t('tile.board_empty')}</span>
