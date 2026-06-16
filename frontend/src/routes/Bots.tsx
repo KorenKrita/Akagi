@@ -245,7 +245,7 @@ function DeleteBotDialog({
           <span className="font-mono">{name}</span>
           {t('bots.delete_desc_post')}
         </p>
-        {err && <span className="text-sm text-red-400">{err}</span>}
+        {err && <span className="text-sm text-red-400 [overflow-wrap:anywhere]">{err}</span>}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
           <Button variant="destructive" onClick={submit} disabled={busy}>
@@ -301,7 +301,7 @@ function InstallFromGithubDialog({ onInstalled }: { onInstalled: () => void }) {
         <DialogHeader>
           <DialogTitle>{t('bots.install_title')}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-4 py-2">
+        <div className="grid min-w-0 gap-4 py-2">
           <div className="grid gap-1.5">
             <Label>{t('bots.install_repo')}</Label>
             <Input
@@ -326,7 +326,7 @@ function InstallFromGithubDialog({ onInstalled }: { onInstalled: () => void }) {
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="mortal" />
           </div>
           {err && (
-            <span className="text-sm text-red-400">{err}</span>
+            <span className="text-sm text-red-400 [overflow-wrap:anywhere]">{err}</span>
           )}
         </div>
         <DialogFooter>
@@ -395,7 +395,7 @@ function InstallFromZipDialog({ onInstalled }: { onInstalled: () => void }) {
         <DialogHeader>
           <DialogTitle>{t('bots.install_zip_title')}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-4 py-2">
+        <div className="grid min-w-0 gap-4 py-2">
           <div className="grid gap-1.5">
             <Label>{t('bots.install_zip_path')}</Label>
             <div className="flex gap-2">
@@ -417,7 +417,7 @@ function InstallFromZipDialog({ onInstalled }: { onInstalled: () => void }) {
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="mortal" />
           </div>
           {err && (
-            <span className="text-sm text-red-400">{err}</span>
+            <span className="text-sm text-red-400 [overflow-wrap:anywhere]">{err}</span>
           )}
         </div>
         <DialogFooter>
@@ -501,7 +501,7 @@ function BotSettingsDrawer({ name, open, onOpenChange, onEnvChanged }: { name: s
           </div>
         )}
 
-        {err && <span className="text-sm text-red-400">{err}</span>}
+        {err && <span className="text-sm text-red-400 [overflow-wrap:anywhere]">{err}</span>}
 
         <div className="flex justify-between gap-2 mt-auto pt-2 border-t border-border">
           <Button
