@@ -205,10 +205,11 @@ Behaviour:
   isn't the bot the user meant to install. The install still succeeds.
 - Post-install: if a `PythonRuntime` is available and the extracted bot
   has a `pyproject.toml`, runs `uv sync` so dependency failures surface
-  here instead of at game-start. On failure the bot dir stays in place
-  so the user can retry via the per-bot Reinstall environment button
-  without re-downloading. With no runtime available, sync is skipped
-  with a `warn` toast and the install still succeeds.
+  here instead of at game-start. On failure the freshly-extracted bot dir
+  is **rolled back** (removed) so the install is atomic — a failed install
+  leaves nothing in the registry; the user re-runs the installer to retry.
+  With no runtime available, sync is skipped with a `warn` toast and the
+  install still succeeds.
 - Progress is reported through `NotifyBus` with sticky id
   `bot-install-<name>` (info → info → info → success).
 

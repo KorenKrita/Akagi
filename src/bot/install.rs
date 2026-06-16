@@ -66,9 +66,10 @@ impl GithubInstallSpec {
 /// extracted bot.
 ///
 /// When `runtime` is `Some(_)` and the extracted bot has a `pyproject.toml`,
-/// `uv sync` is run as the final step. Failures abort the install (the bot
-/// dir stays in place so the user can retry via Reinstall environment without
-/// re-downloading). When `runtime` is `None`, sync is skipped with a warning
+/// `uv sync` is run as the final step. A sync failure aborts the install and
+/// rolls back the freshly-extracted bot dir (the install is atomic — a failed
+/// install leaves nothing in the registry); the user re-runs the installer to
+/// retry. When `runtime` is `None`, sync is skipped with a warning
 /// notification — the install is considered successful.
 pub async fn install_from_github_release(
     spec: GithubInstallSpec,
@@ -319,9 +320,16 @@ async fn extract_place_and_finalize(
                         .sticky()
                         .id(notify_id.to_owned()),
                 );
-                rt.ensure_synced(&dest_dir)
-                    .await
-                    .with_context(|| format!("uv sync after install of {target_name}"))?;
+                if let Err(e) = rt.ensure_synced(&dest_dir).await {
+                    // Make the install atomic: a failed `uv sync` must not
+                    // leave a half-installed bot dir behind (it would show up
+                    // in the registry as an env-not-ready bot the user then has
+                    // to delete by hand). Roll back the freshly-extracted dir;
+                    // the user re-runs the installer to retry.
+                    let _ = std::fs::remove_dir_all(&dest_dir);
+                    return Err(e)
+                        .with_context(|| format!("uv sync after install of {target_name}"));
+                }
             }
             None => {
                 let _ = notify.send(
@@ -828,5 +836,49 @@ mod tests {
         assert!(err.to_string().contains("bot.py"));
         // Failed install leaves no destination dir behind.
         assert!(!dest.path().join("nobot").exists());
+    }
+
+    #[tokio::test]
+    async fn install_from_zip_rolls_back_on_sync_failure() {
+        use crate::bot::runtime::{PythonRuntime, RuntimeMode};
+
+        let src = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        let zip = src.path().join("syncfail.zip");
+        // Ship a pyproject (+ lock) so the installer attempts `uv sync`.
+        make_zip(
+            &zip,
+            &[
+                ("bot.py", b""),
+                (
+                    "pyproject.toml",
+                    b"[project]\nname = \"x\"\nversion = \"0.0.0\"\n",
+                ),
+                ("uv.lock", b"# dummy\n"),
+            ],
+        );
+
+        // A runtime pointing at non-existent binaries makes `uv sync` fail at
+        // spawn time, exercising the rollback path.
+        let rt = PythonRuntime::from_paths(
+            PathBuf::from("/nonexistent/python"),
+            PathBuf::from("/nonexistent/uv"),
+            RuntimeMode::System,
+        );
+        let notify = crate::event_bus::notify_bus();
+        let spec = LocalZipInstallSpec {
+            zip_path: zip,
+            name: Some("syncfail".into()),
+        };
+        let err = install_from_zip(spec, dest.path(), &notify, Some(&rt))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("uv sync"));
+        // Atomic install: a failed `uv sync` must roll back the bot dir so it
+        // doesn't linger in the registry as an env-not-ready bot.
+        assert!(
+            !dest.path().join("syncfail").exists(),
+            "failed sync must not leave a bot dir behind"
+        );
     }
 }
