@@ -153,6 +153,7 @@ impl GameStateSnapshot {
     /// Build a snapshot from a 4-player engine state. `our_seat` is threaded
     /// in by the tracker — see [`crate::game_state::tracker`].
     pub fn from_state(s: &GameState, our_seat: Option<u8>) -> Self {
+        let in_wait_act = matches!(s.phase, riichienv_core::action::Phase::WaitAct);
         let players: Vec<PlayerSnapshot> = (0..s.players.len())
             .map(|i| {
                 let p = &s.players[i];
@@ -166,10 +167,12 @@ impl GameStateSnapshot {
                         is_riichi: p.discard_is_riichi.get(idx).copied().unwrap_or(false),
                     })
                     .collect();
+                let melds: Vec<MeldSnapshot> = p.melds.iter().map(MeldSnapshot::from).collect();
+                let drawing = i as u8 == s.current_player && in_wait_act;
                 PlayerSnapshot {
                     seat: i as u8,
-                    tehai: p.hand.iter().copied().map(tid_to_mjai).collect(),
-                    melds: p.melds.iter().map(MeldSnapshot::from).collect(),
+                    tehai: seat_tehai(&p.hand, melds.len(), our_seat == Some(i as u8), drawing),
+                    melds,
                     river,
                     score: p.score,
                     riichi_declared: p.riichi_declared,
@@ -216,6 +219,7 @@ impl GameStateSnapshot {
     /// `from_state` but populates `PlayerSnapshot.kita_tiles` from the 3p
     /// engine's per-player kita pool.
     pub fn from_state_3p(s: &GameState3P, our_seat: Option<u8>) -> Self {
+        let in_wait_act = matches!(s.phase, riichienv_core::action::Phase::WaitAct);
         let players: Vec<PlayerSnapshot> = (0..s.players.len())
             .map(|i| {
                 let p = &s.players[i];
@@ -229,10 +233,12 @@ impl GameStateSnapshot {
                         is_riichi: p.discard_is_riichi.get(idx).copied().unwrap_or(false),
                     })
                     .collect();
+                let melds: Vec<MeldSnapshot> = p.melds.iter().map(MeldSnapshot::from).collect();
+                let drawing = i as u8 == s.current_player && in_wait_act;
                 PlayerSnapshot {
                     seat: i as u8,
-                    tehai: p.hand.iter().copied().map(tid_to_mjai).collect(),
-                    melds: p.melds.iter().map(MeldSnapshot::from).collect(),
+                    tehai: seat_tehai(&p.hand, melds.len(), our_seat == Some(i as u8), drawing),
+                    melds,
                     river,
                     score: p.score,
                     riichi_declared: p.riichi_declared,
@@ -271,6 +277,24 @@ impl GameStateSnapshot {
             our_seat,
         }
     }
+}
+
+/// Build the `tehai` for one seat.
+///
+/// The observer's own hand is maintained correctly by the engine, so its real
+/// tiles are used. Every other seat's hand is hidden, and riichienv-core 0.4.8
+/// inflates it by one tile per turn: `apply_mjai_event(Tsumo)` pushes the
+/// unknown drawn tile, but the following `Dahai` removes by matching the
+/// *known* discard — which never matches the unknown tile — so it is never
+/// removed. We therefore reconstruct the concealed count from the melds
+/// (13 - 3 per called set, +1 while that seat holds a freshly drawn tile) and
+/// render it as `"?"` placeholders rather than trusting the engine's `hand`.
+fn seat_tehai(hand: &[u8], n_melds: usize, is_observer: bool, drawing: bool) -> Vec<String> {
+    if is_observer {
+        return hand.iter().copied().map(tid_to_mjai).collect();
+    }
+    let n = (13 - 3 * n_melds as i32 + drawing as i32).max(0) as usize;
+    vec!["?".to_string(); n]
 }
 
 fn wind_to_str(w: u8) -> &'static str {

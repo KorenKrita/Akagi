@@ -92,7 +92,9 @@
   position: absolute;
   bottom: 1.5%;
   right: 0.5%;
-  max-width: 46%;
+  /* definite width (fraction of the square board) so mahgen's container-width
+     sizing scales the melds with the board, like the hand and river. */
+  width: 44%;
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
