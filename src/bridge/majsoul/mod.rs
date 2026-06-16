@@ -203,9 +203,7 @@ impl MajsoulBridge {
             }
             (MessageType::Notify, METHOD_ACTION_PROTOTYPE) => self.handle_action_prototype(msg),
             (MessageType::Response, METHOD_SYNC_GAME)
-            | (MessageType::Response, METHOD_ENTER_GAME) => {
-                self.handle_game_restore(&msg.payload)
-            }
+            | (MessageType::Response, METHOD_ENTER_GAME) => self.handle_game_restore(&msg.payload),
             (MessageType::Notify, METHOD_NOTIFY_GAME_END_RESULT) => {
                 // `result.players[]` carries final standings. Mjai
                 // `end_game` has no payload — the standings live in the
@@ -1380,9 +1378,7 @@ mod tests {
         );
         let events = bridge.dispatch(&restore);
         assert!(matches!(&events[0], MjaiEvent::Reach { actor: 1, pai } if pai.is_none()));
-        assert!(
-            matches!(&events[1], MjaiEvent::Dahai { actor: 1, pai, .. } if pai == "5p")
-        );
+        assert!(matches!(&events[1], MjaiEvent::Dahai { actor: 1, pai, .. } if pai == "5p"));
         assert_eq!(bridge.pending_reach_accepted, Some(1));
 
         // First live action after the replay drains the queued reach_accepted.
