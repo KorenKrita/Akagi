@@ -170,6 +170,8 @@
     "player_n_self": "玩家 {{n}}（自家）",
     "self_hand": "自家手牌",
     "self_hand_empty": "尚無手牌 — 請先連線至遊戲。",
+    "board": "牌桌",
+    "board_empty": "尚無對局 — 請先連線至遊戲。",
     "recommendations": "純算法前三建議切牌",
     "recommendations_empty": "等待分析中。",
     "risk_chart": "綜合放銃風險",
