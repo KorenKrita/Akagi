@@ -431,6 +431,14 @@ Useful when debugging a bot or a bridge issue.
   `config.toml`. If the launched browser starts but no frames flow,
   check that `--remote-debugging-port` was not blocked by another
   extension.
+- **Reopening Akagi with the Chromium window still open.** Akagi closes
+  the still-running browser and relaunches a single fresh window (it
+  cannot attach a second instance to the same profile). Login is
+  preserved, so Mahjong Soul reconnects to an in-progress match on
+  reload. If a leftover browser refuses to close — capture stops with
+  "couldn't terminate the browser already using profile …" — close it
+  manually and click Restart. Running two Akagi instances against the
+  same profile is unsupported.
 - **Bot stuck in `Loading{SyncingDeps}`.** First-run `uv sync` is
   slow — watch the Diagnostic tab for `bot=<name>` lines. If it never
   finishes, delete `mjai_bot/<name>/.akagi/synced.stamp` and retry.
