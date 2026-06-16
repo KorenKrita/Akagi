@@ -159,7 +159,16 @@ impl PythonRuntime {
             bail!("uv sync failed in {} ({status})", bot_dir.display());
         }
 
-        write_stamp(&stamp_path, &current).await?;
+        // `uv sync` creates (or refreshes) `uv.lock`, so the `current`
+        // signature captured before the sync is stale the moment the bot
+        // shipped no lockfile — the common case for a hand-written bot. Writing
+        // that stale signature would make the very next `is_synced` check fail
+        // (it re-stats the now-present `uv.lock` and sees a mismatch), leaving a
+        // freshly-synced bot reading as not-ready and its activation toggle
+        // disabled. Re-snapshot the on-disk pyproject + lock so the stamp
+        // matches what `is_synced` computes next.
+        let synced = current_signature(&pyproject, &lock)?;
+        write_stamp(&stamp_path, &synced).await?;
         Ok(())
     }
 
@@ -704,6 +713,51 @@ mod tests {
         assert!(
             is_synced(tmp.path()),
             "manifest-less bot must become ready after sync"
+        );
+    }
+
+    /// Regression (issue #143): `uv sync` creates/refreshes `uv.lock`, so the
+    /// stamp must be written from the POST-sync on-disk signature, not the
+    /// pre-sync one. A bot that ships no lockfile (the common hand-written
+    /// case) otherwise reads as not-ready immediately after a successful sync —
+    /// its activation toggle stays disabled until a second sync. Uses a fake
+    /// `uv` that reproduces the real side effects: it seeds the venv and writes
+    /// a `uv.lock` into the project dir.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_synced_marks_ready_when_uv_creates_lockfile() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let bot = tmp.path();
+        write(&bot.join("pyproject.toml"), "[project]\nname='a'\n");
+        // No uv.lock shipped — the (fake) uv will create it during sync.
+        assert!(!bot.join("uv.lock").exists());
+
+        let fake_uv = tmp.path().join("uv");
+        std::fs::write(
+            &fake_uv,
+            "#!/bin/sh\n\
+             mkdir -p \"$UV_PROJECT_ENVIRONMENT/bin\"\n\
+             : > \"$UV_PROJECT_ENVIRONMENT/bin/python\"\n\
+             proj=\"$(dirname \"$(dirname \"$UV_PROJECT_ENVIRONMENT\")\")\"\n\
+             printf 'version = 1\\n' > \"$proj/uv.lock\"\n\
+             exit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_uv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let fake_python = tmp.path().join("python");
+        std::fs::write(&fake_python, "").unwrap();
+
+        let rt = PythonRuntime::from_paths(fake_python, fake_uv, RuntimeMode::System);
+        rt.ensure_synced(bot).await.unwrap();
+
+        assert!(
+            bot.join("uv.lock").exists(),
+            "fake uv should have created the lockfile"
+        );
+        assert!(
+            is_synced(bot),
+            "a freshly-synced bot must read as ready even when uv created the lockfile"
         );
     }
 }
