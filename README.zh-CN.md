@@ -266,6 +266,11 @@ IPC 命令 `install_bot_from_github(repo, asset_glob?, name?)`
 会根据 `mjai_bot/<name>/.akagi/synced.stamp` 戳记决定是否
 跳过。
 
+你也可以从**本地 ZIP** 安装 —— 适合离线安装或本地构建的
+bot。在 **Bots** 标签页点击 **从 ZIP 安装**，**浏览…** 选择
+`.zip`（或粘贴其路径）即可安装。它执行与 GitHub 安装完全相同
+的解压 / 验证 / `uv sync` 流程，并且不会改动你的源 `.zip`。
+
 > [!IMPORTANT]
 > 由于 GitHub 的文件大小限制，release zip 中附带的 Mortal
 > 权重是体积很小、强度很弱的 **占位模型**，仅用于验证安装
@@ -433,7 +438,7 @@ alpha.8 已完成：
 - [x] 对局历史持久化 + History 标签页（名次饼图 / PT 图 / 统计）
 - [x] 日志查看（Diagnostic + Inspector）
 - [x] i18n：en / ja / zh-TW / zh-CN，含配置向导语言选择
-- [x] 从 GitHub release 安装 bot
+- [x] 从 GitHub release 或本地 ZIP 文件安装 bot
 - [x] Chromium 抓包模式（无需信任 CA）
 
 计划中：

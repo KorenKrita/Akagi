@@ -268,6 +268,11 @@ IPC 指令 `install_bot_from_github(repo, asset_glob?, name?)`
 會根據 `mjai_bot/<name>/.akagi/synced.stamp` 戳記決定是否
 跳過。
 
+你也可以從**本機 ZIP** 安裝 —— 適合離線安裝或本機建置的
+bot。在 **Bots** 頁籤點擊 **從 ZIP 安裝**，**瀏覽…** 選擇
+`.zip`（或貼上其路徑）即可安裝。它執行與 GitHub 安裝完全相同
+的解壓 / 驗證 / `uv sync` 流程，且不會改動你的來源 `.zip`。
+
 ### 依模式切換的 bot
 
 `bot.active_4p` 與 `bot.active_3p` 互相獨立。Akagi 會在開
@@ -425,7 +430,7 @@ alpha.8 已完成：
 - [x] 對局歷史持久化 + History 頁籤（名次圓餅 / PT 圖 / 統計）
 - [x] 紀錄檢視（Diagnostic + Inspector）
 - [x] i18n：en / ja / zh-TW / zh-CN，含設定精靈語言選擇
-- [x] 從 GitHub release 安裝 bot
+- [x] 從 GitHub release 或本機 ZIP 檔案安裝 bot
 - [x] Chromium 抓包模式（不需信任 CA）
 
 規劃中：

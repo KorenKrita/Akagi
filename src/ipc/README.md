@@ -58,6 +58,7 @@ without waiting for the next event.
 | `list_bots`      | —                     | `Vec<BotInfo>`           | Re-scans `cfg.bot.dir`       |
 | `set_active_bot` | `mode, name`          | `()`                     | Updates + persists `bot.active_4p` or `bot.active_3p` (`mode` ∈ `"4p"` / `"3p"`); empty `name` clears the slot |
 | `install_bot_from_github` | `repo, asset_glob?, name?` | `BotInfo`     | Download + extract; runs `uv sync` post-install if a runtime is available |
+| `install_bot_from_zip` | `zip_path, name?`     | `BotInfo`                | Install from a local `.zip` (same extract/validate/`uv sync` pipeline as the GitHub install, minus the download). `name` defaults to the zip file stem; the source zip is never deleted |
 | `update_bot_from_manifest` | `name`            | `BotInfo`                | Reinstall from the source declared in the bot's `manifest.toml` |
 | `sync_bot_deps`  | `name, force`         | `()`                     | Re-runs `uv sync` for an installed bot. `force=true` wipes `.akagi/synced.stamp` and `.akagi/venv/` first (used by the per-bot Reinstall environment button). Per-bot `SyncGuard` rejects concurrent calls. |
 | `delete_bot`     | `name`                | `()`                     | Refuses if the bot is the active 4p/3p; refuses paths that escape `bot.dir` |

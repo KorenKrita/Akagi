@@ -205,10 +205,11 @@ Behaviour:
   isn't the bot the user meant to install. The install still succeeds.
 - Post-install: if a `PythonRuntime` is available and the extracted bot
   has a `pyproject.toml`, runs `uv sync` so dependency failures surface
-  here instead of at game-start. On failure the bot dir stays in place
-  so the user can retry via the per-bot Reinstall environment button
-  without re-downloading. With no runtime available, sync is skipped
-  with a `warn` toast and the install still succeeds.
+  here instead of at game-start. On failure the freshly-extracted bot dir
+  is **rolled back** (removed) so the install is atomic — a failed install
+  leaves nothing in the registry; the user re-runs the installer to retry.
+  With no runtime available, sync is skipped with a `warn` toast and the
+  install still succeeds.
 - Progress is reported through `NotifyBus` with sticky id
   `bot-install-<name>` (info → info → info → success).
 
@@ -216,6 +217,34 @@ If the bot's `manifest.toml` declares a `[bot.source]` block, calling
 `update_bot_from_manifest(name)` re-runs the install using the recorded
 repo/glob. The previous `mjai_bot/<name>/` is removed first — settings
 and other bot-local files are not preserved.
+
+## Installing from a local ZIP
+
+The `install_bot_from_zip` IPC command installs a bot from a `.zip`
+already on disk — offline installs, a locally-built bot, or an archive
+received out-of-band. Frontend usage:
+
+```ts
+const info: BotInfo = await invoke('install_bot_from_zip', {
+  zipPath: '/path/to/mortal.zip',     // absolute path to a local .zip
+  name: 'mortal',                     // optional; defaults to the zip file stem
+});
+```
+
+It shares the entire tail of the GitHub installer
+(`install::extract_place_and_finalize`) — header/zip-slip validation,
+single top-level-dir stripping, `bot.py` layout check, missing-file
+warnings, atomic rename into `mjai_bot/<name>/`, and the post-install
+`uv sync`. The only differences from the GitHub path:
+
+- No release lookup or download — the caller supplies the zip directly.
+- The user's source `.zip` is **never** modified or deleted (the GitHub
+  path deletes its download tempfile after extraction).
+- `name` defaults to the zip file stem rather than a repo segment.
+
+Progress is reported through `NotifyBus` under sticky id
+`bot-install-<name>`, identical to the GitHub install. The frontend picks
+the file with the native OS dialog (`@tauri-apps/plugin-dialog`).
 
 ### Reinstall environment
 
