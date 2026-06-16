@@ -33,9 +33,8 @@
   position: relative;
   overflow: hidden;
   border-radius: 10px;
-  background:
-    radial-gradient(circle at 50% 45%, rgba(21, 128, 97, 0.30), rgba(6, 38, 30, 0.55) 70%),
-    var(--card);
+  /* fixed solid dark grey, matching the Akagi default (neutral) dark theme */
+  background: oklch(0.17 0 0);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
@@ -52,6 +51,9 @@
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid var(--border);
   border-radius: 8px;
+  /* scale with the board so the dora doesn't look tiny on a large tile */
+  transform: scale(var(--board-scale, 1));
+  transform-origin: top left;
 }
 .board-dora-label {
   font-size: 10px;
@@ -72,7 +74,7 @@
   bottom: 1.5%;
   left: 50%;
   transform: translateX(-50%);
-  width: 52%;
+  width: 56%;
   display: flex;
   justify-content: center;
 }
@@ -82,7 +84,7 @@
   top: 67%;
   left: 50%;
   transform: translateX(-50%);
-  width: 34%;
+  width: 26%;
   display: flex;
   justify-content: center;
 }
@@ -130,11 +132,6 @@
 .board-score--right  { grid-column: 3; grid-row: 2; }
 .board-score--bottom { grid-column: 2; grid-row: 3; }
 .board-score--left   { grid-column: 1; grid-row: 2; }
-.board-score--active {
-  background: rgba(251, 191, 36, 0.16);
-  border-radius: 6px;
-  outline: 1px solid rgba(251, 191, 36, 0.8);
-}
 .board-score-wind {
   display: inline-flex;
   align-items: center;
@@ -182,4 +179,23 @@
 }
 .board-stick img {
   height: 12px;
+}
+
+/* ---- current-turn indicator: slow-blinking yellow bar on the active side ---- */
+.board-turn-bar {
+  position: absolute;
+  background: #fbbf24;
+  border-radius: 2px;
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.7);
+  animation: board-turn-pulse 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+.board-turn-bar--bottom { left: 20%; right: 20%; bottom: 3.5%; height: 3px; }
+.board-turn-bar--top    { left: 20%; right: 20%; top: 3.5%; height: 3px; }
+.board-turn-bar--left   { top: 20%; bottom: 20%; left: 3.5%; width: 3px; }
+.board-turn-bar--right  { top: 20%; bottom: 20%; right: 3.5%; width: 3px; }
+
+@keyframes board-turn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
 }

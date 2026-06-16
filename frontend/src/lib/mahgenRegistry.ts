@@ -33,9 +33,13 @@ const SIZE_CTX: Record<MahgenKind, SizeCtx> = {
   // when the tile is small. `board-hand` uses linear (constant-ish tile size,
   // width grows with tile count) rather than `hand`'s 'fit' min:44 which would
   // overflow a small seat. Values are tunable — refine visually in the webview.
-  'board-hand':  { mode: 'linear', base: 26, ref: 300, min: 14, max: 34 },
-  'board-river': { mode: 'river',  maxScale: 0.3, minScale: 0.10 },
-  'board-meld':  { mode: 'linear', base: 18, ref: 220, min: 10, max: 30 },
+  // 'fit' makes the hand fill its container width (which is a fraction of the
+  // square board) so it scales with the board and never overflows. River uses
+  // 'river' scaling with a high cap so it grows with the board too; its smaller
+  // container width keeps river tiles smaller than hand tiles.
+  'board-hand':  { mode: 'fit', min: 16, max: 100 },
+  'board-river': { mode: 'river',  maxScale: 1.0, minScale: 0.14 },
+  'board-meld':  { mode: 'linear', base: 34, ref: 240, min: 16, max: 80 },
 }
 
 const RIVER_FULL_ROW_W = 420

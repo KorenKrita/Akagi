@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { TileFrame } from '@/components/TileFrame'
 import { Mahgen } from '@/components/Mahgen'
@@ -53,12 +53,19 @@ export function BoardTile({ bp }: { bp: Breakpoint }) {
 
   const numPlayers = game?.num_players ?? view?.num_players ?? 4
   const ourSeat = game?.our_seat ?? null
+  // Scales board chrome (dora panel, etc.) with the board so it doesn't look
+  // empty when the tile is enlarged. The tiles themselves scale via their
+  // container widths (fractions of the square); this covers the fixed-size bits.
+  const boardScale = Math.min(2.4, Math.max(0.8, size / 460))
 
   return (
     <TileFrame id="board" title={t('tile.board')} bp={bp} contentClassName="p-0">
       <div ref={rootRef} className="board-root">
         {game && view && size > 0 ? (
-          <div className="board-square" style={{ width: size, height: size }}>
+          <div
+            className="board-square"
+            style={{ width: size, height: size, '--board-scale': boardScale } as CSSProperties}
+          >
             {/* dora indicators, top-left */}
             {view.dora_indicators && (
               <div className="board-dora">
@@ -105,12 +112,8 @@ export function BoardTile({ bp }: { bp: Breakpoint }) {
                 const player = game.players[seat]
                 if (!player) return null
                 const edge = seatEdge(seat, ourSeat, numPlayers)
-                const active = game.current_player === seat
                 return (
-                  <div
-                    key={seat}
-                    className={`board-score board-score--${edge}${active ? ' board-score--active' : ''}`}
-                  >
+                  <div key={seat} className={`board-score board-score--${edge}`}>
                     <span className="board-score-wind">
                       {bakazeFor(seat, game.oya, numPlayers)}
                       {player.riichi_declared && <span className="board-score-riichi">●</span>}
@@ -119,6 +122,12 @@ export function BoardTile({ bp }: { bp: Breakpoint }) {
                   </div>
                 )
               })}
+              {/* current-turn indicator: a slow-blinking bar on the active seat's side */}
+              {game.players[game.current_player] && (
+                <div
+                  className={`board-turn-bar board-turn-bar--${seatEdge(game.current_player, ourSeat, numPlayers)}`}
+                />
+              )}
               <div className="board-center-mid">
                 <div className="board-center-round">{kyokuLabel(game.bakaze, game.kyoku)}</div>
                 <div className="board-center-sub">
