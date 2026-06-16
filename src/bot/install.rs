@@ -1,16 +1,25 @@
-//! Install a Mjai bot from a GitHub release.
+//! Install a Mjai bot from a GitHub release or a local `.zip` file.
 //!
-//! Flow:
+//! GitHub flow ([`install_from_github_release`]):
 //!
 //! 1. Fetch `https://api.github.com/repos/<repo>/releases/latest` (anonymous).
 //! 2. Pick one asset — by glob if `asset_glob` is set, else the first `.zip`.
 //! 3. Stream the asset into a tempfile under `<dest_root>/.downloads/`.
-//! 4. Open the tempfile as a zip, validate every entry's path is enclosed
-//!    inside the destination (no `..`, no absolute paths).
-//! 5. Extract to a sibling tempdir.
-//! 6. If the archive has a single top-level directory, strip it.
-//! 7. Validate `bot.py` is present in the extracted layout.
-//! 8. Atomic-move the tempdir into `<dest_root>/<name>/`.
+//! 4. Hand off to the shared tail (steps below).
+//!
+//! Local-zip flow ([`install_from_zip`]): skip steps 1-3 — the caller supplies
+//! a `.zip` already on disk — then run the same shared tail. The user's zip is
+//! never modified or deleted.
+//!
+//! Shared tail ([`extract_place_and_finalize`]):
+//!
+//! 1. Open the zip, validate every entry's path is enclosed inside the
+//!    destination (no `..`, no absolute paths).
+//! 2. Extract to a sibling tempdir.
+//! 3. If the archive has a single top-level directory, strip it.
+//! 4. Validate `bot.py` is present in the extracted layout.
+//! 5. Atomic-move the tempdir into `<dest_root>/<name>/`.
+//! 6. Run `uv sync` when a runtime is available and a `pyproject.toml` exists.
 //!
 //! Existing `<dest_root>/<name>/` is treated as an error — frontend can
 //! offer an explicit "remove and reinstall" toggle later. Authenticated
@@ -113,12 +122,130 @@ pub async fn install_from_github_release(
         .await
         .with_context(|| format!("download {}", asset.browser_download_url))?;
 
+    let tag = release.tag_name.as_deref().unwrap_or("latest").to_owned();
+    // Hand off to the shared tail. The download tempfile is deleted after
+    // extraction (`delete_zip_after = true`).
+    extract_place_and_finalize(
+        &tempfile_path,
+        dest_root,
+        &target_name,
+        &spec.repo,
+        format!("{} ({tag})", spec.repo),
+        notify,
+        &notify_id,
+        runtime,
+        true,
+    )
+    .await
+}
+
+/// Pointer to a local zip-file install.
+#[derive(Debug, Clone)]
+pub struct LocalZipInstallSpec {
+    /// Path to a `.zip` file already on disk.
+    pub zip_path: PathBuf,
+    /// Override target subdir name. `None` → the zip file's stem.
+    pub name: Option<String>,
+}
+
+impl LocalZipInstallSpec {
+    /// Resolve the target subdir name from the override, else the zip stem.
+    fn target_name(&self) -> String {
+        if let Some(n) = self.name.as_deref() {
+            return n.to_owned();
+        }
+        self.zip_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("bot")
+            .to_owned()
+    }
+}
+
+/// Install a bot from a `.zip` already on disk. Same pipeline as
+/// [`install_from_github_release`] minus the GitHub release lookup and
+/// download — the caller supplies the zip directly. The source zip is never
+/// modified or deleted.
+///
+/// As with the GitHub path, an existing `<dest_root>/<name>/` is an error and
+/// `uv sync` runs as the final step when `runtime` is `Some(_)` and the bot
+/// ships a `pyproject.toml`.
+pub async fn install_from_zip(
+    spec: LocalZipInstallSpec,
+    dest_root: &Path,
+    notify: &NotifyBus,
+    runtime: Option<&PythonRuntime>,
+) -> Result<BotEntry> {
+    if !spec.zip_path.is_file() {
+        bail!("{} is not a file", spec.zip_path.display());
+    }
+    let target_name = spec.target_name();
+    validate_target_name(&target_name)?;
+    let dest_dir = dest_root.join(&target_name);
+    if dest_dir.exists() {
+        bail!(
+            "{} already exists — remove it before reinstalling",
+            dest_dir.display()
+        );
+    }
+
+    // Name the source by its filename in user-facing messages.
+    let source_label = spec
+        .zip_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("zip")
+        .to_owned();
+
+    let notify_id = format!("bot-install-{target_name}");
+    extract_place_and_finalize(
+        &spec.zip_path,
+        dest_root,
+        &target_name,
+        &source_label,
+        source_label.clone(),
+        notify,
+        &notify_id,
+        runtime,
+        false,
+    )
+    .await
+}
+
+/// Shared install tail for both the GitHub-release and local-zip installers.
+/// Given a `.zip` already on disk, extract it into `<dest_root>/<target_name>`,
+/// validate the layout, run `uv sync` when a runtime is available, and return
+/// the registry entry.
+///
+/// `source_label` names the install source in the "may not be a valid bot"
+/// warning; `success_body` is the body of the final success notification. When
+/// `delete_zip_after` is true the input zip is removed after extraction (the
+/// GitHub download tempfile); user-supplied zips are left intact.
+#[allow(clippy::too_many_arguments)]
+async fn extract_place_and_finalize(
+    zip_path: &Path,
+    dest_root: &Path,
+    target_name: &str,
+    source_label: &str,
+    success_body: String,
+    notify: &NotifyBus,
+    notify_id: &str,
+    runtime: Option<&PythonRuntime>,
+    delete_zip_after: bool,
+) -> Result<BotEntry> {
+    let dest_dir = dest_root.join(target_name);
+
     let _ = notify.send(
         Notification::info(format!("Installing {target_name}"))
             .body("Extracting…")
             .sticky()
-            .id(notify_id.clone()),
+            .id(notify_id.to_owned()),
     );
+
+    let downloads_dir = dest_root.join(DOWNLOADS_DIR);
+    tokio::fs::create_dir_all(&downloads_dir)
+        .await
+        .with_context(|| format!("mkdir {}", downloads_dir.display()))?;
 
     // Extract into a sibling dir of the eventual destination so the
     // final rename stays on the same filesystem. We use a manually-named
@@ -133,8 +260,8 @@ pub async fn install_from_github_release(
     ));
     let install_result = (|| -> Result<()> {
         std::fs::create_dir(&staging).with_context(|| format!("mkdir {}", staging.display()))?;
-        extract_zip_safe(&tempfile_path, &staging)
-            .with_context(|| format!("extract {}", tempfile_path.display()))?;
+        extract_zip_safe(zip_path, &staging)
+            .with_context(|| format!("extract {}", zip_path.display()))?;
 
         let resolved_root = strip_single_top_level(&staging)?;
         validate_layout(&resolved_root)?;
@@ -152,16 +279,18 @@ pub async fn install_from_github_release(
     // Best-effort cleanup of any leftover staging contents. If the
     // staging dir was renamed away wholesale, this is a no-op error.
     let _ = std::fs::remove_dir_all(&staging);
-    let _ = tokio::fs::remove_file(&tempfile_path).await;
+    if delete_zip_after {
+        let _ = tokio::fs::remove_file(zip_path).await;
+    }
 
     install_result?;
 
     // Heads-up (non-fatal): a complete Akagi bot ships `pyproject.toml`
     // (deps / `uv sync`) and `manifest.toml` (settings schema). `bot.py`
     // alone clears `validate_layout`, but if these are also missing the user
-    // most likely pointed the installer at the wrong repo/release. Warn so
-    // they can double-check rather than silently ending up with a bot that
-    // has no deps and no settings.
+    // most likely pointed the installer at the wrong source. Warn so they can
+    // double-check rather than silently ending up with a bot that has no deps
+    // and no settings.
     let missing = missing_recommended_files(&dest_dir);
     if !missing.is_empty() {
         let _ = notify.send(
@@ -170,7 +299,7 @@ pub async fn install_from_github_release(
                     "Installed from {} but it is missing {}. This might not be the \
                      target you intended to install — a complete Akagi bot ships both \
                      pyproject.toml and manifest.toml.",
-                    spec.repo,
+                    source_label,
                     missing.join(" and "),
                 ))
                 .id(format!("{notify_id}-layout")),
@@ -188,7 +317,7 @@ pub async fn install_from_github_release(
                     Notification::info(format!("Installing {target_name}"))
                         .body("Installing Python dependencies (uv sync)…")
                         .sticky()
-                        .id(notify_id.clone()),
+                        .id(notify_id.to_owned()),
                 );
                 rt.ensure_synced(&dest_dir)
                     .await
@@ -198,7 +327,7 @@ pub async fn install_from_github_release(
                 let _ = notify.send(
                     Notification::warn(format!("{target_name} installed without sync"))
                         .body("No python3+uv runtime found on PATH; deps will be installed at game start.")
-                        .id(notify_id.clone()),
+                        .id(notify_id.to_owned()),
                 );
             }
         }
@@ -206,16 +335,12 @@ pub async fn install_from_github_release(
 
     let _ = notify.send(
         Notification::success(format!("{target_name} installed"))
-            .body(format!(
-                "{} ({})",
-                spec.repo,
-                release.tag_name.as_deref().unwrap_or("latest"),
-            ))
-            .id(notify_id),
+            .body(success_body)
+            .id(notify_id.to_owned()),
     );
 
     Ok(BotEntry {
-        name: target_name.clone(),
+        name: target_name.to_owned(),
         dir: dest_dir.clone(),
         pyproject: pyproject.is_file().then_some(pyproject),
         manifest: Manifest::load(&dest_dir).ok().flatten(),
@@ -570,5 +695,138 @@ mod tests {
         // Both present → nothing flagged.
         std::fs::write(tmp.path().join("manifest.toml"), b"").unwrap();
         assert!(missing_recommended_files(tmp.path()).is_empty());
+    }
+
+    // --- local-zip install ------------------------------------------------
+
+    fn make_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::ZipWriter;
+        let f = std::fs::File::create(path).unwrap();
+        let mut z = ZipWriter::new(f);
+        let opts = SimpleFileOptions::default();
+        for (name, body) in entries {
+            z.start_file((*name).to_string(), opts).unwrap();
+            z.write_all(body).unwrap();
+        }
+        z.finish().unwrap();
+    }
+
+    #[test]
+    fn local_zip_target_name_defaults_to_stem() {
+        let s = LocalZipInstallSpec {
+            zip_path: PathBuf::from("/tmp/cool-bot-v1.0.zip"),
+            name: None,
+        };
+        assert_eq!(s.target_name(), "cool-bot-v1.0");
+    }
+
+    #[test]
+    fn local_zip_target_name_override_takes_precedence() {
+        let s = LocalZipInstallSpec {
+            zip_path: PathBuf::from("/tmp/cool-bot.zip"),
+            name: Some("alias".into()),
+        };
+        assert_eq!(s.target_name(), "alias");
+    }
+
+    #[tokio::test]
+    async fn install_from_zip_extracts_and_keeps_source() {
+        let src = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        let zip = src.path().join("mybot.zip");
+        // Archive wrapped in a single top-level dir, like a real release zip.
+        make_zip(&zip, &[("mybot/bot.py", b"print('hi')\n")]);
+
+        let notify = crate::event_bus::notify_bus();
+        let spec = LocalZipInstallSpec {
+            zip_path: zip.clone(),
+            name: Some("testbot".into()),
+        };
+        let entry = install_from_zip(spec, dest.path(), &notify, None)
+            .await
+            .expect("install should succeed");
+
+        assert_eq!(entry.name, "testbot");
+        assert_eq!(entry.dir, dest.path().join("testbot"));
+        assert!(dest.path().join("testbot/bot.py").is_file());
+        assert!(entry.pyproject.is_none());
+        // The user's source zip must be left untouched.
+        assert!(zip.is_file(), "source zip should not be deleted");
+    }
+
+    #[tokio::test]
+    async fn install_from_zip_derives_name_from_filename() {
+        let src = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        // No wrapping dir: a single top-level file stays at the root.
+        let zip = src.path().join("coolbot.zip");
+        make_zip(&zip, &[("bot.py", b"print('hi')\n")]);
+
+        let notify = crate::event_bus::notify_bus();
+        let spec = LocalZipInstallSpec {
+            zip_path: zip,
+            name: None,
+        };
+        let entry = install_from_zip(spec, dest.path(), &notify, None)
+            .await
+            .expect("install should succeed");
+
+        assert_eq!(entry.name, "coolbot");
+        assert!(dest.path().join("coolbot/bot.py").is_file());
+    }
+
+    #[tokio::test]
+    async fn install_from_zip_rejects_existing_dest() {
+        let src = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        let zip = src.path().join("dup.zip");
+        make_zip(&zip, &[("bot.py", b"")]);
+        std::fs::create_dir(dest.path().join("dup")).unwrap();
+
+        let notify = crate::event_bus::notify_bus();
+        let spec = LocalZipInstallSpec {
+            zip_path: zip,
+            name: Some("dup".into()),
+        };
+        let err = install_from_zip(spec, dest.path(), &notify, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn install_from_zip_rejects_missing_file() {
+        let dest = TempDir::new().unwrap();
+        let notify = crate::event_bus::notify_bus();
+        let spec = LocalZipInstallSpec {
+            zip_path: PathBuf::from("/no/such/file.zip"),
+            name: None,
+        };
+        let err = install_from_zip(spec, dest.path(), &notify, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("is not a file"));
+    }
+
+    #[tokio::test]
+    async fn install_from_zip_rejects_archive_without_bot_py() {
+        let src = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+        let zip = src.path().join("nobot.zip");
+        make_zip(&zip, &[("README.md", b"# hi\n")]);
+
+        let notify = crate::event_bus::notify_bus();
+        let spec = LocalZipInstallSpec {
+            zip_path: zip,
+            name: Some("nobot".into()),
+        };
+        let err = install_from_zip(spec, dest.path(), &notify, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("bot.py"));
+        // Failed install leaves no destination dir behind.
+        assert!(!dest.path().join("nobot").exists());
     }
 }

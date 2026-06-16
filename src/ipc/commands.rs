@@ -6,7 +6,7 @@
 //! names quickly and renames break dashboards.
 
 use crate::analysis::result::AnalysisResult;
-use crate::bot::install::{self, GithubInstallSpec};
+use crate::bot::install::{self, GithubInstallSpec, LocalZipInstallSpec};
 use crate::bot::manifest::{self, BotSource};
 use crate::bot::runtime;
 use crate::bot::sync_guard::SyncGuard;
@@ -324,6 +324,41 @@ pub async fn install_bot_from_github(
     )
     .await
     .map_err(|e| format!("install: {e:#}"))?;
+    Ok(entry_to_info(&entry))
+}
+
+/// Install a bot from a local `.zip` file the user picked (typically via the
+/// native file dialog). Runs the same pipeline as
+/// [`install_bot_from_github`] minus the release download. Refuses to
+/// overwrite an existing `mjai_bot/<name>/`; the source zip is never deleted.
+/// Reports progress through `NotifyBus` with sticky id `bot-install-<name>`.
+#[tauri::command]
+pub async fn install_bot_from_zip(
+    zip_path: String,
+    name: Option<String>,
+    state: State<'_, AppState>,
+) -> CmdResult<BotInfo> {
+    let p = Path::new(&zip_path);
+    if !p.is_file() {
+        return Err(format!("{zip_path} is not a file"));
+    }
+    if !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) {
+        return Err(format!("{zip_path} is not a .zip file"));
+    }
+
+    let dir = state.config.read().await.bot.dir.clone();
+    let resolved = resolve_dir(Path::new(&dir));
+    std::fs::create_dir_all(&resolved)
+        .map_err(|e| format!("create bot dir {}: {e}", resolved.display()))?;
+
+    let spec = LocalZipInstallSpec {
+        zip_path: p.to_path_buf(),
+        name,
+    };
+    let entry =
+        install::install_from_zip(spec, &resolved, &state.notify_bus, state.runtime.as_ref())
+            .await
+            .map_err(|e| format!("install: {e:#}"))?;
     Ok(entry_to_info(&entry))
 }
 
@@ -1279,6 +1314,7 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::get_bot_settings,
             $crate::ipc::commands::update_bot_settings,
             $crate::ipc::commands::install_bot_from_github,
+            $crate::ipc::commands::install_bot_from_zip,
             $crate::ipc::commands::update_bot_from_manifest,
             $crate::ipc::commands::sync_bot_deps,
             $crate::ipc::commands::delete_bot,

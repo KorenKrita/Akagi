@@ -285,6 +285,12 @@ validates `bot.py`, and runs `uv sync` once. Subsequent launches are
 fast — the sync is gated by a stamp at
 `mjai_bot/<name>/.akagi/synced.stamp`.
 
+You can also install from a **local ZIP** — useful for offline installs
+or a locally-built bot. On the **Bots** tab, click **Install from ZIP**,
+**Browse…** to pick a `.zip` (or paste its path), and install. This runs
+the exact same extract / validate / `uv sync` pipeline as the GitHub
+install; your source `.zip` is left untouched.
+
 > [!IMPORTANT]
 > Because of GitHub's file-size limit, the Mortal weights bundled in
 > the release zip are a small, weak **placeholder model** — useful to
@@ -442,7 +448,7 @@ Done in alpha.8:
 - [x] Game history persistence + History tab (rank pie / PT chart / stats)
 - [x] Logs viewer (Diagnostic + Inspector tabs)
 - [x] i18n: en / ja / zh-TW / zh-CN, with Setup-wizard language picker
-- [x] Bot install from a GitHub release
+- [x] Bot install from a GitHub release or a local ZIP file
 - [x] Chromium capture mode (no CA trust needed)
 - [x] **AutoPlay** (Mahjong Soul first; the bot drives the table
       autonomously, like the original Akagi's Windows AutoPlay)

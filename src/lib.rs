@@ -131,6 +131,7 @@ pub fn run() {
     let history_bus_for_recorder = history_bus.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(crate::ipc_handlers!())
         .setup({
             // AppState constructed *inside* setup() so the python+uv
