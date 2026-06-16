@@ -40,10 +40,25 @@ mjai_bot/<name>/
 └── README.md         # bot-specific notes (model files, license, …)
 ```
 
-`pyproject.toml` declares the bot's Python dependencies. On the first launch
-Akagi runs `uv sync` into a per-bot virtual environment, so a bot can pull in
-whatever packages it needs without touching the rest of the system. (Akagi
-ships its own Python + `uv`, so bots run even with no system Python installed.)
+`pyproject.toml` declares the bot's Python dependencies. The first time the
+environment is built, Akagi runs `uv sync` into a per-bot virtual environment,
+so a bot can pull in whatever packages it needs without touching the rest of
+the system. (Akagi ships its own Python + `uv`, so bots run even with no system
+Python installed.) Two things it must contain:
+
+```toml
+[project]
+requires-python = ">=3.12"   # Akagi bundles Python 3.12
+
+[tool.uv]
+package = false              # the bot is a script, not an installable library
+```
+
+Without `[tool.uv] package = false`, `uv sync` tries to **build** your bot as a
+package and fails — set it on every bot. See
+[`example/pyproject.toml`](example/pyproject.toml) for a complete, known-good
+file. A bot with no `pyproject.toml` at all is treated as dependency-free and
+is activatable immediately (it must then rely only on the stdlib).
 
 ## The I/O protocol
 
@@ -328,16 +343,25 @@ panel — perfectly fine for a no-knobs bot.
 
 ## Registering the bot
 
-1. Drop the folder under `mjai_bot/<name>/`. Akagi rescans on each game start,
-   so a freshly added bot is picked up without a restart.
-2. In Akagi's settings, set it as the active bot for 4-player and/or 3-player
-   games (`bot.active_4p` / `bot.active_3p` — the two slots are independent;
-   leave one empty to run that mode analysis-only).
-3. On first launch Akagi runs `uv sync` for the bot (a one-time, possibly slow
-   step shown as a "Preparing bot" toast); later launches are instant.
+1. Drop the folder under `mjai_bot/<name>/`. Akagi rescans on each game start
+   and whenever you open or **Refresh** the Bots tab, so a freshly added bot is
+   picked up without a restart.
+2. **Build its Python environment.** If the bot has a `pyproject.toml`, its row
+   shows an **Install environment** button until the env is built — click it to
+   run `uv sync` once (a possibly slow, one-time step). The activation toggle
+   stays disabled until the environment is ready, so a game never picks a bot
+   that would need a slow `uv sync` mid-match. Editing `pyproject.toml` later
+   marks the env stale and the button returns — click it again to rebuild.
+   (A bot with no `pyproject.toml` skips this step entirely.)
+3. **Activate it.** Toggle the bot on for 4-player and/or 3-player games
+   (`bot.active_4p` / `bot.active_3p` — the two slots are independent; leave one
+   empty to run that mode analysis-only). You can rebuild the env any time later
+   via **Configure → Reinstall environment**.
 
-Bots can also be installed straight from a GitHub release via the **Bots** tab
-— see [`../src/bot/README.md`](../src/bot/README.md) for that flow.
+This local-folder flow is the fastest way to iterate while developing. Bots can
+also be installed straight from a GitHub release or a local `.zip` via the
+**Bots** tab — those paths build the environment automatically as part of the
+install. See [`../src/bot/README.md`](../src/bot/README.md) for that flow.
 
 ## AGPL boundary
 

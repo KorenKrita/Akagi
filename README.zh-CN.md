@@ -307,6 +307,10 @@ stdout 每行写出一个 mjai 动作对象（无动作时输出
 [`mjai_bot/example/`](./mjai_bot/example/) 是一个 in-tree、
 可运行的规则型示例 bot。
 
+本地开发时，把 bot 文件夹放到 `mjai_bot/<name>/`，在 **Bots** 标签页该 bot
+行上点击 **安装环境** 即可构建其 venv —— 无需每次改动都重新打包安装。环境
+就绪前启用开关会保持禁用。
+
 ### AGPL 边界
 
 Bot 以 Akagi 启动的 **独立 OS 子进程** 运行。通信严格通
@@ -418,6 +422,10 @@ session；点击行可看到原始结构化字段与源位置。
   会很慢 — 在 Diagnostic 标签页观察 `bot=<name>` 的消息。
   若一直未完成，删除
   `mjai_bot/<name>/.akagi/synced.stamp` 后重试。
+- **启用开关变灰 / 手动放入的 bot 无法启用。** 它的 Python 环境还没构建。
+  在 **Bots** 标签页该 bot 行上点击 **安装环境** 按钮（环境未就绪时会出现）
+  以运行 `uv sync`；完成后开关即可启用。修改该 bot 的 `pyproject.toml` 会
+  使环境失效，按钮会再次出现。
 - **Bot 对局途中崩溃。** Inspector 标签页可显示 bot 死前
   看到的最后一帧；附在 bug 报告里。
 - **三麻挑了错的 bot。** 检查设置 → Bot 中的

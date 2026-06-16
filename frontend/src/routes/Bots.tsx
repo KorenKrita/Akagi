@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive } from 'lucide-react'
+import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -31,6 +31,7 @@ import {
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@/lib/tauri'
 import { withInstallBlock } from '@/lib/install'
+import { toast } from '@/components/ui/sonner'
 import { useBotStore } from '@/stores/botStore'
 import { useConfigStore } from '@/stores/configStore'
 import type { AppConfig, BotInfo, BotSettings } from '@/types'
@@ -45,6 +46,7 @@ export function Bots() {
   const [loading, setLoading] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [installingEnv, setInstallingEnv] = useState<string | null>(null)
 
   const refresh = async () => {
     setLoading(true)
@@ -80,10 +82,32 @@ export function Bots() {
     }
     try {
       await invoke('set_active_bot', { mode, name })
-    } catch {
-      /* noop */
+    } catch (e) {
+      // set_active_bot rejects (e.g. env not installed) without emitting a
+      // notify toast, so surface it here — otherwise the optimistic flip just
+      // reverts on refresh with no explanation.
+      toast.error(t('bots.activate_failed'), { description: String(e) })
     } finally {
       void refresh()
+    }
+  }
+
+  // Build a bot's Python environment (uv sync) on demand. This is the only
+  // path that works for a bot dropped straight into the bots directory with a
+  // pyproject.toml but no manifest.toml: activation is gated on env readiness,
+  // game-start sync needs activation first, and the drawer's "Reinstall
+  // environment" button is reachable only via Configure (manifest-gated).
+  // sync_bot_deps emits its own success/failure notify toasts, so we don't
+  // double-report here.
+  const installEnv = async (name: string) => {
+    setInstallingEnv(name)
+    try {
+      await withInstallBlock(() => invoke('sync_bot_deps', { name, force: false }))
+      await refresh()
+    } catch {
+      /* backend emits a `bot-sync-<name>` error toast */
+    } finally {
+      setInstallingEnv(null)
     }
   }
 
@@ -161,6 +185,19 @@ export function Bots() {
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">
+                    {bot.has_pyproject && !bot.env_ready && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void installEnv(bot.name)}
+                        disabled={installingEnv !== null}
+                        title={t('bots.install_env_tooltip')}
+                        className="gap-1.5"
+                      >
+                        <Download className={`h-4 w-4 ${installingEnv === bot.name ? 'animate-pulse' : ''}`} />
+                        {installingEnv === bot.name ? t('bots.installing_env') : t('bots.install_env')}
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"
