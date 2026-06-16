@@ -497,6 +497,46 @@ mod tests {
         assert_eq!(t.our_seat(), Some(1));
     }
 
+    /// Regression (issue #149): `riichienv-core 0.4.8` grows a hidden seat's
+    /// `hand` every turn — `Tsumo` pushes the unknown drawn tile but the
+    /// following `Dahai` removes by matching the *known* discard, which never
+    /// matches, so nothing is removed. The snapshot must reconstruct the
+    /// concealed count (`seat_tehai`) so an opponent never shows > 13 backs.
+    #[test]
+    fn opponent_tehai_count_does_not_grow() {
+        let mut t = GameTracker::new();
+        t.handle(&start_game()).unwrap(); // observer = seat 0 (start_game id=0)
+        t.handle(&start_kyoku(0)).unwrap();
+
+        // Seat 1 (a hidden opponent) draws an unknown tile and discards a known
+        // one, several times — the exact path that inflates the engine's hand.
+        for _ in 0..6 {
+            t.handle(&AkagiEvent::Tsumo {
+                actor: 1,
+                pai: "?".into(),
+            })
+            .unwrap();
+            t.handle(&AkagiEvent::Dahai {
+                actor: 1,
+                pai: "3p".into(),
+                tsumogiri: true,
+            })
+            .unwrap();
+        }
+
+        // Precondition: the underlying engine hand really did inflate.
+        assert!(
+            t.state().unwrap().players[1].hand.len() > 13,
+            "engine hand should be inflated by unmatched discards"
+        );
+
+        let snap = t.snapshot().unwrap();
+        // …but the snapshot stays at the true concealed size (no melds → 13).
+        assert_eq!(snap.players[1].tehai.len(), 13);
+        // The observer's own hand is untouched (engine tracks it correctly).
+        assert_eq!(snap.players[0].tehai.len(), 13);
+    }
+
     /// Regression: `riichienv-core 0.4.8::apply_mjai_event(Dahai)` does not
     /// populate `discard_from_hand` / `discard_is_riichi`, so the snapshot
     /// fell back to defaults and the mahgen river rendered with no
