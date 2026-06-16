@@ -2,7 +2,7 @@
 name = "akagi-example-bot"
 version = "0.1.0"
 description = "Shanten-evaluating example bot for Akagi v3 (adapted from mjai.app evalbot)."
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "AGPL-3.0-or-later" }
 
 # `mahjong` is a pure-Python shanten / hand-value calculator (MIT).

@@ -667,4 +667,43 @@ mod tests {
         // No `.akagi/` dir at all — must not panic.
         reset_sync_state(tmp.path()).await;
     }
+
+    /// Regression (issue #143): a bot dropped straight into the bots dir with a
+    /// `pyproject.toml` but **no** `manifest.toml` must still go through the
+    /// normal env-readiness transition — readiness/sync never depends on a
+    /// manifest. This is the invariant the Bots-tab "Install environment"
+    /// button relies on: it runs the same sync path for manifest-less bots,
+    /// breaking the chicken-and-egg where activation needs a ready env but the
+    /// only manual sync trigger (the drawer's "Reinstall environment" button)
+    /// was reachable only via the manifest-gated Configure button.
+    #[test]
+    fn is_synced_is_manifest_independent() {
+        let tmp = TempDir::new().unwrap();
+        // A minimal locally-developed bot: entry point + deps, no manifest.
+        write(&tmp.path().join("bot.py"), "print()\n");
+        let py = tmp.path().join("pyproject.toml");
+        write(&py, "[project]\nname='a'\n\n[tool.uv]\npackage = false\n");
+        assert!(
+            !tmp.path().join("manifest.toml").exists(),
+            "this fixture deliberately has no manifest"
+        );
+
+        // Before sync: deps declared but no venv/stamp → not ready (toggle
+        // blocked, install button shown).
+        assert!(
+            !is_synced(tmp.path()),
+            "fresh dropped-in bot must read as not ready"
+        );
+
+        // After a sync seeds the venv + matching stamp → ready, with no
+        // manifest anywhere in the picture.
+        let sig = current_signature(&py, &tmp.path().join("uv.lock")).unwrap();
+        let akagi = tmp.path().join(AKAGI_DIR);
+        std::fs::create_dir_all(akagi.join(VENV_DIR)).unwrap();
+        std::fs::write(akagi.join(STAMP_FILE), &sig).unwrap();
+        assert!(
+            is_synced(tmp.path()),
+            "manifest-less bot must become ready after sync"
+        );
+    }
 }

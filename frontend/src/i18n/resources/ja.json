@@ -451,7 +451,11 @@
     "drawer_reinstall": "環境を再構築",
     "drawer_reinstall_tooltip": "この Bot の Python virtualenv を消去して再構築",
     "drawer_reinstalling": "再構築中…",
-    "env_not_ready_tooltip": "環境がまだインストールされていません。有効化する前にインストール／同期してください。"
+    "env_not_ready_tooltip": "環境がまだインストールされていません。有効化する前にインストール／同期してください。",
+    "install_env": "環境をインストール",
+    "install_env_tooltip": "このボットを有効化できるよう Python 環境を構築します（uv sync）",
+    "installing_env": "インストール中…",
+    "activate_failed": "有効なボットを切り替えられませんでした"
   },
   "overview": {
     "title": "概要",

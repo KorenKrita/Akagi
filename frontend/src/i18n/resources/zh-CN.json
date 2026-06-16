@@ -451,7 +451,11 @@
     "drawer_reinstall": "重建环境",
     "drawer_reinstall_tooltip": "清除并重建这个 Bot 的 Python 虚拟环境",
     "drawer_reinstalling": "重建中…",
-    "env_not_ready_tooltip": "环境尚未安装完成——启用前请先安装或同步环境。"
+    "env_not_ready_tooltip": "环境尚未安装完成——启用前请先安装或同步环境。",
+    "install_env": "安装环境",
+    "install_env_tooltip": "构建此 Bot 的 Python 环境（uv sync），之后才能启用",
+    "installing_env": "安装中…",
+    "activate_failed": "无法切换启用中的 Bot"
   },
   "overview": {
     "title": "总览",

@@ -451,7 +451,11 @@
     "drawer_reinstall": "Reinstall environment",
     "drawer_reinstall_tooltip": "Wipe and recreate the Python virtualenv for this bot",
     "drawer_reinstalling": "Reinstalling…",
-    "env_not_ready_tooltip": "Environment not installed yet — install or sync it before activating."
+    "env_not_ready_tooltip": "Environment not installed yet — install or sync it before activating.",
+    "install_env": "Install environment",
+    "install_env_tooltip": "Build the Python environment (uv sync) so this bot can be activated",
+    "installing_env": "Installing…",
+    "activate_failed": "Couldn't change active bot"
   },
   "overview": {
     "title": "Overview",

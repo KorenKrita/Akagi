@@ -318,6 +318,11 @@ event stream, the reaction and `meta` HUD format, toast notifications, and
 `manifest.toml` settings. [`mjai_bot/example/`](./mjai_bot/example/) is a
 working rule-based bot you can copy.
 
+For local development, drop your bot folder under `mjai_bot/<name>/` and click
+**Install environment** on its row in the **Bots** tab to build its venv — no
+need to repackage and reinstall on every change. The activation toggle stays
+disabled until the environment is ready.
+
 ### AGPL boundary
 
 Bots run as a **separate OS subprocess** spawned by Akagi. Communication
@@ -429,6 +434,12 @@ Useful when debugging a bot or a bridge issue.
 - **Bot stuck in `Loading{SyncingDeps}`.** First-run `uv sync` is
   slow — watch the Diagnostic tab for `bot=<name>` lines. If it never
   finishes, delete `mjai_bot/<name>/.akagi/synced.stamp` and retry.
+- **Activation toggle greyed out / a dropped-in bot won't enable.** Its
+  Python environment isn't built yet. On the **Bots** tab, click the
+  **Install environment** button on that bot's row (it appears whenever the
+  env isn't ready) to run `uv sync`; the toggle enables once it finishes.
+  Editing the bot's `pyproject.toml` marks the env stale and brings the
+  button back.
 - **Bot crashed mid-game.** The Inspector tab shows the last frame the
   bot saw before dying; attach it to the bug report.
 - **Wrong bot picked for a 3-player game.** Check `bot.active_3p` in
