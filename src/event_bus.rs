@@ -59,9 +59,15 @@ pub type PostTrackerBus = broadcast::Sender<MjaiEvent>;
 /// frontend.
 pub type HistoryBus = broadcast::Sender<HistoryEvent>;
 
-/// Default capacity. ~1 second of mjai events at peak game pace
-/// (start_kyoku + 13 tehai + many tsumo/dahai pairs) is well under 256.
-pub const DEFAULT_CAPACITY: usize = 256;
+/// Default capacity. Live pacing produces ~1 second of mjai events at a time
+/// (start_kyoku + 13 tehai + a few tsumo/dahai pairs), which is tiny. The
+/// sizing constraint is the **one-shot GameRestore replay**: on reconnect the
+/// bridge emits an entire kyoku's events in a single synchronous burst (the
+/// CDP send loop does not yield between `send`s), and consumers treat overflow
+/// as `Lagged → skip`. A skipped mid-hand `dahai`/`pon` would silently corrupt
+/// the game-state tracker with no self-heal until the next kyoku, so the buffer
+/// must comfortably exceed a worst-case full-kyoku event count (~a few hundred).
+pub const DEFAULT_CAPACITY: usize = 1024;
 
 /// Smaller buffer for status / notification streams — these are bursty
 /// but low-rate; 64 is plenty.

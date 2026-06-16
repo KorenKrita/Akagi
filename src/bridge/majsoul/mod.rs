@@ -29,6 +29,10 @@ use tracing::{info, warn};
 const METHOD_AUTH_GAME: &str = ".lq.FastTest.authGame";
 const METHOD_ACTION_PROTOTYPE: &str = ".lq.ActionPrototype";
 const METHOD_NOTIFY_GAME_END_RESULT: &str = ".lq.NotifyGameEndResult";
+/// Reconnect replay: both responses carry a `GameRestore { actions[] }` of the
+/// current kyoku. See `handle_game_restore`.
+const METHOD_SYNC_GAME: &str = ".lq.FastTest.syncGame";
+const METHOD_ENTER_GAME: &str = ".lq.FastTest.enterGame";
 const ACTION_NEW_ROUND: &str = "ActionNewRound";
 const ACTION_DEAL_TILE: &str = "ActionDealTile";
 const ACTION_DISCARD_TILE: &str = "ActionDiscardTile";
@@ -198,6 +202,8 @@ impl MajsoulBridge {
                 self.handle_auth_game_response(&msg.payload)
             }
             (MessageType::Notify, METHOD_ACTION_PROTOTYPE) => self.handle_action_prototype(msg),
+            (MessageType::Response, METHOD_SYNC_GAME)
+            | (MessageType::Response, METHOD_ENTER_GAME) => self.handle_game_restore(&msg.payload),
             (MessageType::Notify, METHOD_NOTIFY_GAME_END_RESULT) => {
                 // `result.players[]` carries final standings. Mjai
                 // `end_game` has no payload — the standings live in the
@@ -211,6 +217,91 @@ impl MajsoulBridge {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Replay a `GameRestore` carried by a `.lq.FastTest.syncGame` /
+    /// `.lq.FastTest.enterGame` response. Majsoul sends this right after
+    /// `authGame` when a client reconnects to an in-progress match;
+    /// `game_restore.actions[]` is the full action log of the current kyoku
+    /// (from `ActionNewRound` up to the present moment). Replaying each action
+    /// through the normal per-action path rebuilds the mjai stream so the
+    /// engine / bot / UI recover the in-progress hand.
+    ///
+    /// Each entry is an `ActionPrototype { name, data, step }`. Unlike the live
+    /// `.lq.ActionPrototype` notify, the embedded `data` is plain base64
+    /// protobuf with no XOR — see [`parser::decode_restore_action`]. We re-wrap
+    /// each decoded action into the same `{name, data}` shape
+    /// `handle_action_prototype` expects and feed it through, so every `build_*`
+    /// conversion and the `pending_reach_accepted` bookkeeping is reused
+    /// verbatim (a reach left pending at the end of the replay is drained by the
+    /// first subsequent live action, exactly as in live play).
+    ///
+    /// No `start_game` is emitted — the preceding `authGame` already did that
+    /// (the single reset point for the downstream tracker / bot / autoplay). The
+    /// leading `ActionMJStart` has no handler and is a no-op, as is any other
+    /// unrecognised action. The `snapshot` field is intentionally ignored;
+    /// replaying the actions reconstructs the full state.
+    fn handle_game_restore(&mut self, payload: &JsonValue) -> Vec<MjaiEvent> {
+        let is_end = payload
+            .get("is_end")
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false);
+        let step = payload.get("step").and_then(JsonValue::as_u64);
+        let actions = payload
+            .pointer("/game_restore/actions")
+            .and_then(JsonValue::as_array);
+        let Some(actions) = actions.filter(|a| !a.is_empty()) else {
+            // First-entry `enterGame` (or a finished game) carries no replay
+            // actions — nothing to reconstruct.
+            info!(
+                target: "akagi::bridge::majsoul",
+                "GameRestore with no actions to replay (step={step:?} is_end={is_end})"
+            );
+            return Vec::new();
+        };
+        info!(
+            target: "akagi::bridge::majsoul",
+            "replaying {} GameRestore actions (step={step:?} is_end={is_end})",
+            actions.len()
+        );
+
+        let mut events = Vec::new();
+        for action in actions {
+            let Some(name) = action.get("name").and_then(JsonValue::as_str) else {
+                warn!(
+                    target: "akagi::bridge::majsoul",
+                    "GameRestore action missing name: {action}"
+                );
+                continue;
+            };
+            let Some(b64) = action.get("data").and_then(JsonValue::as_str) else {
+                warn!(
+                    target: "akagi::bridge::majsoul",
+                    "GameRestore action {name} missing data string"
+                );
+                continue;
+            };
+            let decoded = match parser::decode_restore_action(name, b64) {
+                Ok(decoded) => decoded,
+                Err(e) => {
+                    warn!(
+                        target: "akagi::bridge::majsoul",
+                        "failed to decode GameRestore action {name}: {e:#}"
+                    );
+                    continue;
+                }
+            };
+            // Re-wrap as the same `{name, data}` shape a live ActionPrototype
+            // carries, then run it through the shared conversion path.
+            let synthetic = ParsedMessage {
+                msg_type: MessageType::Notify,
+                msg_id: None,
+                method_name: Arc::from(METHOD_ACTION_PROTOTYPE),
+                payload: json!({ "name": name, "data": decoded }),
+            };
+            events.extend(self.handle_action_prototype(&synthetic));
+        }
+        events
     }
 
     fn handle_action_prototype(&mut self, msg: &ParsedMessage) -> Vec<MjaiEvent> {
@@ -1156,6 +1247,171 @@ mod tests {
             method_name: Arc::from(method),
             payload,
         }
+    }
+
+    /// Full `.lq.FastTest.syncGame` response captured from a real mid-game
+    /// reconnect (4p; our account at seat 3; 32 replay actions; East-1, no
+    /// melds/riichi/kan). This is exactly the JSON the parser produces for the
+    /// response — each action `data` is still base64 (decoded during replay).
+    const SYNC_GAME_SAMPLE: &str = r#"{"game_restore":{"actions":[{"data":"","name":"ActionMJStart","step":0},{"data":"CAAQABgAIgI0cCICMW0iAjNwIgI0eiICN3oiAjZ6IgIwcCICM3MiAjBtIgI0cyICMXMiAjlzIgIyejIMqMMBqMMBqMMBqMMBQABYAGhFcgIxenoCCAB6AggBegIIAnoCCAOaAUA1NWQ2NzQ3MTRjNjAzODFhNGJjOTJmYzBmOWIwNWVjNDU4OWZlMzI0NTQ4OWVmOGY3NTc5NTVmMzIzZWIzZTE1qgFAYzFmNmY1YTQwOGFjMzgyZGEyZGE1MTA3OTUzYmUzYTg1N2M5OTdmNGNkMjg2M2JlZjczY2M3ZjE3MDllMDA4Mw==","name":"ActionNewRound","step":1},{"data":"CAASAjR6GAAoADAASAA=","name":"ActionDiscardTile","step":2},{"data":"CAEYRDgA","name":"ActionDealTile","step":3},{"data":"CAESAjJwGAAoATAASAA=","name":"ActionDiscardTile","step":4},{"data":"CAIYQzgA","name":"ActionDealTile","step":5},{"data":"CAISAjlwGAAoADAASAA=","name":"ActionDiscardTile","step":6},{"data":"CAMSAjdwGEIiDAgDEgIIASAAKOCnEjgA","name":"ActionDealTile","step":7},{"data":"CAMSAjd6GAAoADAASAA=","name":"ActionDiscardTile","step":8},{"data":"CAAYQTgA","name":"ActionDealTile","step":9},{"data":"CAASAjN6GAAoATAASAA=","name":"ActionDiscardTile","step":10},{"data":"CAEYQDgA","name":"ActionDealTile","step":11},{"data":"CAESAjR6GAAoADAASAA=","name":"ActionDiscardTile","step":12},{"data":"CAIYPzgA","name":"ActionDealTile","step":13},{"data":"CAISAjRwGAAiEwgDEgkIAhIFM3B8MHAgACjgpxIoATAASAA=","name":"ActionDiscardTile","step":14},{"data":"CAMSAjZ6GD4iDAgDEgIIASAAKOCnEjgA","name":"ActionDealTile","step":15},{"data":"CAMSAjR6GAAoADAASAA=","name":"ActionDiscardTile","step":16},{"data":"CAAYPTgA","name":"ActionDealTile","step":17},{"data":"CAASAjV6GAAoADAASAA=","name":"ActionDiscardTile","step":18},{"data":"CAEYPDgA","name":"ActionDealTile","step":19},{"data":"CAESAjNzGAAoATAASAA=","name":"ActionDiscardTile","step":20},{"data":"CAIYOzgA","name":"ActionDealTile","step":21},{"data":"CAISAjlzGAAoADAASAA=","name":"ActionDiscardTile","step":22},{"data":"CAMSAjRtGDoiDAgDEgIIASAAKOCnEjgA","name":"ActionDealTile","step":23},{"data":"CAMSAjFtGAAoADAASAA=","name":"ActionDiscardTile","step":24},{"data":"CAAYOTgA","name":"ActionDealTile","step":25},{"data":"CAASAjd6GAAoADAASAA=","name":"ActionDiscardTile","step":26},{"data":"CAEYODgA","name":"ActionDealTile","step":27},{"data":"CAESAjZ6GAAiEwgDEgkIAxIFNnp8NnogACjgpxIoADAASAA=","name":"ActionDiscardTile","step":28},{"data":"CAIYNzgA","name":"ActionDealTile","step":29},{"data":"CAISAjF6GAAoADAASAA=","name":"ActionDiscardTile","step":30},{"data":"CAMSAjdzGDYiDAgDEgIIASAAKOCnEjgA","name":"ActionDealTile","step":31}],"game_state":1,"last_pause_time_ms":0,"passed_waiting_time":16,"start_time":0},"is_end":false,"step":32}"#;
+
+    /// Resolve the bridge to seat 3 / 4 players via a real authGame exchange,
+    /// matching `SYNC_GAME_SAMPLE` (our account_id 12345 sits at `seat_list[3]`).
+    fn seated_for_sample() -> MajsoulBridge {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.dispatch(&req(METHOD_AUTH_GAME, json!({ "account_id": 12345 })));
+        bridge.dispatch(&resp(
+            METHOD_AUTH_GAME,
+            json!({
+                "players": [{ "account_id": 12345, "nickname": "player_a" }],
+                "seat_list": [10u64, 20, 30, 12345u64],
+            }),
+        ));
+        assert_eq!(bridge.seat, Some(3));
+        assert_eq!(bridge.num_players, 4);
+        bridge
+    }
+
+    /// A `.lq.FastTest.syncGame` response replays the whole in-progress kyoku
+    /// through the normal conversion path, rebuilding the mjai stream. Regression
+    /// for mid-game reconnect recovery (issue #147).
+    #[test]
+    fn sync_game_replays_in_progress_kyoku() {
+        let mut bridge = seated_for_sample();
+        let payload: JsonValue = serde_json::from_str(SYNC_GAME_SAMPLE).unwrap();
+        let events = bridge.dispatch(&resp(METHOD_SYNC_GAME, payload));
+
+        // 1 start_kyoku + 16 tsumo (dealer's opening draw + 15 draws) + 15 dahai.
+        assert_eq!(events.len(), 32, "unexpected replay event count");
+
+        // The replay must NOT emit start_game — that belongs to the preceding
+        // authGame (the single downstream reset point).
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, MjaiEvent::StartGame { .. })),
+            "replay must not emit start_game"
+        );
+        // Exactly one start_kyoku, and it is the very first event.
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, MjaiEvent::StartKyoku { .. }))
+                .count(),
+            1
+        );
+        match &events[0] {
+            MjaiEvent::StartKyoku {
+                bakaze,
+                kyoku,
+                oya,
+                honba,
+                kyotaku,
+                num_players,
+                tehais,
+                ..
+            } => {
+                assert_eq!(bakaze.as_str(), "E");
+                assert_eq!(*kyoku, 1);
+                assert_eq!(*oya, 0);
+                assert_eq!(*honba, 0);
+                assert_eq!(*kyotaku, 0);
+                assert_eq!(*num_players, 4);
+                // Our seat-3 tehai is fully known (13 real tiles, no "?"); the
+                // restore actions decoded WITHOUT the XOR step.
+                assert_eq!(tehais[3].len(), TEHAI_SIZE);
+                assert!(tehais[3].iter().all(|t| t != UNKNOWN_TILE));
+                // Opponents' hands stay hidden.
+                assert!(tehais[0].iter().all(|t| t == UNKNOWN_TILE));
+            }
+            other => panic!("expected StartKyoku first, got {other:?}"),
+        }
+        // Dealer's opening draw is unknown to us.
+        assert!(matches!(&events[1], MjaiEvent::Tsumo { actor: 0, pai } if pai == "?"));
+        // First discard: seat 0 cuts 4z (= mjai "N"), tedashi.
+        assert!(
+            matches!(&events[2], MjaiEvent::Dahai { actor: 0, pai, tsumogiri: false } if pai == "N")
+        );
+        // Our own draw (step 7) carries the real tile 7p.
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, MjaiEvent::Tsumo { actor: 3, pai } if pai == "7p")));
+        // Replay ends on our latest draw (step 31): 7s, known.
+        assert!(
+            matches!(events.last().unwrap(), MjaiEvent::Tsumo { actor: 3, pai } if pai == "7s")
+        );
+
+        let dahai = events
+            .iter()
+            .filter(|e| matches!(e, MjaiEvent::Dahai { .. }))
+            .count();
+        let tsumo = events
+            .iter()
+            .filter(|e| matches!(e, MjaiEvent::Tsumo { .. }))
+            .count();
+        assert_eq!(dahai, 15);
+        assert_eq!(tsumo, 16);
+    }
+
+    /// A riichi declared on the LAST replayed action leaves `reach_accepted`
+    /// pending; it must be drained (prepended) onto the first subsequent *live*
+    /// action — identical to live semantics, proving the replay loop carries
+    /// `pending_reach_accepted` across the replay→live boundary.
+    #[test]
+    fn game_restore_riichi_drains_on_next_live_action() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.seat = Some(0);
+
+        // GameRestore whose only action is a riichi discard by seat 1
+        // (ActionDiscardTile{seat:1, tile:"5p", is_liqi:true}, plain base64).
+        let restore = resp(
+            METHOD_SYNC_GAME,
+            json!({
+                "game_restore": {
+                    "actions": [
+                        { "name": "ActionDiscardTile", "data": "CAESAjVwGAE=", "step": 1 }
+                    ]
+                },
+                "is_end": false,
+                "step": 2
+            }),
+        );
+        let events = bridge.dispatch(&restore);
+        assert!(matches!(&events[0], MjaiEvent::Reach { actor: 1, pai } if pai.is_none()));
+        assert!(matches!(&events[1], MjaiEvent::Dahai { actor: 1, pai, .. } if pai == "5p"));
+        assert_eq!(bridge.pending_reach_accepted, Some(1));
+
+        // First live action after the replay drains the queued reach_accepted.
+        let live = bridge.dispatch(&action_msg("ActionDealTile", json!({ "seat": 2 })));
+        assert!(matches!(&live[0], MjaiEvent::ReachAccepted { actor: 1 }));
+        assert!(matches!(&live[1], MjaiEvent::Tsumo { actor: 2, pai } if pai == "?"));
+        assert_eq!(bridge.pending_reach_accepted, None);
+    }
+
+    /// A first-entry `.lq.FastTest.enterGame` (or any response) with no replay
+    /// actions is a no-op — no events, no panic.
+    #[test]
+    fn enter_game_empty_restore_is_noop() {
+        let mut bridge = seated_for_sample();
+        // Empty actions array.
+        let empty = bridge.dispatch(&resp(
+            METHOD_ENTER_GAME,
+            json!({ "game_restore": { "actions": [] }, "is_end": false, "step": 0 }),
+        ));
+        assert!(empty.is_empty());
+        // Only the leading ActionMJStart (no handler) → still nothing.
+        let mj_start_only = bridge.dispatch(&resp(
+            METHOD_ENTER_GAME,
+            json!({
+                "game_restore": {
+                    "actions": [{ "name": "ActionMJStart", "data": "", "step": 0 }]
+                }
+            }),
+        ));
+        assert!(mj_start_only.is_empty());
+        // Missing game_restore entirely.
+        let missing = bridge.dispatch(&resp(METHOD_ENTER_GAME, json!({ "is_end": false })));
+        assert!(missing.is_empty());
     }
 
     #[test]
