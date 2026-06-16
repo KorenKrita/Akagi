@@ -50,3 +50,11 @@ export const BAKAZE_LABEL: Record<string, string> = {
 export function kyokuLabel(bakaze: string, kyoku: number): string {
   return `${BAKAZE_LABEL[bakaze] ?? bakaze} ${kyoku}局`
 }
+
+/** Seat wind (自風) label for `seat`. East = oya seat; each subsequent seat
+ * rotates S → W → N (4p) or S → W (3p — sanma has no N self-wind, only E/S/W). */
+export function bakazeFor(seat: number, oya: number, numPlayers: number): string {
+  const order = ['E', 'S', 'W', 'N']
+  const n = Math.max(1, numPlayers)
+  return BAKAZE_LABEL[order[(seat - oya + n) % n]]
+}

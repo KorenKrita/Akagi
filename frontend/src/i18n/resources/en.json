@@ -170,6 +170,8 @@
     "player_n_self": "Player {{n}} (Self)",
     "self_hand": "Self Hand",
     "self_hand_empty": "No hand yet — connect a game.",
+    "board": "Board",
+    "board_empty": "No game yet — connect a game.",
     "recommendations": "Algorithmic Top 3 Discards",
     "recommendations_empty": "Awaiting analysis.",
     "risk_chart": "Mixed Deal-in Risk",
