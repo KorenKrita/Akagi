@@ -113,11 +113,16 @@
   grid-template-columns: 1fr 1.25fr 1fr;
   grid-template-rows: 1fr 1.25fr 1fr;
   color: var(--foreground);
-  background: rgba(6, 26, 22, 0.86);
+  /* lighter translucent grey over the dark board, with a border */
+  background: oklch(0.30 0 0 / 0.55);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
   overflow: hidden;
+  /* panel text scales with the board (see --board-scale on .board-square) */
+  font-size: calc(11px * var(--board-scale, 1));
 }
 .board-score {
   display: flex;
@@ -128,24 +133,25 @@
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
-.board-score--top    { grid-column: 2; grid-row: 1; }
-.board-score--right  { grid-column: 3; grid-row: 2; }
+/* Each seat's info rotates to face that player (Majsoul-style). */
+.board-score--top    { grid-column: 2; grid-row: 1; transform: rotate(180deg); }
+.board-score--right  { grid-column: 3; grid-row: 2; transform: rotate(270deg); }
 .board-score--bottom { grid-column: 2; grid-row: 3; }
-.board-score--left   { grid-column: 1; grid-row: 2; }
+.board-score--left   { grid-column: 1; grid-row: 2; transform: rotate(90deg); }
 .board-score-wind {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  font-size: 10px;
+  font-size: 0.85em;
   font-weight: 700;
   opacity: 0.85;
 }
 .board-score-riichi {
   color: #fbbf24;
-  font-size: 8px;
+  font-size: 0.7em;
 }
 .board-score-pts {
-  font-size: 12px;
+  font-size: 1.05em;
   font-weight: 600;
 }
 
@@ -160,7 +166,7 @@
   text-align: center;
 }
 .board-center-round {
-  font-size: 12px;
+  font-size: 1.15em;
   font-weight: 600;
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -169,7 +175,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 9px;
+  font-size: 0.8em;
   font-variant-numeric: tabular-nums;
 }
 .board-stick {
@@ -178,7 +184,7 @@
   gap: 2px;
 }
 .board-stick img {
-  height: 12px;
+  height: 1.2em;
 }
 
 /* ---- current-turn indicator: slow-blinking yellow bar on the active side ---- */
