@@ -19,7 +19,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::snapshot::{DiscardEntry, GameStateSnapshot, MeldKind, MeldSnapshot, PlayerSnapshot};
+use super::snapshot::{
+    DiscardEntry, GameStateSnapshot, MeldKind, MeldSnapshot, Phase, PlayerSnapshot,
+};
 
 /// One player's view in the mahgen DSL.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,11 +58,16 @@ impl MahgenView {
         let players: Vec<PlayerMahgenView> = snap
             .players
             .iter()
-            .map(|p| PlayerMahgenView {
-                seat: p.seat,
-                hand: encode_hand(p, snap.our_seat),
-                melds: p.melds.iter().map(|m| encode_meld(m, p.seat, np)).collect(),
-                river: encode_river(&p.river),
+            .map(|p| {
+                // A seat is "drawing" (holds a freshly drawn tile / must
+                // discard) when it's the current actor awaiting an action.
+                let drawing = snap.current_player == p.seat && snap.phase == Phase::WaitAct;
+                PlayerMahgenView {
+                    seat: p.seat,
+                    hand: encode_hand(p, snap.our_seat, drawing),
+                    melds: p.melds.iter().map(|m| encode_meld(m, p.seat, np)).collect(),
+                    river: encode_river(&p.river),
+                }
             })
             .collect();
         Self {
@@ -152,21 +159,31 @@ fn encode_concat(tiles: &[String]) -> String {
 }
 
 /// Encode the closed hand for one player. The observer seat sees real
-/// tiles; other seats see `"0z" × hand_size` (back tiles).
-fn encode_hand(p: &PlayerSnapshot, our_seat: Option<u8>) -> String {
-    let hand_size = p.tehai.len();
-    if hand_size == 0 {
+/// tiles; other seats see `"0z" × n` (tile backs).
+///
+/// For non-observer seats the back count is derived from the melds, NOT from
+/// `tehai.len()`. For an *observed* opponent the engine's hand accumulates
+/// unknown draws — each `tsumo` adds an unknown tile, but the following
+/// `dahai` carries a *known* discard that can't be matched against the unknown
+/// tile, so it's never removed and the count grows by one per turn. The true
+/// concealed size is `13 - 3 * melds` (each called set consumes three of the
+/// thirteen tiles), plus one while that seat is holding a freshly drawn tile.
+fn encode_hand(p: &PlayerSnapshot, our_seat: Option<u8>, drawing: bool) -> String {
+    if our_seat == Some(p.seat) {
+        if p.tehai.is_empty() {
+            return String::new();
+        }
+        return encode_concat(&p.tehai);
+    }
+    let n = (13 - 3 * p.melds.len() as i32 + drawing as i32).max(0) as usize;
+    if n == 0 {
         return String::new();
     }
-    if our_seat == Some(p.seat) {
-        encode_concat(&p.tehai)
-    } else {
-        // n × `0z` — but mahgen wants `nz` form: `0` repeated, suffix `z`.
-        // i.e. 13 backs = "0000000000000z". Each `0` is one tile back.
-        let mut s = "0".repeat(hand_size);
-        s.push('z');
-        s
-    }
+    // n × `0z` in mahgen's `nz` form: `0` repeated, suffix `z`.
+    // i.e. 13 backs = "0000000000000z". Each `0` is one tile back.
+    let mut s = "0".repeat(n);
+    s.push('z');
+    s
 }
 
 /// Encode one meld in mahgen DSL.
@@ -495,7 +512,7 @@ mod tests {
     #[test]
     fn opponent_hand_renders_as_backs() {
         let p = pl(1, vec!["?"; 13], vec![], vec![]);
-        assert_eq!(encode_hand(&p, Some(0)), "0000000000000z");
+        assert_eq!(encode_hand(&p, Some(0), false), "0000000000000z");
     }
 
     #[test]
@@ -504,7 +521,22 @@ mod tests {
             "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "1s",
         ];
         let p = pl(0, tiles, vec![], vec![]);
-        assert_eq!(encode_hand(&p, Some(0)), "123456789m123p1s");
+        assert_eq!(encode_hand(&p, Some(0), false), "123456789m123p1s");
+    }
+
+    #[test]
+    fn opponent_back_count_derived_from_melds_not_tehai() {
+        // An observed opponent's `tehai` is unreliable (unknown draws pile up),
+        // so the back count comes from melds: 13 - 3 * melds (+1 while drawing).
+        let one_meld = vec![chi_meld("3m", &["1m", "2m"], 3)];
+        let p = pl(1, vec!["?"; 99], one_meld.clone(), vec![]);
+        // One called set, not drawing → 13 - 3 = 10 backs (tehai length ignored).
+        assert_eq!(encode_hand(&p, Some(0), false), "0000000000z");
+        // While that seat is drawing (holds a fresh tile) → one more: 11.
+        assert_eq!(encode_hand(&p, Some(0), true), "00000000000z");
+        // No melds, not drawing → the full 13 backs.
+        let p0 = pl(2, vec![], vec![], vec![]);
+        assert_eq!(encode_hand(&p0, Some(0), false), "0000000000000z");
     }
 
     fn chi_meld(called: &str, hand: &[&str], from_who: i8) -> MeldSnapshot {
