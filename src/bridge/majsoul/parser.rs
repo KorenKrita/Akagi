@@ -245,11 +245,11 @@ fn maybe_decode_action(mut payload: JsonValue) -> Result<JsonValue> {
     Ok(payload)
 }
 
-pub fn decode_action(name: &str, b64: &str) -> Result<JsonValue> {
-    let mut bytes = BASE64
-        .decode(b64)
-        .with_context(|| format!("base64 decode failed for action {name}"))?;
-    wtf_decode(&mut bytes);
+/// Resolve an action `name` (`.lq.ActionFoo`, or a bare `ActionFoo`) to its
+/// liqi message descriptor and decode `bytes` as that message into JSON.
+/// Shared by the live-action path (post-XOR) and the GameRestore path
+/// (no XOR).
+fn decode_named_action(name: &str, bytes: &[u8]) -> Result<JsonValue> {
     let parts: Vec<&str> = name.split('.').filter(|s| !s.is_empty()).collect();
     ensure!(!parts.is_empty(), "empty action name");
     // Action names are typically `.lq.ActionFoo`; fall back to last segment.
@@ -261,7 +261,32 @@ pub fn decode_action(name: &str, b64: &str) -> Result<JsonValue> {
     let desc = POOL
         .get_message_by_name(&fqn)
         .with_context(|| format!("unknown action type: {fqn}"))?;
-    decode_to_json(&desc, &bytes)
+    decode_to_json(&desc, bytes)
+}
+
+/// Decode a live `.lq.ActionPrototype.data` payload: base64 → XOR-decrypt →
+/// protobuf. The live notify obfuscates the action bytes (see [`wtf_decode`]).
+pub fn decode_action(name: &str, b64: &str) -> Result<JsonValue> {
+    let mut bytes = BASE64
+        .decode(b64)
+        .with_context(|| format!("base64 decode failed for action {name}"))?;
+    wtf_decode(&mut bytes);
+    decode_named_action(name, &bytes)
+}
+
+/// Decode an action embedded in a `GameRestore` replay (the `game_restore`
+/// field of a `.lq.FastTest.syncGame` / `.lq.FastTest.enterGame` response).
+///
+/// Unlike the live `.lq.ActionPrototype.data` notify, actions stored inside a
+/// `GameRestore` are **plain base64 protobuf** — the server does not apply the
+/// position-dependent XOR ([`wtf_decode`]) to them. Running the XOR here would
+/// corrupt the bytes, so this path base64-decodes and protobuf-decodes
+/// directly, with no XOR step.
+pub fn decode_restore_action(name: &str, b64: &str) -> Result<JsonValue> {
+    let bytes = BASE64
+        .decode(b64)
+        .with_context(|| format!("base64 decode failed for restore action {name}"))?;
+    decode_named_action(name, &bytes)
 }
 
 /// Position-dependent XOR scheme used by Majsoul for action payloads.
@@ -298,5 +323,41 @@ mod tests {
         wtf_decode(&mut buf);
         wtf_decode(&mut buf);
         assert_eq!(buf, original);
+    }
+
+    /// Real captured `ActionNewRound` from a GameRestore replay. The action
+    /// `data` is plain base64 protobuf (NOT XOR-obfuscated), so the no-XOR
+    /// `decode_restore_action` path must recover the readable tehai, while the
+    /// XOR-applying `decode_action` path must NOT (it sees corrupted bytes).
+    /// This locks in the "restore actions skip the XOR" decision.
+    const RESTORE_NEW_ROUND_B64: &str = "CAAQABgAIgI0cCICMW0iAjNwIgI0eiICN3oiAjZ6IgIwcCICM3MiAjBtIgI0cyICMXMiAjlzIgIyejIMqMMBqMMBqMMBqMMBQABYAGhFcgIxenoCCAB6AggBegIIAnoCCAOaAUA1NWQ2NzQ3MTRjNjAzODFhNGJjOTJmYzBmOWIwNWVjNDU4OWZlMzI0NTQ4OWVmOGY3NTc5NTVmMzIzZWIzZTE1qgFAYzFmNmY1YTQwOGFjMzgyZGEyZGE1MTA3OTUzYmUzYTg1N2M5OTdmNGNkMjg2M2JlZjczY2M3ZjE3MDllMDA4Mw==";
+
+    #[test]
+    fn decode_restore_action_skips_xor() {
+        let expected = vec![
+            "4p", "1m", "3p", "4z", "7z", "6z", "0p", "3s", "0m", "4s", "1s", "9s", "2z",
+        ];
+
+        let json = decode_restore_action("ActionNewRound", RESTORE_NEW_ROUND_B64)
+            .expect("restore action should decode without XOR");
+        let tiles: Vec<&str> = json["tiles"]
+            .as_array()
+            .expect("tiles array")
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(tiles, expected);
+
+        // Same bytes through the live (XOR) path must not yield the same tehai:
+        // it either fails to decode or produces garbage.
+        let via_xor = decode_action("ActionNewRound", RESTORE_NEW_ROUND_B64);
+        let same = via_xor.ok().and_then(|j| {
+            j["tiles"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+        }) == Some(expected.iter().map(|s| s.to_string()).collect());
+        assert!(!same, "XOR path unexpectedly produced the plain tehai");
     }
 }

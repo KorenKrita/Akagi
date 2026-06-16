@@ -258,6 +258,40 @@ Sanma has no chi. `build_chi_peng_gang` drops `ActionChiPengGang(chi)`
 with a warn log when `num_players == 3` (defense in depth — Majsoul
 shouldn't send it for sanma tables). Pon / kan stay enabled.
 
+## Mid-game reconnect — syncGame / enterGame (GameRestore)
+
+When a client reconnects to an in-progress match (page reload, or the
+controlled-Chromium relaunch Akagi does on restart), Majsoul re-runs
+`authGame` and then sends a `.lq.FastTest.syncGame` (or `.lq.FastTest.enterGame`)
+**response** whose `game_restore.actions[]` replays every action of the current
+kyoku, from `ActionNewRound` up to the present. Without this, a restarted Akagi
+would have no hand until the next kyoku.
+
+`handle_game_restore` reconstructs the in-progress hand by replaying that log:
+
+- It reads `game_restore.actions[]` (each entry an
+  `ActionPrototype { name, data, step }`). An absent/empty list — e.g. a
+  first-entry `enterGame` or a finished game — is a no-op.
+- Each action is decoded and re-wrapped into the same `{name, data}` shape a
+  live `ActionPrototype` carries, then fed through `handle_action_prototype`, so
+  **every `build_*` conversion and the `pending_reach_accepted` bookkeeping is
+  reused verbatim**. A riichi left pending at the end of the replay drains onto
+  the first subsequent live action, exactly as in live play.
+- **No `start_game` is emitted** — the preceding `authGame` already did that
+  (the single reset point for the downstream tracker / bot / autoplay). The
+  leading `ActionMJStart` has no handler and is a no-op, as is any other
+  unrecognised action. The `GameRestore.snapshot` field is ignored; replaying
+  the actions reconstructs the full state.
+
+> **No XOR on restore actions.** Unlike live `.lq.ActionPrototype.data` (which is
+> XOR-obfuscated, see *Action XOR* below), the `data` of actions embedded in a
+> `GameRestore` is plain base64 protobuf. `parser::decode_restore_action`
+> base64-decodes and protobuf-decodes directly, skipping `wtf_decode` — running
+> the XOR on them would corrupt the bytes.
+
+The whole kyoku is emitted as one event burst; see `event_bus::DEFAULT_CAPACITY`
+for why the mjai bus buffer must comfortably exceed a full kyoku's event count.
+
 ## mjai event log
 
 When constructed with an `Arc<Session>`, the bridge rotates a fresh
