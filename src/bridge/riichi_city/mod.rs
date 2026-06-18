@@ -474,45 +474,59 @@ impl RiichiCityBridge {
             }
         }
 
-        match data.get("win_info").and_then(JsonValue::as_array) {
-            // A win (one entry per winner — multiple for double/triple ron).
-            Some(wins) if !wins.is_empty() => {
-                let is_tsumo = end_type == 1;
-                for win in wins {
-                    let Some(uid) = field_i64(win, "user_id") else {
-                        continue;
-                    };
-                    let Some(actor) = self.status.actor_of(uid) else {
-                        continue;
-                    };
-                    let target = if is_tsumo {
-                        actor
-                    } else {
-                        self.status.last_dahai_actor.unwrap_or(actor)
-                    };
-                    // li_bao_card = ura-dora indicators (revealed on a riichi win).
-                    let ura = win
-                        .get("li_bao_card")
-                        .and_then(JsonValue::as_array)
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(json_i64)
-                                .map(|c| card_to_mjai(c as u32))
-                                .collect::<Vec<_>>()
-                        })
-                        .filter(|v| !v.is_empty());
-                    events.push(MjaiEvent::Hora {
-                        actor,
-                        target,
-                        deltas: Some(deltas.clone()),
-                        ura_markers: ura,
-                    });
-                }
-            }
-            // Any draw (exhaustive, 九種九牌, or other abortive).
-            _ => events.push(MjaiEvent::Ryukyoku {
+        // A win_info entry is a real winner only when its hand has value
+        // (all_point > 0). On an exhaustive draw (荒牌流局) win_info instead
+        // lists the *tenpai* players with all_point == 0 — not winners — so the
+        // presence of win_info alone must NOT be read as a win.
+        let winners: Vec<&JsonValue> = data
+            .get("win_info")
+            .and_then(JsonValue::as_array)
+            .map(|ws| {
+                ws.iter()
+                    .filter(|w| field_i64(w, "all_point").unwrap_or(0) > 0)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if winners.is_empty() {
+            // Any draw: exhaustive (荒牌流局), 九種九牌, or other abortive. The
+            // deltas already carry tenpai/noten payments and riichi-stick moves.
+            events.push(MjaiEvent::Ryukyoku {
                 deltas: Some(deltas),
-            }),
+            });
+        } else {
+            // One hora per winner (multiple for double/triple ron).
+            let is_tsumo = end_type == 1;
+            for win in winners {
+                let Some(uid) = field_i64(win, "user_id") else {
+                    continue;
+                };
+                let Some(actor) = self.status.actor_of(uid) else {
+                    continue;
+                };
+                let target = if is_tsumo {
+                    actor
+                } else {
+                    self.status.last_dahai_actor.unwrap_or(actor)
+                };
+                // li_bao_card = ura-dora indicators (revealed on a riichi win).
+                let ura = win
+                    .get("li_bao_card")
+                    .and_then(JsonValue::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(json_i64)
+                            .map(|c| card_to_mjai(c as u32))
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|v| !v.is_empty());
+                events.push(MjaiEvent::Hora {
+                    actor,
+                    target,
+                    deltas: Some(deltas.clone()),
+                    ura_markers: ura,
+                });
+            }
         }
 
         events.push(MjaiEvent::EndKyoku);
@@ -1000,7 +1014,7 @@ mod tests {
                 "cmd": "cmd_game_end",
                 "data": {
                     "end_type": 0,
-                    "win_info": [{"user_id": 1001, "li_bao_card": [0x51]}],
+                    "win_info": [{"user_id": 1001, "all_point": 12000, "li_bao_card": [0x51]}],
                     "user_profit": [
                         {"user_id": 1001, "user_point": 37000, "point_profit": 12000, "li_zhi_profit": 0},
                         {"user_id": 1002, "user_point": 25000, "point_profit": 0, "li_zhi_profit": 0},
@@ -1033,7 +1047,7 @@ mod tests {
                 "cmd": "cmd_game_end",
                 "data": {
                     "end_type": 1,
-                    "win_info": [{"user_id": 1003}],
+                    "win_info": [{"user_id": 1003, "all_point": 6000}],
                     "user_profit": [
                         {"user_id": 1001, "user_point": 23000},
                         {"user_id": 1002, "user_point": 23000},
@@ -1080,6 +1094,44 @@ mod tests {
         match &e[0] {
             MjaiEvent::Ryukyoku { deltas } => {
                 assert_eq!(deltas.as_ref().unwrap(), &vec![0, 0, 0, 0]);
+            }
+            other => panic!("expected Ryukyoku, got {other:?}"),
+        }
+        assert!(matches!(e[1], MjaiEvent::EndKyoku));
+    }
+
+    /// Regression (capture 20260618-183333): 荒牌流局 arrives as end_type 7 with
+    /// a non-empty win_info that lists the *tenpai* players (all_point == 0).
+    /// It must become one ryukyoku, not a hora per "winner".
+    #[test]
+    fn game_end_exhaustive_draw_with_tenpai_list_is_ryukyoku() {
+        let mut b = started_4p(); // scores all 25000
+        let e = feed(
+            &mut b,
+            18,
+            json!({
+                "cmd": "cmd_game_end",
+                "data": {
+                    "end_type": 7,
+                    // Seats 1 and 3 tenpai (revealed), but all_point == 0.
+                    "win_info": [
+                        {"user_id": 1002, "all_point": 0, "all_fu": 0, "all_fang_num": 0},
+                        {"user_id": 1004, "all_point": 0, "all_fu": 0, "all_fang_num": 0}
+                    ],
+                    // Tenpai-in-riichi net +500 (1500 payment − 1000 stick); noten −1500.
+                    "user_profit": [
+                        {"user_id": 1001, "user_point": 23500},
+                        {"user_id": 1002, "user_point": 25500},
+                        {"user_id": 1003, "user_point": 23500},
+                        {"user_id": 1004, "user_point": 25500}
+                    ]
+                }
+            }),
+        );
+        assert_eq!(e.len(), 2, "exactly one ryukyoku + end_kyoku, no hora");
+        match &e[0] {
+            MjaiEvent::Ryukyoku { deltas } => {
+                assert_eq!(deltas.as_ref().unwrap(), &vec![-1500, 500, -1500, 500]);
             }
             other => panic!("expected Ryukyoku, got {other:?}"),
         }

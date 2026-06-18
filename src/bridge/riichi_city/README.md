@@ -75,8 +75,11 @@ Each kyoku ends with `cmd_game_action_brc` carrying action 7 (ron) / 10 (tsumo)
 / 12 (abortive draw), immediately followed by `cmd_game_end` — the settlement.
 The action codes only flag the end; `on_game_end` does the work:
 
-- `end_type`: 0 = ron, 1 = tsumo, 6 = 九種九牌 (and any other draw); `win_info`
-  non-empty ⇒ win, empty ⇒ draw.
+- `end_type`: 0 = ron, 1 = tsumo, 6 = 九種九牌, 7 = exhaustive draw (荒牌流局).
+  **Win vs draw is decided by `all_point`, not `win_info` presence**: a
+  `win_info` entry is a winner only when `all_point > 0`. On an exhaustive draw
+  `win_info` lists the *tenpai* players with `all_point == 0` (hand reveal), so
+  it must be read as a draw.
 - **deltas** = each player's `user_profit[].user_point` (the running total) minus
   that player's score at the start of the kyoku (`kyoku_start_scores`). This nets
   riichi sticks correctly; `point_profit` alone double-counts collected sticks.
