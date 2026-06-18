@@ -176,7 +176,8 @@ impl HttpHandler for ProxyHandler {
         req.into()
     }
 
-    /// Skip MITM only for the narrow case of `CONNECT <ip-literal>:443`.
+    /// Skip MITM only for the narrow case of `CONNECT <ip-literal>:443` on
+    /// **Mahjong Soul** (see [`should_raw_tunnel`]).
     ///
     /// Some game / app clients (catfood-studio Mahjong Soul Steam build)
     /// resolve DNS themselves and connect to a CDN by raw IP, but the CDN
@@ -194,27 +195,31 @@ impl HttpHandler for ProxyHandler {
     /// narrowing we'd bypass the WS gateway too and lose all frame
     /// capture — observed in `test/logs/20260514-132645/`.
     ///
+    /// The bypass is **gated to Mahjong Soul**: Riichi City reaches its
+    /// single-tenant game server by raw IP on 443 and presents a normal
+    /// (MITM-able) certificate, so raw-tunneling there would silently drop
+    /// the gameplay WebSocket — observed in `test/logs/20260618-165105/`,
+    /// where the only `<ip>:443` CONNECT (the WSS gameplay flow) was
+    /// bypassed and no frames reached the bridge.
+    ///
     /// Hostnames are always MITM'd; the maj-soul hostname endpoints
     /// (`mjusgs.mahjongsoul.com`, etc.) don't hit this code path.
     async fn should_intercept(&mut self, _ctx: &HttpContext, req: &Request<Body>) -> bool {
         let Some(host) = req.uri().host() else {
             return true;
         };
-        if !is_ip_literal_host(host) {
-            return true;
-        }
         // IPv4 CONNECT URIs always carry an explicit port; default to 443
         // only as a defensive fallback.
         let port = req.uri().port_u16().unwrap_or(443);
-        if port != 443 {
-            return true;
+        if should_raw_tunnel(self.platform, host, port) {
+            info!(
+                target: "akagi::proxy::forward",
+                "raw-tunneling IP-literal CONNECT to {}",
+                req.uri()
+            );
+            return false;
         }
-        info!(
-            target: "akagi::proxy::forward",
-            "raw-tunneling IP-literal CONNECT to {}",
-            req.uri()
-        );
-        false
+        true
     }
 
     /// Diagnostic override of the default 502 path. The default just logs
@@ -451,6 +456,17 @@ fn uri_path_slug(uri: &Uri) -> String {
         .collect()
 }
 
+/// Whether a `CONNECT host:port` should bypass MITM with a raw TCP tunnel.
+///
+/// True only for the Mahjong Soul multi-tenant CDN case — an IP-literal host
+/// on port 443 — where MITM would set SNI = IP and the CDN would serve its
+/// default error page. Every other platform (notably Riichi City, whose
+/// single-tenant game server is reached by raw IP on 443 and presents a
+/// MITM-able cert) is intercepted so its gameplay WebSocket is captured.
+fn should_raw_tunnel(platform: Platform, host: &str, port: u16) -> bool {
+    platform == Platform::Majsoul && port == 443 && is_ip_literal_host(host)
+}
+
 /// `true` when `host` (as returned by `Uri::host`) is a literal IPv4 or
 /// IPv6 address. IPv6 hosts come back from `Uri::host` wrapped in `[…]`
 /// per RFC 3986; `IpAddr::from_str` rejects the brackets so we strip them
@@ -465,7 +481,33 @@ fn is_ip_literal_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_ip_literal_host;
+    use super::{is_ip_literal_host, should_raw_tunnel};
+    use crate::config::Platform;
+
+    /// Mahjong Soul Steam build: IP-literal CONNECT on 443 is raw-tunneled so
+    /// the multi-tenant CDN keeps the client's own SNI.
+    #[test]
+    fn majsoul_ip_literal_443_is_raw_tunneled() {
+        assert!(should_raw_tunnel(Platform::Majsoul, "13.112.183.79", 443));
+        assert!(should_raw_tunnel(Platform::Majsoul, "[2001:db8::1]", 443));
+    }
+
+    /// Regression (test/logs/20260618-165105): Riichi City's gameplay WSS goes
+    /// to its single-tenant game server by raw IP on 443. It must be MITM'd —
+    /// raw-tunneling silently dropped every gameplay frame.
+    #[test]
+    fn riichi_city_ip_literal_443_is_intercepted() {
+        assert!(!should_raw_tunnel(Platform::RiichiCity, "13.112.183.79", 443));
+    }
+
+    /// The bypass never applies to hostnames or non-443 ports, even on Majsoul.
+    #[test]
+    fn raw_tunnel_only_for_ip_literal_443() {
+        assert!(!should_raw_tunnel(Platform::Majsoul, "mjusgs.mahjongsoul.com", 443));
+        assert!(!should_raw_tunnel(Platform::Majsoul, "13.112.183.79", 80));
+        assert!(!should_raw_tunnel(Platform::Majsoul, "13.112.183.79", 8443));
+        assert!(!should_raw_tunnel(Platform::Tenhou, "13.112.183.79", 443));
+    }
 
     #[test]
     fn ipv4_literal_is_detected() {
