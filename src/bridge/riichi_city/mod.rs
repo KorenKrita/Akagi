@@ -19,9 +19,12 @@
 //! - **`cmd_game_action_brc`** iterates every entry in `action_info` instead of
 //!   returning after the first (v2 dropped batched actions).
 //!
-//! Win / draw settlement (`Hora` deltas, `Ryukyoku` deltas) is not yet decoded —
-//! actions 7/10/12 emit a bare `end_kyoku` (as v2 did). Full settlement parsing
-//! is tracked separately and needs real captures.
+//! Win / draw settlement is decoded from `cmd_game_end`: a `hora` per winner
+//! (with deltas + ura-dora) or a `ryukyoku`, followed by `end_kyoku`. Deltas are
+//! derived from the settlement's running `user_point` totals minus the kyoku's
+//! starting scores (this nets riichi sticks correctly; `point_profit` alone
+//! double-counts collected sticks). The action codes 7/10/12 in
+//! `cmd_game_action_brc` only flag the end — the scores live in `cmd_game_end`.
 
 pub mod consts;
 pub mod packet;
@@ -116,6 +119,7 @@ impl RiichiCityBridge {
             "cmd_send_current_action" => self.on_send_current_action(data),
             "cmd_game_action_brc" => self.on_game_action_brc(data),
             "cmd_gang_bao_brc" => self.on_gang_bao_brc(data),
+            "cmd_game_end" => self.on_game_end(data),
             "cmd_room_end" => self.on_room_end(),
             _ => Vec::new(),
         }
@@ -202,16 +206,17 @@ impl RiichiCityBridge {
         let honba = field_i64(data, "ben_chang_num").unwrap_or(0).max(0) as u8;
         let kyotaku = field_i64(data, "li_zhi_bang_num").unwrap_or(0).max(0) as u8;
 
-        // Scores from user_info_list in list order (assumed actor order).
-        // NB: faithful v2 port — at E1H0 all scores are equal so a mis-order
-        // would be invisible there. Verify the ordering against real multi-kyoku
-        // captures and re-key by user_id if needed.
+        // Scores from user_info_list, which is in fixed seat order (index i =
+        // seat i). Verified against a full 13-kyoku capture with rotating
+        // dealers: the list never re-orders with dealer_pos.
         let mut scores = vec![0i32; self.status.num_players as usize];
         if let Some(list) = data.get("user_info_list").and_then(JsonValue::as_array) {
             for (i, p) in list.iter().take(self.status.num_players as usize).enumerate() {
                 scores[i] = field_i64(p, "hand_points").unwrap_or(0) as i32;
             }
         }
+        // Remember the starting scores so cmd_game_end can derive deltas.
+        self.status.kyoku_start_scores = scores.clone();
 
         // Our starting hand; opponents are hidden placeholders.
         let hand_cards: Vec<i64> = data
@@ -306,10 +311,9 @@ impl RiichiCityBridge {
         let n = self.status.num_players;
         for action in actions {
             let act = field_i64(action, "action").unwrap_or(-1);
-            // Win (ron / tsumo-ron) and exhaustive draw: settlement deltas are
-            // not decoded yet, so emit a bare end_kyoku (as v2 did).
+            // Win (ron 7 / tsumo 10) and abortive draw (12) are finalized by the
+            // cmd_game_end settlement (hora/ryukyoku + end_kyoku), not here.
             if matches!(act, 7 | 10 | 12) {
-                events.push(MjaiEvent::EndKyoku);
                 continue;
             }
             let Some(uid) = field_i64(action, "user_id") else {
@@ -431,6 +435,88 @@ impl RiichiCityBridge {
             }
         }
         Vec::new()
+    }
+
+    /// `cmd_game_end` — per-kyoku settlement. Emits a `hora` per winner (with
+    /// deltas + ura-dora) or a `ryukyoku`, then `end_kyoku`.
+    fn on_game_end(&mut self, data: Option<&JsonValue>) -> Vec<MjaiEvent> {
+        let mut events = self.flush_pending_reach();
+        let Some(data) = data else {
+            events.push(MjaiEvent::EndKyoku);
+            return events;
+        };
+        let end_type = field_i64(data, "end_type").unwrap_or(-1);
+        let n = self.status.num_players as usize;
+
+        // Per-actor deltas from the running user_point totals. Falling back to
+        // point_profit + li_zhi_profit only if the kyoku start scores are absent.
+        let mut deltas = vec![0i32; n];
+        if let Some(list) = data.get("user_profit").and_then(JsonValue::as_array) {
+            for up in list {
+                let Some(uid) = field_i64(up, "user_id") else {
+                    continue;
+                };
+                let Some(actor) = self.status.actor_of(uid) else {
+                    continue;
+                };
+                let a = actor as usize;
+                if a >= n {
+                    continue;
+                }
+                let after = field_i64(up, "user_point").unwrap_or(0) as i32;
+                deltas[a] = match self.status.kyoku_start_scores.get(a) {
+                    Some(&before) => after - before,
+                    None => {
+                        (field_i64(up, "point_profit").unwrap_or(0)
+                            + field_i64(up, "li_zhi_profit").unwrap_or(0)) as i32
+                    }
+                };
+            }
+        }
+
+        match data.get("win_info").and_then(JsonValue::as_array) {
+            // A win (one entry per winner — multiple for double/triple ron).
+            Some(wins) if !wins.is_empty() => {
+                let is_tsumo = end_type == 1;
+                for win in wins {
+                    let Some(uid) = field_i64(win, "user_id") else {
+                        continue;
+                    };
+                    let Some(actor) = self.status.actor_of(uid) else {
+                        continue;
+                    };
+                    let target = if is_tsumo {
+                        actor
+                    } else {
+                        self.status.last_dahai_actor.unwrap_or(actor)
+                    };
+                    // li_bao_card = ura-dora indicators (revealed on a riichi win).
+                    let ura = win
+                        .get("li_bao_card")
+                        .and_then(JsonValue::as_array)
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(json_i64)
+                                .map(|c| card_to_mjai(c as u32))
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|v| !v.is_empty());
+                    events.push(MjaiEvent::Hora {
+                        actor,
+                        target,
+                        deltas: Some(deltas.clone()),
+                        ura_markers: ura,
+                    });
+                }
+            }
+            // Any draw (exhaustive, 九種九牌, or other abortive).
+            _ => events.push(MjaiEvent::Ryukyoku {
+                deltas: Some(deltas),
+            }),
+        }
+
+        events.push(MjaiEvent::EndKyoku);
+        events
     }
 
     /// `cmd_room_end` — game over.
@@ -874,6 +960,130 @@ mod tests {
             }
             other => panic!("expected Kita, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn win_action_alone_does_not_end_kyoku() {
+        // Actions 7/10/12 only flag the end; the kyoku closes on cmd_game_end.
+        let mut b = started_4p();
+        let e = feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_game_action_brc", "data": {"action_info": [
+                {"action": 7, "user_id": 1001}
+            ]}}),
+        );
+        assert!(e.is_empty(), "win action must not emit end_kyoku by itself");
+    }
+
+    #[test]
+    fn game_end_ron_emits_hora_with_deltas_and_ura() {
+        let mut b = started_4p(); // seat 0 = us (1001), scores all 25000
+        // Seat 2 (1003) discards → ron target.
+        feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_game_action_brc", "data": {"action_info": [
+                {"action": 11, "user_id": 1003, "card": 0x25, "move_cards_pos": [14], "is_li_zhi": false}
+            ]}}),
+        );
+        // Ron flag (no-op) then the settlement.
+        feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_game_action_brc", "data": {"action_info": [{"action": 7, "user_id": 1001}]}}),
+        );
+        let e = feed(
+            &mut b,
+            18,
+            json!({
+                "cmd": "cmd_game_end",
+                "data": {
+                    "end_type": 0,
+                    "win_info": [{"user_id": 1001, "li_bao_card": [0x51]}],
+                    "user_profit": [
+                        {"user_id": 1001, "user_point": 37000, "point_profit": 12000, "li_zhi_profit": 0},
+                        {"user_id": 1002, "user_point": 25000, "point_profit": 0, "li_zhi_profit": 0},
+                        {"user_id": 1003, "user_point": 13000, "point_profit": -12000, "li_zhi_profit": 0},
+                        {"user_id": 1004, "user_point": 25000, "point_profit": 0, "li_zhi_profit": 0}
+                    ]
+                }
+            }),
+        );
+        assert_eq!(e.len(), 2);
+        match &e[0] {
+            MjaiEvent::Hora { actor, target, deltas, ura_markers } => {
+                assert_eq!(*actor, 0);
+                assert_eq!(*target, 2, "ron target is the last discarder");
+                assert_eq!(deltas.as_ref().unwrap(), &vec![12000, 0, -12000, 0]);
+                assert_eq!(ura_markers.as_deref(), Some(["W".to_string()].as_slice()));
+            }
+            other => panic!("expected Hora, got {other:?}"),
+        }
+        assert!(matches!(e[1], MjaiEvent::EndKyoku));
+    }
+
+    #[test]
+    fn game_end_tsumo_targets_self_no_ura() {
+        let mut b = started_4p();
+        let e = feed(
+            &mut b,
+            18,
+            json!({
+                "cmd": "cmd_game_end",
+                "data": {
+                    "end_type": 1,
+                    "win_info": [{"user_id": 1003}],
+                    "user_profit": [
+                        {"user_id": 1001, "user_point": 23000},
+                        {"user_id": 1002, "user_point": 23000},
+                        {"user_id": 1003, "user_point": 31000},
+                        {"user_id": 1004, "user_point": 23000}
+                    ]
+                }
+            }),
+        );
+        match &e[0] {
+            MjaiEvent::Hora { actor, target, deltas, ura_markers } => {
+                assert_eq!(*actor, 2);
+                assert_eq!(*target, 2, "tsumo target == winner");
+                assert_eq!(deltas.as_ref().unwrap(), &vec![-2000, -2000, 6000, -2000]);
+                assert!(ura_markers.is_none());
+            }
+            other => panic!("expected Hora, got {other:?}"),
+        }
+        assert!(matches!(e[1], MjaiEvent::EndKyoku));
+    }
+
+    #[test]
+    fn game_end_abortive_draw_emits_ryukyoku() {
+        // 九種九牌: end_type 6, empty win_info, no point change.
+        let mut b = started_4p();
+        let e = feed(
+            &mut b,
+            18,
+            json!({
+                "cmd": "cmd_game_end",
+                "data": {
+                    "end_type": 6,
+                    "win_info": [],
+                    "user_profit": [
+                        {"user_id": 1001, "user_point": 25000},
+                        {"user_id": 1002, "user_point": 25000},
+                        {"user_id": 1003, "user_point": 25000},
+                        {"user_id": 1004, "user_point": 25000}
+                    ]
+                }
+            }),
+        );
+        assert_eq!(e.len(), 2);
+        match &e[0] {
+            MjaiEvent::Ryukyoku { deltas } => {
+                assert_eq!(deltas.as_ref().unwrap(), &vec![0, 0, 0, 0]);
+            }
+            other => panic!("expected Ryukyoku, got {other:?}"),
+        }
+        assert!(matches!(e[1], MjaiEvent::EndKyoku));
     }
 
     #[test]

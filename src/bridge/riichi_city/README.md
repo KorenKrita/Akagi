@@ -58,8 +58,9 @@ downlink). Client request frames don't match any server `cmd_*` and are ignored.
 | … action 9 | `kakan` |
 | … action 11 | `reach`? + `dahai` (+ deferred `reach_accepted`, kan-dora flush) |
 | … action 13 | `kita` (nukidora) |
-| … action 7 / 10 / 12 | `end_kyoku` (see "Settlement" below) |
+| … action 7 / 10 / 12 | — (end flagged here; settled by `cmd_game_end`) |
 | `cmd_gang_bao_brc` | — (defers a kan-dora marker) |
+| `cmd_game_end` | `hora` (per winner) or `ryukyoku`, then `end_kyoku` |
 | `cmd_room_end` | `end_game` |
 
 ## Sanma (3-player)
@@ -68,13 +69,26 @@ Unlike v2 (which padded everything to length 4 with a ghost seat), this bridge
 emits native length-3 `scores`/`tehais` and keeps actor indices in `0..=2`,
 matching the Tenhou bridge and the rest of the V3 sanma pipeline.
 
-## Settlement (win / draw) — not yet decoded
+## Settlement (win / draw)
 
-Actions 7 (ron), 10 (tsumo-ron) and 12 (exhaustive draw) currently emit only a
-bare `end_kyoku`, as v2 did. Decoding the round-result message to emit a full
-`hora` (actor / target / deltas / ura-dora) and `ryukyoku` deltas — so game
-history win/deal-in/points stats are correct — needs real captures and is
-tracked as follow-up work.
+Each kyoku ends with `cmd_game_action_brc` carrying action 7 (ron) / 10 (tsumo)
+/ 12 (abortive draw), immediately followed by `cmd_game_end` — the settlement.
+The action codes only flag the end; `on_game_end` does the work:
+
+- `end_type`: 0 = ron, 1 = tsumo, 6 = 九種九牌 (and any other draw); `win_info`
+  non-empty ⇒ win, empty ⇒ draw.
+- **deltas** = each player's `user_profit[].user_point` (the running total) minus
+  that player's score at the start of the kyoku (`kyoku_start_scores`). This nets
+  riichi sticks correctly; `point_profit` alone double-counts collected sticks.
+- **winner** = `win_info[].user_id`; **ron target** = the last discarder
+  (`last_dahai_actor`), **tsumo target** = the winner; **ura-dora** =
+  `win_info[].li_bao_card`.
+
+Emits a `hora` per `win_info` entry (so double/triple ron yields multiple), or a
+`ryukyoku`, then `end_kyoku`. Verified against a full 13-kyoku capture: deltas
+reconcile to zero per kyoku and `user_info_list` stays in fixed seat order.
+Exhaustive-draw (荒牌流局) tenpai/noten payments use the same `user_point`-diff
+path but weren't present in that capture.
 
 ## Adding / fixing a `cmd`
 

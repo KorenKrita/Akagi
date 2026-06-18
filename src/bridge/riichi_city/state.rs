@@ -32,6 +32,10 @@ pub struct GameStatus {
     pub classify_id: Option<i64>,
     /// Actor of the most recent discard — the ron/pon/kan target.
     pub last_dahai_actor: Option<u8>,
+    /// Per-actor scores at the start of the current kyoku (the `start_kyoku`
+    /// scores). Used to derive `hora`/`ryukyoku` deltas from the settlement's
+    /// running `user_point` totals.
+    pub kyoku_start_scores: Vec<i32>,
     /// Deferred `reach_accepted`, emitted just before the next action so a
     /// chi/pon/kan on the riichi discard is ordered correctly.
     pub pending_reach: Option<MjaiEvent>,
@@ -52,6 +56,7 @@ impl Default for GameStatus {
             shift: 0,
             classify_id: None,
             last_dahai_actor: None,
+            kyoku_start_scores: Vec::new(),
             pending_reach: None,
             pending_dora: Vec::new(),
             game_start: false,
