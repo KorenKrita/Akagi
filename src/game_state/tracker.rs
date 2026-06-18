@@ -152,6 +152,15 @@ impl GameTracker {
                         }
                     }
                     apply_ippatsu_patch_4p(s, ev);
+                    // riichienv-core drops the naki `target`, storing the new
+                    // meld with `from_who = -1`; patch it back so the meld
+                    // renders rotated toward the real discarder (see
+                    // `mahgen_view::call_side`).
+                    if let Some((actor, target)) = meld_target(ev) {
+                        if let Some(m) = s.players.get_mut(actor).and_then(|p| p.melds.last_mut()) {
+                            m.from_who = target;
+                        }
+                    }
                 }
                 TrackedGame::Three(s) => {
                     s.apply_mjai_event(ri);
@@ -169,6 +178,11 @@ impl GameTracker {
                         }
                     }
                     apply_ippatsu_patch_3p(s, ev);
+                    if let Some((actor, target)) = meld_target(ev) {
+                        if let Some(m) = s.players.get_mut(actor).and_then(|p| p.melds.last_mut()) {
+                            m.from_who = target;
+                        }
+                    }
                 }
             }
         }
@@ -227,6 +241,24 @@ impl GameTracker {
 impl Default for GameTracker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// `(actor, target)` for the open melds that claim another seat's discard
+/// (pon / chi / daiminkan), as `(seat index, discarder seat)`. Returns `None`
+/// for every other event, including ankan / kakan (no external claim).
+///
+/// riichienv-core 0.4.8's `apply_mjai_event` ignores the mjai `target` field
+/// and stores these melds with `from_who = -1`, which `mahgen_view::call_side`
+/// treats as a kamicha default — so every open meld would render rotated to the
+/// left regardless of who was called. The tracker re-applies `target` after
+/// the event so the meld points at the real discarder.
+fn meld_target(ev: &AkagiEvent) -> Option<(usize, i8)> {
+    match ev {
+        AkagiEvent::Pon { actor, target, .. }
+        | AkagiEvent::Chi { actor, target, .. }
+        | AkagiEvent::Daiminkan { actor, target, .. } => Some((*actor as usize, *target as i8)),
+        _ => None,
     }
 }
 
@@ -607,6 +639,67 @@ mod tests {
         assert!(p0.river[2].is_riichi);
 
         assert_eq!(p0.riichi_declaration_index, Some(2));
+    }
+
+    /// Regression (issue #153): `riichienv-core 0.4.8` drops the naki `target`
+    /// (stores the meld with `from_who = -1`) and never removes a claimed tile
+    /// from the discarder's `discards`. The tracker patches `from_who` back to
+    /// the real discarder, and the snapshot flags the claimed discard so the
+    /// rendered river hides it while the analysis-facing entry is retained.
+    #[test]
+    fn pon_records_discarder_and_hides_called_tile() {
+        use crate::game_state::mahgen_view::MahgenView;
+
+        let mut t = GameTracker::new();
+        t.handle(&start_game()).unwrap(); // observer = seat 0
+        t.handle(&start_kyoku(0)).unwrap();
+
+        // Seat 2 (toimen of seat 0) discards 1m; seat 0 pons it. start_kyoku
+        // deals everyone 13×1m, so seat 0 holds the two 1m it consumes.
+        t.handle(&AkagiEvent::Tsumo {
+            actor: 2,
+            pai: "1m".into(),
+        })
+        .unwrap();
+        t.handle(&AkagiEvent::Dahai {
+            actor: 2,
+            pai: "1m".into(),
+            tsumogiri: true,
+        })
+        .unwrap();
+        t.handle(&AkagiEvent::Pon {
+            actor: 0,
+            target: 2,
+            pai: "1m".into(),
+            consumed: ["1m".into(), "1m".into()],
+        })
+        .unwrap();
+
+        let snap = t.snapshot().unwrap();
+
+        // Fix 1: the meld records the real discarder (toimen = seat 2), not the
+        // riichienv-core `-1` default that `call_side` renders as kamicha.
+        assert_eq!(
+            snap.players[0].melds[0].from_who, 2,
+            "meld must record the discarder seat"
+        );
+
+        // Fix 2: seat 2's lone discard is flagged claimed but kept in the list
+        // so the analysis engine still sees it as genbutsu.
+        assert_eq!(snap.players[2].river.len(), 1);
+        assert!(
+            snap.players[2].river[0].called,
+            "claimed discard is retained but flagged"
+        );
+
+        // The rendered strings reflect both fixes: pon rotated toward toimen
+        // (middle slot), discarder's river empty.
+        let view = MahgenView::from_snapshot(&snap);
+        assert_eq!(
+            view.players[0].melds[0], "1_11m",
+            "pon rotated toward toimen"
+        );
+        assert_eq!(view.players[2].river, "", "claimed tile hidden from river");
     }
 
     /// 3p `start_game` constructs a `GameState3P` and the snapshot reflects

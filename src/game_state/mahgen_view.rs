@@ -419,6 +419,12 @@ fn encode_river(river: &[DiscardEntry]) -> String {
     // parser sees `[state?]<digit><suit>` runs back-to-back.
     let mut out = String::new();
     for d in river {
+        // A claimed discard (pon/chi/kan) has physically left the pond, so it
+        // is omitted from the rendered river. It is still present in the
+        // `DiscardEntry` list for the analysis engine (genbutsu/furiten).
+        if d.called {
+            continue;
+        }
         let prefix = match (d.is_riichi, d.tedashi) {
             (true, true) => "_",   // declared riichi via tedashi
             (true, false) => "v",  // declared riichi via tsumogiri
@@ -464,6 +470,7 @@ mod tests {
             tile: tile.into(),
             tedashi,
             is_riichi,
+            called: false,
         }
     }
 
@@ -565,6 +572,55 @@ mod tests {
             ..m.clone()
         };
         assert_eq!(encode_meld(&m3, 0, 4), "11_1z");
+    }
+
+    /// Regression (issue #153): `from_who` is the ABSOLUTE discarder seat, so
+    /// the rotation must be computed relative to the meld owner. The original
+    /// bug only showed for a non-zero caller (with caller 0 the relative and
+    /// absolute seat numbers coincide), so lock the caller-1 case here.
+    #[test]
+    fn pon_orientation_relative_to_nonzero_caller() {
+        let base = MeldSnapshot {
+            kind: MeldKind::Pon,
+            tiles: vec!["1z".into(), "1z".into(), "1z".into()],
+            from_who: 0,
+            called_tile: Some("1z".into()),
+        };
+        // Caller = seat 1. kamicha of 1 is seat 0 → rotated left.
+        let kamicha = MeldSnapshot {
+            from_who: 0,
+            ..base.clone()
+        };
+        assert_eq!(encode_meld(&kamicha, 1, 4), "_111z");
+        // toimen of 1 is seat 3 → rotated middle.
+        let toimen = MeldSnapshot {
+            from_who: 3,
+            ..base.clone()
+        };
+        assert_eq!(encode_meld(&toimen, 1, 4), "1_11z");
+        // shimocha of 1 is seat 2 → rotated right.
+        let shimocha = MeldSnapshot {
+            from_who: 2,
+            ..base.clone()
+        };
+        assert_eq!(encode_meld(&shimocha, 1, 4), "11_1z");
+    }
+
+    /// A claimed discard (`called = true`) is omitted from the rendered river
+    /// but the surrounding tiles render normally and in order.
+    #[test]
+    fn encode_river_skips_claimed_discards() {
+        let river = vec![
+            discard("1m", true, false),
+            DiscardEntry {
+                tile: "2m".into(),
+                tedashi: true,
+                is_riichi: false,
+                called: true,
+            },
+            discard("3m", true, false),
+        ];
+        assert_eq!(encode_river(&river), "1m3m");
     }
 
     #[test]
