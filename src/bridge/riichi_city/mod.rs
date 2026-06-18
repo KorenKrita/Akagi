@@ -1106,7 +1106,7 @@ mod tests {
         assert!(matches!(e[1], MjaiEvent::EndKyoku));
     }
 
-    /// Regression (capture 20260618-183333): 荒牌流局 arrives as end_type 7 with
+    /// Regression (from a real capture): 荒牌流局 arrives as end_type 7 with
     /// a non-empty win_info that lists the *tenpai* players (all_point == 0).
     /// It must become one ryukyoku, not a hora per "winner".
     #[test]

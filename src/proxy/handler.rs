@@ -192,15 +192,13 @@ impl HttpHandler for ProxyHandler {
     /// fronts live. Game-specific gateways and APIs use alt ports (8443
     /// for the maj-soul WS gateway, 7201 for HTTPDNS, …), are
     /// single-tenant, and need MITM to be captured. Without the port
-    /// narrowing we'd bypass the WS gateway too and lose all frame
-    /// capture — observed in `test/logs/20260514-132645/`.
+    /// narrowing we'd bypass the WS gateway too and lose all frame capture.
     ///
     /// The bypass is **gated to Mahjong Soul**: Riichi City reaches its
     /// single-tenant game server by raw IP on 443 and presents a normal
     /// (MITM-able) certificate, so raw-tunneling there would silently drop
-    /// the gameplay WebSocket — observed in `test/logs/20260618-165105/`,
-    /// where the only `<ip>:443` CONNECT (the WSS gameplay flow) was
-    /// bypassed and no frames reached the bridge.
+    /// the gameplay WebSocket — the only `<ip>:443` CONNECT (the WSS gameplay
+    /// flow) would be bypassed and no frames would reach the bridge.
     ///
     /// Hostnames are always MITM'd; the maj-soul hostname endpoints
     /// (`mjusgs.mahjongsoul.com`, etc.) don't hit this code path.
@@ -492,9 +490,9 @@ mod tests {
         assert!(should_raw_tunnel(Platform::Majsoul, "[2001:db8::1]", 443));
     }
 
-    /// Regression (test/logs/20260618-165105): Riichi City's gameplay WSS goes
-    /// to its single-tenant game server by raw IP on 443. It must be MITM'd —
-    /// raw-tunneling silently dropped every gameplay frame.
+    /// Regression: Riichi City's gameplay WSS goes to its single-tenant game
+    /// server by raw IP on 443. It must be MITM'd — raw-tunneling silently
+    /// dropped every gameplay frame in a real capture.
     #[test]
     fn riichi_city_ip_literal_443_is_intercepted() {
         assert!(!should_raw_tunnel(Platform::RiichiCity, "13.112.183.79", 443));
