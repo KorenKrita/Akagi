@@ -1011,6 +1011,7 @@ mod tests {
                 tile: "9m".into(),
                 tedashi: true,
                 is_riichi: false,
+                called: false,
             });
         let act = MjaiEvent::Dahai {
             actor: 0,

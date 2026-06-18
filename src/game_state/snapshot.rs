@@ -11,6 +11,8 @@
 //! `GameStateBus` straight through to the frontend without further
 //! transform.
 
+use std::collections::HashMap;
+
 use riichienv_core::parser::tid_to_mjai;
 use riichienv_core::state::GameState;
 use riichienv_core::state_3p::GameState3P;
@@ -93,6 +95,14 @@ pub struct DiscardEntry {
     pub tedashi: bool,
     /// `true` if this is the discard that committed riichi.
     pub is_riichi: bool,
+    /// `true` if this discard was claimed by another player (pon/chi/kan) and
+    /// has physically left the pond. **View-only**: the entry is kept in the
+    /// list so the analysis engine still counts it as genbutsu/furiten against
+    /// this seat; only the mahgen river encoder skips it. riichienv-core never
+    /// removes called tiles from its `discards`, so we reconstruct this flag
+    /// from the melds in [`GameStateSnapshot::from_state`].
+    #[serde(default)]
+    pub called: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,21 +164,27 @@ impl GameStateSnapshot {
     /// in by the tracker — see [`crate::game_state::tracker`].
     pub fn from_state(s: &GameState, our_seat: Option<u8>) -> Self {
         let in_wait_act = matches!(s.phase, riichienv_core::action::Phase::WaitAct);
-        let players: Vec<PlayerSnapshot> = (0..s.players.len())
-            .map(|i| {
+        let np = s.players.len();
+        // Build every seat's melds up front so we can tell which discards were
+        // claimed away (a meld's `from_who` is the seat the called tile came
+        // from). riichienv-core keeps called tiles in `discards`, so the view
+        // river hides them via the per-discard `called` flag.
+        let all_melds: Vec<Vec<MeldSnapshot>> = (0..np)
+            .map(|i| s.players[i].melds.iter().map(MeldSnapshot::from).collect())
+            .collect();
+        let mut called_by_seat = called_tiles_by_seat(&all_melds, np);
+        let players: Vec<PlayerSnapshot> = all_melds
+            .into_iter()
+            .enumerate()
+            .map(|(i, melds)| {
                 let p = &s.players[i];
-                let river: Vec<DiscardEntry> = p
-                    .discards
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, &tile)| DiscardEntry {
-                        tile: tid_to_mjai(tile),
-                        tedashi: p.discard_from_hand.get(idx).copied().unwrap_or(true),
-                        is_riichi: p.discard_is_riichi.get(idx).copied().unwrap_or(false),
-                    })
-                    .collect();
-                let melds: Vec<MeldSnapshot> = p.melds.iter().map(MeldSnapshot::from).collect();
                 let drawing = i as u8 == s.current_player && in_wait_act;
+                let river = build_river(
+                    &p.discards,
+                    &p.discard_from_hand,
+                    &p.discard_is_riichi,
+                    std::mem::take(&mut called_by_seat[i]),
+                );
                 PlayerSnapshot {
                     seat: i as u8,
                     tehai: seat_tehai(&p.hand, melds.len(), our_seat == Some(i as u8), drawing),
@@ -220,21 +236,23 @@ impl GameStateSnapshot {
     /// engine's per-player kita pool.
     pub fn from_state_3p(s: &GameState3P, our_seat: Option<u8>) -> Self {
         let in_wait_act = matches!(s.phase, riichienv_core::action::Phase::WaitAct);
-        let players: Vec<PlayerSnapshot> = (0..s.players.len())
-            .map(|i| {
+        let np = s.players.len();
+        let all_melds: Vec<Vec<MeldSnapshot>> = (0..np)
+            .map(|i| s.players[i].melds.iter().map(MeldSnapshot::from).collect())
+            .collect();
+        let mut called_by_seat = called_tiles_by_seat(&all_melds, np);
+        let players: Vec<PlayerSnapshot> = all_melds
+            .into_iter()
+            .enumerate()
+            .map(|(i, melds)| {
                 let p = &s.players[i];
-                let river: Vec<DiscardEntry> = p
-                    .discards
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, &tile)| DiscardEntry {
-                        tile: tid_to_mjai(tile),
-                        tedashi: p.discard_from_hand.get(idx).copied().unwrap_or(true),
-                        is_riichi: p.discard_is_riichi.get(idx).copied().unwrap_or(false),
-                    })
-                    .collect();
-                let melds: Vec<MeldSnapshot> = p.melds.iter().map(MeldSnapshot::from).collect();
                 let drawing = i as u8 == s.current_player && in_wait_act;
+                let river = build_river(
+                    &p.discards,
+                    &p.discard_from_hand,
+                    &p.discard_is_riichi,
+                    std::mem::take(&mut called_by_seat[i]),
+                );
                 PlayerSnapshot {
                     seat: i as u8,
                     tehai: seat_tehai(&p.hand, melds.len(), our_seat == Some(i as u8), drawing),
@@ -277,6 +295,62 @@ impl GameStateSnapshot {
             our_seat,
         }
     }
+}
+
+/// Count, per seat, the tiles claimed away from that seat's pond. A meld's
+/// `from_who` is the absolute seat the called tile was discarded from, and
+/// `called_tile` is that tile; ankan/kakan carry `from_who < 0` and are
+/// ignored. The returned map is keyed by mjai tile string with the number of
+/// copies of that tile taken from the seat.
+fn called_tiles_by_seat(all_melds: &[Vec<MeldSnapshot>], np: usize) -> Vec<HashMap<String, usize>> {
+    let mut by_seat: Vec<HashMap<String, usize>> = vec![HashMap::new(); np];
+    for melds in all_melds {
+        for m in melds {
+            if m.from_who >= 0 && (m.from_who as usize) < np {
+                if let Some(ct) = &m.called_tile {
+                    *by_seat[m.from_who as usize].entry(ct.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    by_seat
+}
+
+/// Build one seat's view river, flagging the discards that were claimed away.
+/// `called` holds the count of each tile value that left this seat's pond; we
+/// flag the first still-unflagged discard matching each value. Matching by
+/// value (rather than the exact pond index, which riichienv-core doesn't keep)
+/// can pick the wrong copy when the same tile was discarded twice and only one
+/// was called — but the copies are visually identical, so the rendered river is
+/// unaffected and the hidden count is always exact. The flagged entries stay in
+/// the list (the analysis engine still treats them as genbutsu against this
+/// seat); only [`crate::game_state::mahgen_view`]'s river encoder skips them.
+fn build_river(
+    discards: &[u8],
+    from_hand: &[bool],
+    is_riichi: &[bool],
+    mut called: HashMap<String, usize>,
+) -> Vec<DiscardEntry> {
+    discards
+        .iter()
+        .enumerate()
+        .map(|(idx, &tile)| {
+            let t = tid_to_mjai(tile);
+            let claimed = match called.get_mut(&t) {
+                Some(n) if *n > 0 => {
+                    *n -= 1;
+                    true
+                }
+                _ => false,
+            };
+            DiscardEntry {
+                tile: t,
+                tedashi: from_hand.get(idx).copied().unwrap_or(true),
+                is_riichi: is_riichi.get(idx).copied().unwrap_or(false),
+                called: claimed,
+            }
+        })
+        .collect()
 }
 
 /// Build the `tehai` for one seat.

@@ -221,7 +221,14 @@ export type AnalysisResult = {
   best_defence_discard: string | null
 }
 
-export type DiscardEntry = { tile: string; tedashi: boolean; is_riichi: boolean }
+export type DiscardEntry = {
+  tile: string
+  tedashi: boolean
+  is_riichi: boolean
+  /** Claimed by another player (pon/chi/kan); kept for analysis, hidden in the
+   * rendered river. */
+  called?: boolean
+}
 
 export type MeldSnapshot = {
   kind: 'chi' | 'pon' | 'daiminkan' | 'ankan' | 'kakan'
