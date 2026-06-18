@@ -175,8 +175,7 @@ impl RiichiCityBridge {
         if self.status.game_start {
             // Rotate enter-room order so index 0 is the first dealer.
             if !self.status.player_list.is_empty() {
-                let mid =
-                    dealer_pos.rem_euclid(self.status.player_list.len() as i64) as usize;
+                let mid = dealer_pos.rem_euclid(self.status.player_list.len() as i64) as usize;
                 self.status.player_list.rotate_left(mid);
             }
             let seat = self
@@ -191,7 +190,9 @@ impl RiichiCityBridge {
             self.status.seat = seat;
             self.status.shift = dealer_pos;
             self.rotate_mjai_log();
-            let names: Vec<String> = (0..self.status.num_players).map(|i| i.to_string()).collect();
+            let names: Vec<String> = (0..self.status.num_players)
+                .map(|i| i.to_string())
+                .collect();
             events.push(MjaiEvent::StartGame {
                 names,
                 kyoku_first: None,
@@ -213,7 +214,11 @@ impl RiichiCityBridge {
         // dealers: the list never re-orders with dealer_pos.
         let mut scores = vec![0i32; self.status.num_players as usize];
         if let Some(list) = data.get("user_info_list").and_then(JsonValue::as_array) {
-            for (i, p) in list.iter().take(self.status.num_players as usize).enumerate() {
+            for (i, p) in list
+                .iter()
+                .take(self.status.num_players as usize)
+                .enumerate()
+            {
                 scores[i] = field_i64(p, "hand_points").unwrap_or(0) as i32;
             }
         }
@@ -229,7 +234,10 @@ impl RiichiCityBridge {
         } else {
             (&hand_cards[..], None)
         };
-        let my_tehai: Vec<String> = tehai_codes.iter().map(|&c| card_to_mjai(c as u32)).collect();
+        let my_tehai: Vec<String> = tehai_codes
+            .iter()
+            .map(|&c| card_to_mjai(c as u32))
+            .collect();
         let mut tehais: Vec<Vec<String>> =
             vec![vec!["?".to_string(); 13]; self.status.num_players as usize];
         if (self.status.seat as usize) < tehais.len() && my_tehai.len() == 13 {
@@ -468,7 +476,8 @@ impl RiichiCityBridge {
                     continue;
                 }
                 deltas[a] = (field_i64(up, "point_profit").unwrap_or(0)
-                    + field_i64(up, "extra_profit").unwrap_or(0)) as i32;
+                    + field_i64(up, "extra_profit").unwrap_or(0))
+                    as i32;
             }
         }
 
@@ -708,7 +717,12 @@ mod tests {
         );
         assert_eq!(events.len(), 3);
         match &events[0] {
-            MjaiEvent::StartGame { id, num_players, names, .. } => {
+            MjaiEvent::StartGame {
+                id,
+                num_players,
+                names,
+                ..
+            } => {
                 assert_eq!(*id, Some(0));
                 assert_eq!(*num_players, 4);
                 assert_eq!(names.len(), 4);
@@ -716,7 +730,16 @@ mod tests {
             other => panic!("expected StartGame, got {other:?}"),
         }
         match &events[1] {
-            MjaiEvent::StartKyoku { bakaze, dora_marker, kyoku, oya, scores, tehais, num_players, .. } => {
+            MjaiEvent::StartKyoku {
+                bakaze,
+                dora_marker,
+                kyoku,
+                oya,
+                scores,
+                tehais,
+                num_players,
+                ..
+            } => {
                 assert_eq!(bakaze, "E");
                 assert_eq!(dora_marker, "1m");
                 assert_eq!(*kyoku, 1);
@@ -775,14 +798,19 @@ mod tests {
             }),
         );
         let sg = events.iter().find_map(|e| match e {
-            MjaiEvent::StartGame { id, num_players, .. } => Some((*id, *num_players)),
+            MjaiEvent::StartGame {
+                id, num_players, ..
+            } => Some((*id, *num_players)),
             _ => None,
         });
         assert_eq!(sg, Some((Some(1), 3)));
         let sk = events.iter().find_map(|e| match e {
-            MjaiEvent::StartKyoku { scores, tehais, num_players, .. } => {
-                Some((scores.len(), tehais.len(), *num_players))
-            }
+            MjaiEvent::StartKyoku {
+                scores,
+                tehais,
+                num_players,
+                ..
+            } => Some((scores.len(), tehais.len(), *num_players)),
             _ => None,
         });
         assert_eq!(sk, Some((3, 3, 3)));
@@ -850,7 +878,9 @@ mod tests {
             }),
         );
         assert!(matches!(e1[0], MjaiEvent::Reach { actor: 0, .. }));
-        assert!(matches!(&e1[1], MjaiEvent::Dahai { actor: 0, pai, tsumogiri: false } if pai == "9m"));
+        assert!(
+            matches!(&e1[1], MjaiEvent::Dahai { actor: 0, pai, tsumogiri: false } if pai == "9m")
+        );
         // The next draw flushes the deferred reach_accepted first.
         let e2 = feed(
             &mut b,
@@ -881,7 +911,12 @@ mod tests {
             ]}}),
         );
         match &e[0] {
-            MjaiEvent::Pon { actor, target, pai, consumed } => {
+            MjaiEvent::Pon {
+                actor,
+                target,
+                pai,
+                consumed,
+            } => {
                 assert_eq!(*actor, 0);
                 assert_eq!(*target, 1);
                 assert_eq!(pai, "5m");
@@ -906,7 +941,12 @@ mod tests {
                 assert_eq!(*actor, 0);
                 assert_eq!(
                     consumed,
-                    &["5mr".to_string(), "5m".to_string(), "5m".to_string(), "5m".to_string()]
+                    &[
+                        "5mr".to_string(),
+                        "5m".to_string(),
+                        "5m".to_string(),
+                        "5m".to_string()
+                    ]
                 );
             }
             other => panic!("expected Ankan, got {other:?}"),
@@ -924,10 +964,17 @@ mod tests {
             ]}}),
         );
         match &e[0] {
-            MjaiEvent::Kakan { actor, pai, consumed } => {
+            MjaiEvent::Kakan {
+                actor,
+                pai,
+                consumed,
+            } => {
                 assert_eq!(*actor, 0);
                 assert_eq!(pai, "5mr");
-                assert_eq!(consumed, &["5m".to_string(), "5m".to_string(), "5m".to_string()]);
+                assert_eq!(
+                    consumed,
+                    &["5m".to_string(), "5m".to_string(), "5m".to_string()]
+                );
             }
             other => panic!("expected Kakan, got {other:?}"),
         }
@@ -991,7 +1038,7 @@ mod tests {
     #[test]
     fn game_end_ron_emits_hora_with_deltas_and_ura() {
         let mut b = started_4p(); // seat 0 = us (1001), scores all 25000
-        // Seat 2 (1003) discards → ron target.
+                                  // Seat 2 (1003) discards → ron target.
         feed(
             &mut b,
             18,
@@ -1028,7 +1075,12 @@ mod tests {
         );
         assert_eq!(e.len(), 2);
         match &e[0] {
-            MjaiEvent::Hora { actor, target, deltas, ura_markers } => {
+            MjaiEvent::Hora {
+                actor,
+                target,
+                deltas,
+                ura_markers,
+            } => {
                 assert_eq!(*actor, 0);
                 assert_eq!(*target, 2, "ron target is the last discarder");
                 assert_eq!(
@@ -1064,7 +1116,12 @@ mod tests {
             }),
         );
         match &e[0] {
-            MjaiEvent::Hora { actor, target, deltas, ura_markers } => {
+            MjaiEvent::Hora {
+                actor,
+                target,
+                deltas,
+                ura_markers,
+            } => {
                 assert_eq!(*actor, 2);
                 assert_eq!(*target, 2, "tsumo target == winner");
                 assert_eq!(deltas.as_ref().unwrap(), &vec![-2000, -2000, 6000, -2000]);
@@ -1161,7 +1218,11 @@ mod tests {
     #[test]
     fn unknown_cmd_is_ignored() {
         let mut b = started_4p();
-        let e = feed(&mut b, 18, json!({"cmd": "cmd_some_future_thing", "data": {}}));
+        let e = feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_some_future_thing", "data": {}}),
+        );
         assert!(e.is_empty());
     }
 }

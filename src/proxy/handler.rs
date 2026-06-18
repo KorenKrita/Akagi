@@ -495,13 +495,21 @@ mod tests {
     /// dropped every gameplay frame in a real capture.
     #[test]
     fn riichi_city_ip_literal_443_is_intercepted() {
-        assert!(!should_raw_tunnel(Platform::RiichiCity, "13.112.183.79", 443));
+        assert!(!should_raw_tunnel(
+            Platform::RiichiCity,
+            "13.112.183.79",
+            443
+        ));
     }
 
     /// The bypass never applies to hostnames or non-443 ports, even on Majsoul.
     #[test]
     fn raw_tunnel_only_for_ip_literal_443() {
-        assert!(!should_raw_tunnel(Platform::Majsoul, "mjusgs.mahjongsoul.com", 443));
+        assert!(!should_raw_tunnel(
+            Platform::Majsoul,
+            "mjusgs.mahjongsoul.com",
+            443
+        ));
         assert!(!should_raw_tunnel(Platform::Majsoul, "13.112.183.79", 80));
         assert!(!should_raw_tunnel(Platform::Majsoul, "13.112.183.79", 8443));
         assert!(!should_raw_tunnel(Platform::Tenhou, "13.112.183.79", 443));

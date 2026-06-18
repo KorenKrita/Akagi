@@ -145,9 +145,9 @@ fn leaf_params(host: &str) -> CertificateParams {
 
     let san = match host.parse::<IpAddr>() {
         Ok(ip) => SanType::IpAddress(ip),
-        Err(_) => SanType::DnsName(
-            Ia5String::try_from(host).expect("host is not a valid IA5 string"),
-        ),
+        Err(_) => {
+            SanType::DnsName(Ia5String::try_from(host).expect("host is not a valid IA5 string"))
+        }
     };
     params.subject_alt_names.push(san);
     params
