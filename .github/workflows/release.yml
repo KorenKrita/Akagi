@@ -111,9 +111,20 @@ jobs:
 
       - name: Linux system deps
         if: runner.os == 'Linux'
+        # Hard cap the step: apt has no stall-timeout for downloads, so a
+        # single wedged mirror connection can hang until the 6 h runner
+        # limit (it did on the v3.2.0 run, stuck mid-fetch of the 27 MB
+        # libwebkit2gtk package). 12 min is ample for a ~55 MB install.
+        timeout-minutes: 12
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          set -euo pipefail
+          # Bound each socket to 30 s and retry, so a stalled download
+          # aborts and re-fetches instead of trickling forever.
+          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          sudo apt-get "${apt_opts[@]}" update
+          sudo apt-get "${apt_opts[@]}" install -y \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
