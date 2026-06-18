@@ -21,9 +21,11 @@
 //!
 //! Win / draw settlement is decoded from `cmd_game_end`: a `hora` per winner
 //! (with deltas + ura-dora) or a `ryukyoku`, followed by `end_kyoku`. Deltas are
-//! derived from the settlement's running `user_point` totals minus the kyoku's
-//! starting scores (this nets riichi sticks correctly; `point_profit` alone
-//! double-counts collected sticks). The action codes 7/10/12 in
+//! each player's `point_profit` (+ `extra_profit`) — the per-hand change
+//! including honba and collected kyotaku but EXCLUDING that player's own riichi
+//! stick. The −1000 for declaring riichi is applied by the mjai consumer at
+//! `reach_accepted` (same split as the Tenhou bridge); a `user_point` running
+//! diff would double-count it. The action codes 7/10/12 in
 //! `cmd_game_action_brc` only flag the end — the scores live in `cmd_game_end`.
 
 pub mod consts;
@@ -215,8 +217,6 @@ impl RiichiCityBridge {
                 scores[i] = field_i64(p, "hand_points").unwrap_or(0) as i32;
             }
         }
-        // Remember the starting scores so cmd_game_end can derive deltas.
-        self.status.kyoku_start_scores = scores.clone();
 
         // Our starting hand; opponents are hidden placeholders.
         let hand_cards: Vec<i64> = data
@@ -448,8 +448,12 @@ impl RiichiCityBridge {
         let end_type = field_i64(data, "end_type").unwrap_or(-1);
         let n = self.status.num_players as usize;
 
-        // Per-actor deltas from the running user_point totals. Falling back to
-        // point_profit + li_zhi_profit only if the kyoku start scores are absent.
+        // Per-actor deltas = point_profit (+ extra_profit for pao / special
+        // payments, observed 0 in normal hands). This is the per-hand change
+        // including honba and collected kyotaku but EXCLUDING the player's own
+        // riichi stick: the −1000 for declaring riichi is applied by the mjai
+        // consumer at reach_accepted, so folding it in here (e.g. via a
+        // user_point running diff) would double-count it.
         let mut deltas = vec![0i32; n];
         if let Some(list) = data.get("user_profit").and_then(JsonValue::as_array) {
             for up in list {
@@ -463,14 +467,8 @@ impl RiichiCityBridge {
                 if a >= n {
                     continue;
                 }
-                let after = field_i64(up, "user_point").unwrap_or(0) as i32;
-                deltas[a] = match self.status.kyoku_start_scores.get(a) {
-                    Some(&before) => after - before,
-                    None => {
-                        (field_i64(up, "point_profit").unwrap_or(0)
-                            + field_i64(up, "li_zhi_profit").unwrap_or(0)) as i32
-                    }
-                };
+                deltas[a] = (field_i64(up, "point_profit").unwrap_or(0)
+                    + field_i64(up, "extra_profit").unwrap_or(0)) as i32;
             }
         }
 
@@ -1015,10 +1013,14 @@ mod tests {
                 "data": {
                     "end_type": 0,
                     "win_info": [{"user_id": 1001, "all_point": 12000, "li_bao_card": [0x51]}],
+                    // Winner riichi'd: point_profit 14000 (12000 + 2 sticks),
+                    // loser -12000. user_point is set to a DIFFERENT running diff
+                    // (+13000 / -13000) to prove deltas come from point_profit,
+                    // not a user_point diff (the −1000 is at reach_accepted).
                     "user_profit": [
-                        {"user_id": 1001, "user_point": 37000, "point_profit": 12000, "li_zhi_profit": 0},
+                        {"user_id": 1001, "user_point": 38000, "point_profit": 14000, "li_zhi_profit": 1000},
                         {"user_id": 1002, "user_point": 25000, "point_profit": 0, "li_zhi_profit": 0},
-                        {"user_id": 1003, "user_point": 13000, "point_profit": -12000, "li_zhi_profit": 0},
+                        {"user_id": 1003, "user_point": 12000, "point_profit": -12000, "li_zhi_profit": -1000},
                         {"user_id": 1004, "user_point": 25000, "point_profit": 0, "li_zhi_profit": 0}
                     ]
                 }
@@ -1029,7 +1031,11 @@ mod tests {
             MjaiEvent::Hora { actor, target, deltas, ura_markers } => {
                 assert_eq!(*actor, 0);
                 assert_eq!(*target, 2, "ron target is the last discarder");
-                assert_eq!(deltas.as_ref().unwrap(), &vec![12000, 0, -12000, 0]);
+                assert_eq!(
+                    deltas.as_ref().unwrap(),
+                    &vec![14000, 0, -12000, 0],
+                    "deltas must be point_profit (excludes own riichi stick), not the user_point diff",
+                );
                 assert_eq!(ura_markers.as_deref(), Some(["W".to_string()].as_slice()));
             }
             other => panic!("expected Hora, got {other:?}"),
@@ -1049,10 +1055,10 @@ mod tests {
                     "end_type": 1,
                     "win_info": [{"user_id": 1003, "all_point": 6000}],
                     "user_profit": [
-                        {"user_id": 1001, "user_point": 23000},
-                        {"user_id": 1002, "user_point": 23000},
-                        {"user_id": 1003, "user_point": 31000},
-                        {"user_id": 1004, "user_point": 23000}
+                        {"user_id": 1001, "point_profit": -2000},
+                        {"user_id": 1002, "point_profit": -2000},
+                        {"user_id": 1003, "point_profit": 6000},
+                        {"user_id": 1004, "point_profit": -2000}
                     ]
                 }
             }),
@@ -1082,10 +1088,10 @@ mod tests {
                     "end_type": 6,
                     "win_info": [],
                     "user_profit": [
-                        {"user_id": 1001, "user_point": 25000},
-                        {"user_id": 1002, "user_point": 25000},
-                        {"user_id": 1003, "user_point": 25000},
-                        {"user_id": 1004, "user_point": 25000}
+                        {"user_id": 1001, "point_profit": 0},
+                        {"user_id": 1002, "point_profit": 0},
+                        {"user_id": 1003, "point_profit": 0},
+                        {"user_id": 1004, "point_profit": 0}
                     ]
                 }
             }),
@@ -1118,12 +1124,14 @@ mod tests {
                         {"user_id": 1002, "all_point": 0, "all_fu": 0, "all_fang_num": 0},
                         {"user_id": 1004, "all_point": 0, "all_fu": 0, "all_fang_num": 0}
                     ],
-                    // Tenpai-in-riichi net +500 (1500 payment − 1000 stick); noten −1500.
+                    // point_profit = tenpai +1500 / noten −1500. Seats 1 and 3
+                    // also declared riichi (li_zhi_profit −1000), but that −1000
+                    // is applied at reach_accepted, NOT in the ryukyoku deltas.
                     "user_profit": [
-                        {"user_id": 1001, "user_point": 23500},
-                        {"user_id": 1002, "user_point": 25500},
-                        {"user_id": 1003, "user_point": 23500},
-                        {"user_id": 1004, "user_point": 25500}
+                        {"user_id": 1001, "point_profit": -1500, "li_zhi_profit": 0},
+                        {"user_id": 1002, "point_profit": 1500, "li_zhi_profit": -1000},
+                        {"user_id": 1003, "point_profit": -1500, "li_zhi_profit": 0},
+                        {"user_id": 1004, "point_profit": 1500, "li_zhi_profit": -1000}
                     ]
                 }
             }),
@@ -1131,7 +1139,11 @@ mod tests {
         assert_eq!(e.len(), 2, "exactly one ryukyoku + end_kyoku, no hora");
         match &e[0] {
             MjaiEvent::Ryukyoku { deltas } => {
-                assert_eq!(deltas.as_ref().unwrap(), &vec![-1500, 500, -1500, 500]);
+                assert_eq!(
+                    deltas.as_ref().unwrap(),
+                    &vec![-1500, 1500, -1500, 1500],
+                    "tenpai payment is +1500; the riichi −1000 is at reach_accepted",
+                );
             }
             other => panic!("expected Ryukyoku, got {other:?}"),
         }

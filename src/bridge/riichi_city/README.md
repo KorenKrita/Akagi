@@ -80,16 +80,20 @@ The action codes only flag the end; `on_game_end` does the work:
   `win_info` entry is a winner only when `all_point > 0`. On an exhaustive draw
   `win_info` lists the *tenpai* players with `all_point == 0` (hand reveal), so
   it must be read as a draw.
-- **deltas** = each player's `user_profit[].user_point` (the running total) minus
-  that player's score at the start of the kyoku (`kyoku_start_scores`). This nets
-  riichi sticks correctly; `point_profit` alone double-counts collected sticks.
+- **deltas** = each player's `user_profit[].point_profit` (+ `extra_profit`),
+  the per-hand change including honba and collected kyotaku but EXCLUDING that
+  player's own riichi stick. The −1000 for declaring riichi is applied by the
+  mjai consumer at `reach_accepted` (the Tenhou bridge splits it the same way),
+  so a `user_point` running diff would double-count it. Win deltas therefore sum
+  to +collected-kyotaku, draw deltas sum to 0.
 - **winner** = `win_info[].user_id`; **ron target** = the last discarder
   (`last_dahai_actor`), **tsumo target** = the winner; **ura-dora** =
   `win_info[].li_bao_card`.
 
-Emits a `hora` per `win_info` entry (so double/triple ron yields multiple), or a
-`ryukyoku`, then `end_kyoku`. Verified against a full 13-kyoku capture: deltas
-reconcile to zero per kyoku and `user_info_list` stays in fixed seat order.
+Emits a `hora` per winner (so double/triple ron yields multiple), or a
+`ryukyoku`, then `end_kyoku`. Verified against full captures: `point_profit`
+includes honba and carried kyotaku, and `user_info_list` stays in fixed seat
+order across rotating dealers.
 Exhaustive-draw (荒牌流局) tenpai/noten payments use the same `user_point`-diff
 path but weren't present in that capture.
 
