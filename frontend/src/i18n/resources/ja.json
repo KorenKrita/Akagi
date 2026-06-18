@@ -273,6 +273,7 @@
     "capture_mode_hint": "MITM プロキシは CA 証明書 + システムプロキシが必要です。Chromium モードは制御下のブラウザを起動するだけで、追加設定は不要です。",
     "capture_mitm_option": "MITM プロキシ",
     "capture_chromium_option": "Chromium ブラウザ（実験的）",
+    "capture_mitm_only": "このプラットフォームには Web クライアントがありません — MITM キャプチャのみ対応です。",
     "proxy_enabled": "プロキシを有効化",
     "ca_dir_hint": "ルート証明書／鍵を書き出すディレクトリです。",
     "browser_executable": "ブラウザ実行ファイル",
@@ -522,6 +523,7 @@
     "tenhou": "天鳳",
     "tenhou_desc": "tenhou.net — 四麻 + 三麻",
     "riichi_city": "麻雀一番街",
+    "riichi_city_desc": "ネイティブアプリ — MITM のみ · 四麻 + 三麻",
     "mjai": "mjai"
   },
   "updates": {

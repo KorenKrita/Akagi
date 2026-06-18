@@ -273,6 +273,7 @@
     "capture_mode_hint": "MITM 代理需要 CA 憑證 + 系統代理；Chromium 模式則啟動受控瀏覽器，無需前置設定。",
     "capture_mitm_option": "MITM 代理",
     "capture_chromium_option": "Chromium 瀏覽器（實驗性）",
+    "capture_mitm_only": "此平台沒有網頁用戶端 — 僅支援 MITM 擷取。",
     "proxy_enabled": "啟用代理",
     "ca_dir_hint": "CA 根憑證／金鑰寫入的目錄。",
     "browser_executable": "瀏覽器執行檔",
@@ -522,6 +523,7 @@
     "tenhou": "天鳳",
     "tenhou_desc": "tenhou.net — 四麻 + 三麻",
     "riichi_city": "麻雀一番街",
+    "riichi_city_desc": "原生用戶端 — 僅 MITM · 四麻 + 三麻",
     "mjai": "mjai"
   },
   "updates": {

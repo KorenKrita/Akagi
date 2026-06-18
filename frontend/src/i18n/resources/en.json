@@ -273,6 +273,7 @@
     "capture_mode_hint": "MITM proxy needs CA cert + system proxy. Chromium launches a controlled browser — no setup.",
     "capture_mitm_option": "MITM proxy",
     "capture_chromium_option": "Chromium browser (experimental)",
+    "capture_mitm_only": "This platform has no web client — MITM capture only.",
     "proxy_enabled": "Proxy enabled",
     "ca_dir_hint": "Where root certificate / keys are written.",
     "browser_executable": "Browser executable",
@@ -522,6 +523,7 @@
     "tenhou": "Tenhou",
     "tenhou_desc": "tenhou.net — yonma + sanma",
     "riichi_city": "Riichi City",
+    "riichi_city_desc": "Native client — MITM only · yonma + sanma",
     "mjai": "mjai"
   },
   "updates": {

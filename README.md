@@ -154,7 +154,7 @@ https://github.com/user-attachments/assets/d5bc6ff6-6560-4365-ae55-660c9a522790
 |---|:---:|:---:|:---:|
 | **Mahjong Soul (Majsoul)** | &check; | &check; | &check; |
 | **Tenhou** | &check; | &check; | &cross; |
-| **Riichi City** | (planned) | (planned) | &cross; |
+| **Riichi City** | &check; | &check; | &cross; |
 | **Amatsuki** | (planned) | (planned) | &cross; |
 
 ---
@@ -464,6 +464,7 @@ Done in alpha.8:
 
 - [x] 3-player mahjong (sanma) — full pipeline
 - [x] Tenhou bridge (observe-only)
+- [x] Riichi City bridge (MITM only — native client; observe-only)
 - [x] Game history persistence + History tab (rank pie / PT chart / stats)
 - [x] Logs viewer (Diagnostic + Inspector tabs)
 - [x] i18n: en / ja / zh-TW / zh-CN, with Setup-wizard language picker
@@ -474,7 +475,6 @@ Done in alpha.8:
 
 Planned:
 
-- [ ] **Riichi City** platform support
 - [ ] **Amatsuki** platform support
 - [ ] **Custom themes** (frontend theming hooks)
 - [ ] **Refine Frontend** — tile layout, animations, accessibility

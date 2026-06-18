@@ -15,9 +15,17 @@ export type PlatformInfo = {
   /**
    * Default URL for the Chromium capture backend's `start_url` when this
    * platform is active. Picked so the launched browser lands directly on
-   * the game's lobby/match-find page.
+   * the game's lobby/match-find page. Empty for native-only platforms that
+   * have no web client (see `supportsChromium`).
    */
   defaultStartUrl: string
+  /**
+   * Whether the Chromium (CDP) capture backend can drive this platform.
+   * `false` for native clients with no web build (e.g. Riichi City), which
+   * are only reachable through the MITM proxy. The UI hides / disables the
+   * Chromium option and forces MITM for these.
+   */
+  supportsChromium: boolean
 }
 
 export const PLATFORMS: PlatformInfo[] = [
@@ -26,12 +34,22 @@ export const PLATFORMS: PlatformInfo[] = [
     labelKey: 'platform.majsoul',
     descriptionKey: 'platform.majsoul_desc',
     defaultStartUrl: 'https://game.maj-soul.com/1/',
+    supportsChromium: true,
   },
   {
     kind: 'Tenhou',
     labelKey: 'platform.tenhou',
     descriptionKey: 'platform.tenhou_desc',
     defaultStartUrl: 'https://tenhou.net/4/',
+    supportsChromium: true,
+  },
+  {
+    kind: 'RiichiCity',
+    labelKey: 'platform.riichi_city',
+    descriptionKey: 'platform.riichi_city_desc',
+    // Native client, no web build → MITM only.
+    defaultStartUrl: '',
+    supportsChromium: false,
   },
 ]
 
