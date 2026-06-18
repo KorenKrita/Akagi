@@ -587,13 +587,22 @@ mod tests {
             called_tile: Some("1z".into()),
         };
         // Caller = seat 1. kamicha of 1 is seat 0 → rotated left.
-        let kamicha = MeldSnapshot { from_who: 0, ..base.clone() };
+        let kamicha = MeldSnapshot {
+            from_who: 0,
+            ..base.clone()
+        };
         assert_eq!(encode_meld(&kamicha, 1, 4), "_111z");
         // toimen of 1 is seat 3 → rotated middle.
-        let toimen = MeldSnapshot { from_who: 3, ..base.clone() };
+        let toimen = MeldSnapshot {
+            from_who: 3,
+            ..base.clone()
+        };
         assert_eq!(encode_meld(&toimen, 1, 4), "1_11z");
         // shimocha of 1 is seat 2 → rotated right.
-        let shimocha = MeldSnapshot { from_who: 2, ..base.clone() };
+        let shimocha = MeldSnapshot {
+            from_who: 2,
+            ..base.clone()
+        };
         assert_eq!(encode_meld(&shimocha, 1, 4), "11_1z");
     }
 

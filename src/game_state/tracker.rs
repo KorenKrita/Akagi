@@ -695,7 +695,10 @@ mod tests {
         // The rendered strings reflect both fixes: pon rotated toward toimen
         // (middle slot), discarder's river empty.
         let view = MahgenView::from_snapshot(&snap);
-        assert_eq!(view.players[0].melds[0], "1_11m", "pon rotated toward toimen");
+        assert_eq!(
+            view.players[0].melds[0], "1_11m",
+            "pon rotated toward toimen"
+        );
         assert_eq!(view.players[2].river, "", "claimed tile hidden from river");
     }
 
