@@ -48,17 +48,25 @@
   align-items: center;
   gap: 5px;
   padding: 3px 7px;
-  background: rgba(0, 0, 0, 0.5);
+  /* light mode: white panel; dark mode restored under `.dark` below */
+  background: oklch(1 0 0 / 0.9);
   border: 1px solid var(--border);
   border-radius: 8px;
   /* scale with the board so the dora doesn't look tiny on a large tile */
   transform: scale(var(--board-scale, 1));
   transform-origin: top left;
 }
+.dark .board-dora {
+  background: rgba(0, 0, 0, 0.5);
+}
 .board-dora-label {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  /* light mode: black text on the white panel; dark mode muted under `.dark` */
+  color: var(--foreground);
+}
+.dark .board-dora-label {
   color: var(--muted-foreground);
 }
 
@@ -114,9 +122,10 @@
   display: grid;
   grid-template-columns: 1fr 1.25fr 1fr;
   grid-template-rows: 1fr 1.25fr 1fr;
+  /* var(--foreground) is black in light mode, white in dark mode */
   color: var(--foreground);
-  /* lighter translucent grey over the dark board, with a border */
-  background: oklch(0.30 0 0 / 0.55);
+  /* light mode: white panel; dark mode restored under `.dark` below */
+  background: oklch(1 0 0 / 0.9);
   border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
@@ -125,6 +134,10 @@
   overflow: hidden;
   /* panel text scales with the board (see --board-scale on .board-square) */
   font-size: calc(11px * var(--board-scale, 1));
+}
+.dark .board-center {
+  /* lighter translucent grey over the dark board, with a border */
+  background: oklch(0.30 0 0 / 0.55);
 }
 .board-score {
   display: flex;
