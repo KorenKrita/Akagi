@@ -95,7 +95,7 @@ export type DetectedBrowser = {
 /// share names but the schema enum carries extra archive-only variants).
 /// Mirrors `src/config/platform.rs::Platform` (`#[derive(Serialize)]` →
 /// PascalCase JSON: `"Majsoul"`, `"Tenhou"`).
-export type PlatformKind = 'Majsoul' | 'Tenhou'
+export type PlatformKind = 'Majsoul' | 'Tenhou' | 'RiichiCity'
 
 export type MajsoulAutoplayConfig = {
   pre_click_delay_min_ms: number

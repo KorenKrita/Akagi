@@ -245,14 +245,18 @@ function PlatformStep({
   // step that comes next.
   const pick = (kind: PlatformKind) => {
     if (kind === current) return
+    const info = platformInfo(kind)
     setDraft({
       ...draft,
       platform: { kind },
       capture: {
         ...draft.capture,
+        // Native-only platforms (no web client) can't use Chromium capture —
+        // force MITM so the next steps configure the right backend.
+        mode: info.supportsChromium ? draft.capture.mode : 'mitm',
         chromium: {
           ...draft.capture.chromium,
-          start_url: platformInfo(kind).defaultStartUrl,
+          start_url: info.defaultStartUrl,
         },
       },
     })
@@ -346,13 +350,17 @@ function ModeStep({
   setDraft: (c: AppConfig) => void
 }) {
   const { t } = useTranslation()
-  const mode = draft.capture.mode
+  const supportsChromium = platformInfo(draft.platform.kind).supportsChromium
+  // A native-only platform can only be captured via MITM; never leave the
+  // draft on the (now unavailable) Chromium mode.
+  const mode = supportsChromium ? draft.capture.mode : 'mitm'
   return (
     <div className="grid gap-3">
       <h2 className="text-lg font-semibold">{t('setup.mode.title')}</h2>
       <ModeCard
         title={t('setup.mode.chromium_title')}
-        active={mode === 'chromium'}
+        active={supportsChromium && mode === 'chromium'}
+        disabled={!supportsChromium}
         onClick={() => setDraft({ ...draft, capture: { ...draft.capture, mode: 'chromium' } })}
         description={t('setup.mode.chromium_desc')}
       />
@@ -371,18 +379,25 @@ function ModeCard({
   description,
   active,
   onClick,
+  disabled = false,
 }: {
   title: string
   description: string
   active: boolean
   onClick: () => void
+  disabled?: boolean
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`text-left rounded-md border p-4 transition-colors ${
-        active ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
+        disabled
+          ? 'border-border opacity-50 cursor-not-allowed'
+          : active
+            ? 'border-primary bg-primary/5'
+            : 'border-border hover:border-primary/40'
       }`}
     >
       <div className="flex items-center gap-2">

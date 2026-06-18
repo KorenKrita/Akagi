@@ -138,7 +138,7 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 |---|:---:|:---:|:---:|
 | **雀魂（Mahjong Soul / Majsoul）** | &check; | &check; | （規劃中） |
 | **天鳳（Tenhou）** | &check; | &check; | &cross; |
-| **Riichi City** | （規劃中） | （規劃中） | &cross; |
+| **Riichi City** | &check; | &check; | &cross; |
 | **Amatsuki** | （規劃中） | （規劃中） | &cross; |
 
 ---
@@ -435,6 +435,7 @@ alpha.8 已完成：
 
 - [x] 三麻 — 完整流程
 - [x] 天鳳 bridge（僅觀戰）
+- [x] Riichi City bridge（僅 MITM — 原生用戶端；僅觀戰）
 - [x] 對局歷史持久化 + History 頁籤（名次圓餅 / PT 圖 / 統計）
 - [x] 紀錄檢視（Diagnostic + Inspector）
 - [x] i18n：en / ja / zh-TW / zh-CN，含設定精靈語言選擇
@@ -443,7 +444,6 @@ alpha.8 已完成：
 
 規劃中：
 
-- [ ] **Riichi City** 平台支援
 - [ ] **Amatsuki** 平台支援
 - [ ] **自訂主題**（前端 theming hook）
 - [ ] **AutoPlay**（先支援雀魂；由 bot 自主控制牌桌，

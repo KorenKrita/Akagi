@@ -40,6 +40,8 @@ dirs = "6"
 chromiumoxide = "0.9.1"
 ulid = { version = "1", features = ["serde"] }
 rand = "0.9"
+http = "1"
+time = "0.3"
 self-replace = "1"
 semver = "1"
 sha2 = "0.11"

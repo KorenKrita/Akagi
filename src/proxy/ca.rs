@@ -1,23 +1,39 @@
 use anyhow::{Context, Result};
+use http::uri::Authority;
 use hudsucker::{
-    certificate_authority::RcgenAuthority,
+    certificate_authority::CertificateAuthority,
     rcgen::{
-        BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
-        KeyUsagePurpose,
+        string::Ia5String, BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa,
+        Issuer, KeyPair, KeyUsagePurpose, SanType,
     },
-    rustls,
+    rustls::{
+        self,
+        crypto::CryptoProvider,
+        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+        ServerConfig,
+    },
 };
-use std::path::Path;
+use rand::{rng, Rng};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    path::Path,
+    sync::{Arc, Mutex},
+};
+use time::{Duration, OffsetDateTime};
 use tracing::info;
 
-const CACHE_SIZE: u64 = 1_000;
+/// Leaf-cert validity window. Mirrors hudsucker's defaults.
+const LEAF_TTL_SECS: i64 = 365 * 24 * 60 * 60;
+const NOT_BEFORE_OFFSET_SECS: i64 = 60;
+
 const BASENAME: &str = "akagi-ca";
 const CERT_PEM_EXTS: &[&str] = &["cer", "crt", "pem"];
 const CERT_DER_EXT: &str = "der";
 const KEY_PEM_EXT: &str = "key";
 const KEY_DER_EXT: &str = "key.der";
 
-pub fn load_or_generate(dir: &Path) -> Result<RcgenAuthority> {
+pub fn load_or_generate(dir: &Path) -> Result<IpAwareAuthority> {
     std::fs::create_dir_all(dir)
         .with_context(|| format!("Failed to create CA dir {}", dir.display()))?;
 
@@ -47,9 +63,8 @@ pub fn load_or_generate(dir: &Path) -> Result<RcgenAuthority> {
     let issuer =
         Issuer::from_ca_cert_pem(&cert_pem, key_pair).context("Failed to parse CA certificate")?;
 
-    Ok(RcgenAuthority::new(
+    Ok(IpAwareAuthority::new(
         issuer,
-        CACHE_SIZE,
         rustls::crypto::aws_lc_rs::default_provider(),
     ))
 }
@@ -107,4 +122,132 @@ fn generate_ca() -> Result<(String, String, Vec<u8>, Vec<u8>)> {
     let key_pem = key_pair.serialize_pem();
     let key_der = key_pair.serialize_der();
     Ok((cert_pem, key_pem, cert_der, key_der))
+}
+
+/// Build the parameters for a per-host leaf certificate.
+///
+/// The crucial difference from hudsucker's built-in `RcgenAuthority`: when the
+/// host is an IP literal we emit an `iPAddress` SAN, not a `DnsName`. A DNS SAN
+/// holding an IP string is rejected by RFC-6125-compliant TLS clients, so
+/// MITMing a server reached by raw IP (Riichi City's game server connects to
+/// `<ip>:443`) would otherwise fail the handshake.
+fn leaf_params(host: &str) -> CertificateParams {
+    let mut params = CertificateParams::default();
+    params.serial_number = Some(rng().random::<u64>().into());
+
+    let not_before = OffsetDateTime::now_utc() - Duration::seconds(NOT_BEFORE_OFFSET_SECS);
+    params.not_before = not_before;
+    params.not_after = not_before + Duration::seconds(LEAF_TTL_SECS);
+
+    let mut dn = DistinguishedName::new();
+    dn.push(DnType::CommonName, host);
+    params.distinguished_name = dn;
+
+    let san = match host.parse::<IpAddr>() {
+        Ok(ip) => SanType::IpAddress(ip),
+        Err(_) => {
+            SanType::DnsName(Ia5String::try_from(host).expect("host is not a valid IA5 string"))
+        }
+    };
+    params.subject_alt_names.push(san);
+    params
+}
+
+/// A hudsucker [`CertificateAuthority`] that issues leaf certs with the correct
+/// SAN type for both hostnames and IP literals (the latter is why we can't use
+/// the built-in `RcgenAuthority`). Generated configs are cached per host for the
+/// lifetime of the proxy.
+pub struct IpAwareAuthority {
+    issuer: Issuer<'static, KeyPair>,
+    private_key: PrivateKeyDer<'static>,
+    cache: Mutex<HashMap<String, Arc<ServerConfig>>>,
+    provider: Arc<CryptoProvider>,
+}
+
+impl IpAwareAuthority {
+    pub fn new(issuer: Issuer<'static, KeyPair>, provider: CryptoProvider) -> Self {
+        let private_key =
+            PrivateKeyDer::from(PrivatePkcs8KeyDer::from(issuer.key().serialize_der()));
+        Self {
+            issuer,
+            private_key,
+            cache: Mutex::new(HashMap::new()),
+            provider: Arc::new(provider),
+        }
+    }
+
+    fn gen_cert(&self, host: &str) -> CertificateDer<'static> {
+        leaf_params(host)
+            .signed_by(self.issuer.key(), &self.issuer)
+            .expect("failed to sign leaf certificate")
+            .into()
+    }
+}
+
+impl CertificateAuthority for IpAwareAuthority {
+    async fn gen_server_config(&self, authority: &Authority) -> Arc<ServerConfig> {
+        let host = authority.host().to_string();
+        if let Some(cfg) = self
+            .cache
+            .lock()
+            .expect("CA cache poisoned")
+            .get(&host)
+            .cloned()
+        {
+            return cfg;
+        }
+
+        let certs = vec![self.gen_cert(&host)];
+        let mut server_cfg = ServerConfig::builder_with_provider(Arc::clone(&self.provider))
+            .with_safe_default_protocol_versions()
+            .expect("failed to set protocol versions")
+            .with_no_client_auth()
+            .with_single_cert(certs, self.private_key.clone_key())
+            .expect("failed to build ServerConfig");
+        // hudsucker is built with the http2 feature, so advertise h2 too.
+        server_cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        let server_cfg = Arc::new(server_cfg);
+
+        self.cache
+            .lock()
+            .expect("CA cache poisoned")
+            .insert(host, Arc::clone(&server_cfg));
+        server_cfg
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ip_host_gets_ip_san_not_dns() {
+        // Regression: Riichi City's game server is reached by raw IP. A DnsName
+        // SAN holding an IP would be rejected by the client, dropping the
+        // gameplay WebSocket.
+        let p = leaf_params("13.112.183.79");
+        assert!(
+            matches!(p.subject_alt_names.as_slice(), [SanType::IpAddress(_)]),
+            "IP host must get an iPAddress SAN, got {:?}",
+            p.subject_alt_names
+        );
+    }
+
+    #[test]
+    fn ipv6_host_gets_ip_san() {
+        let p = leaf_params("2001:db8::1");
+        assert!(matches!(
+            p.subject_alt_names.as_slice(),
+            [SanType::IpAddress(_)]
+        ));
+    }
+
+    #[test]
+    fn hostname_gets_dns_san() {
+        let p = leaf_params("game.maj-soul.com");
+        assert!(matches!(
+            p.subject_alt_names.as_slice(),
+            [SanType::DnsName(_)]
+        ));
+    }
 }

@@ -5,9 +5,11 @@
 //! independent game session (e.g. one Majsoul WebSocket flow).
 
 pub mod majsoul;
+pub mod riichi_city;
 pub mod tenhou;
 
 pub use majsoul::MajsoulBridge;
+pub use riichi_city::RiichiCityBridge;
 pub use tenhou::TenhouBridge;
 
 use crate::{
@@ -83,5 +85,6 @@ pub fn for_platform(
     match platform {
         crate::config::Platform::Majsoul => Box::new(MajsoulBridge::new(flow_log, session)),
         crate::config::Platform::Tenhou => Box::new(TenhouBridge::new(flow_log, session)),
+        crate::config::Platform::RiichiCity => Box::new(RiichiCityBridge::new(flow_log, session)),
     }
 }

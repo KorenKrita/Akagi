@@ -557,15 +557,19 @@ function PlatformCard({
     // the new platform's default so the next launch lands on the right
     // game. A user-customised URL is left alone — the URL field below
     // shows the platform default as a hint either way.
+    const info = platformInfo(kind)
     const oldStart = draft.capture.chromium.start_url
     const nextStart = isKnownDefaultStartUrl(oldStart)
-      ? platformInfo(kind).defaultStartUrl
+      ? info.defaultStartUrl
       : oldStart
     setDraft({
       ...draft,
       platform: { kind },
       capture: {
         ...draft.capture,
+        // Native-only platforms (no web client) are MITM-only — force the
+        // mode so we never persist an unusable Chromium capture for them.
+        mode: info.supportsChromium ? draft.capture.mode : 'mitm',
         chromium: { ...draft.capture.chromium, start_url: nextStart },
       },
     })
@@ -746,7 +750,10 @@ function CaptureCard({
   setDraft: (c: AppConfig) => void
 }) {
   const { t } = useTranslation()
-  const mode: CaptureMode = draft.capture?.mode ?? 'mitm'
+  const supportsChromium = platformInfo(draft.platform.kind).supportsChromium
+  // Native-only platforms (no web client) are MITM-only; present MITM as the
+  // effective mode even if a stale config selected Chromium.
+  const mode: CaptureMode = supportsChromium ? (draft.capture?.mode ?? 'mitm') : 'mitm'
   const chromium = draft.capture?.chromium ?? {
     executable: '',
     user_data_dir: '',
@@ -811,10 +818,16 @@ function CaptureCard({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="mitm">{t('settings.capture_mitm_option')}</SelectItem>
-              <SelectItem value="chromium">{t('settings.capture_chromium_option')}</SelectItem>
+              <SelectItem value="chromium" disabled={!supportsChromium}>
+                {t('settings.capture_chromium_option')}
+              </SelectItem>
             </SelectContent>
           </Select>
         </Field>
+
+        {!supportsChromium && (
+          <p className="text-xs text-amber-500">{t('settings.capture_mitm_only')}</p>
+        )}
 
         {mode === 'mitm' && (
           <>

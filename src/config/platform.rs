@@ -9,6 +9,10 @@ pub enum Platform {
     #[default]
     Majsoul,
     Tenhou,
+    /// Riichi City (麻雀一番街). Native client only (no web build), so it is
+    /// captured exclusively through the MITM proxy — the Chromium/CDP backend
+    /// does not apply. Observe-only (no autoplay).
+    RiichiCity,
 }
 
 impl Platform {
@@ -18,6 +22,7 @@ impl Platform {
         match self {
             Platform::Majsoul => "majsoul",
             Platform::Tenhou => "tenhou",
+            Platform::RiichiCity => "riichi_city",
         }
     }
 }
@@ -30,6 +35,7 @@ impl From<Platform> for schema::Platform {
         match p {
             Platform::Majsoul => schema::Platform::Majsoul,
             Platform::Tenhou => schema::Platform::Tenhou,
+            Platform::RiichiCity => schema::Platform::RiichiCity,
         }
     }
 }
@@ -53,6 +59,10 @@ mod tests {
         assert_eq!(
             schema::Platform::from(Platform::Tenhou),
             schema::Platform::Tenhou
+        );
+        assert_eq!(
+            schema::Platform::from(Platform::RiichiCity),
+            schema::Platform::RiichiCity
         );
     }
 }
