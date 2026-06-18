@@ -30,14 +30,16 @@ const SIZE_CTX: Record<MahgenKind, SizeCtx> = {
   'bot-show': { mode: 'linear', base: 30, ref: 260, min: 22, max: 64 },
   // board-*: compact tiles for the 2D table tile (BoardTile). Each seat's
   // mahgen container is a fraction of the square board, so these scale down
-  // when the tile is small. `board-hand` uses linear (constant-ish tile size,
-  // width grows with tile count) rather than `hand`'s 'fit' min:44 which would
-  // overflow a small seat. Values are tunable — refine visually in the webview.
-  // 'fit' makes the hand fill its container width (which is a fraction of the
-  // square board) so it scales with the board and never overflows. River uses
-  // 'river' scaling with a high cap so it grows with the board too; its smaller
-  // container width keeps river tiles smaller than hand tiles.
-  'board-hand':  { mode: 'fit', min: 16, max: 100 },
+  // when the tile is small. `board-hand` uses linear so each tile keeps a
+  // constant height (scaling only with the board) and the strip *width* grows
+  // with the tile count — like `board-meld`. (Earlier 'fit' forced the hand to
+  // fill its fixed-width container, so fewer hand tiles after melds blew each
+  // tile up huge.) base/ref are tuned so hand tile height ≈ meld tile height
+  // (meld is base 34 over a 44% container; hand here is over a 56% container)
+  // and a full 13-tile hand still ≈ fills the container — refine visually in
+  // the webview. River uses 'river' scaling with a high cap so it grows with
+  // the board too; its smaller container width keeps river tiles smaller.
+  'board-hand':  { mode: 'linear', base: 28, ref: 250, min: 16, max: 80 },
   'board-river': { mode: 'river',  maxScale: 1.0, minScale: 0.14 },
   'board-meld':  { mode: 'linear', base: 34, ref: 240, min: 16, max: 80 },
 }
