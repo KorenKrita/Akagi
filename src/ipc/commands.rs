@@ -95,7 +95,6 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
     let proxy_changed = prev_proxy != new_config.proxy;
     let platform_changed = prev_platform != new_config.platform.kind;
     let new_platform = new_config.platform.kind;
-    let bot_cfg = new_config.bot.clone();
     let bot_now_enabled = new_config.bot.enabled;
     let autoplay_now_enabled = new_config.autoplay.enabled;
     *state.config.write().await = new_config;
@@ -141,6 +140,7 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
     // toggles only spawn once. The manager runs forever; flipping back to
     // false still requires an Akagi relaunch to actually stop it.
     if claim_bot_manager_spawn(bot_now_enabled, &state.bot_manager_started) {
+        let cfg_for_bot = state.config.clone();
         let mjai = state.mjai_bus.clone();
         let resp = state.bot_response_bus.clone();
         let bs = state.bot_status_bus.clone();
@@ -151,7 +151,8 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
         let started_flag = state.bot_manager_started.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(e) =
-                crate::bot::run_bot_manager(bot_cfg, mjai, resp, bs, nb, inspector, rt, syncs).await
+                crate::bot::run_bot_manager(cfg_for_bot, mjai, resp, bs, nb, inspector, rt, syncs)
+                    .await
             {
                 tracing::error!("Bot manager failed: {e:#}");
                 // Setup failure: clear the flag so a follow-up
@@ -248,8 +249,9 @@ pub async fn update_bot_settings(
 }
 
 /// Update the active bot for a given mode (`"4p"` or `"3p"`) in config +
-/// persist. Doesn't restart the running `BotManager` — that respawns on the
-/// next `start_game` event anyway, and picks the matching mode bot then.
+/// persist. Doesn't restart the running `BotManager` — it reads the active
+/// bot fresh from the shared config at each `start_game`, so the next game
+/// picks up this change with no relaunch (an in-progress game keeps its bot).
 ///
 /// Empty `name` clears that mode's active bot (analysis-only in that mode).
 ///

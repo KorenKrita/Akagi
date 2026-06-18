@@ -30,6 +30,7 @@ use crate::bot::registry::BotRegistry;
 use crate::bot::runner::{BotRunner, SubprocessBot};
 use crate::bot::runtime::PythonRuntime;
 use crate::bot::sync_guard::SyncGuard;
+use crate::config::AppConfig;
 use crate::event_bus::{BotResponseBus, BotStatusBus, NotifyBus};
 use crate::inspector::InspectorWriter;
 use crate::schema::{BotReaction, BotStatus, InspectorEntry, LoadStage, MjaiEvent, Notification};
@@ -39,7 +40,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
 pub struct BotManager {
@@ -50,12 +51,16 @@ pub struct BotManager {
     /// Akagi — the manager's view of "what bots exist" must not be a
     /// snapshot taken at supervisor start.
     bot_dir: PathBuf,
-    /// Active bot subdir name for 4-player games. Empty ⇒ no 4p bot configured.
-    active_4p: String,
-    /// Active bot subdir name for 3-player games. Empty ⇒ no 3p bot configured.
-    active_3p: String,
+    /// Shared, live application config. The active-bot selection
+    /// (`bot.active_4p` / `bot.active_3p`) is read *fresh* at every
+    /// `start_game` rather than snapshotted at construction, so a runtime
+    /// switch via the Bots page (`set_active_bot`) or Settings
+    /// (`update_config`) takes effect on the next game without relaunching
+    /// Akagi.
+    config: Arc<RwLock<AppConfig>>,
     /// Subdir name of the bot currently spawned for the in-progress game
-    /// (one of `active_4p` / `active_3p`, decided at `start_game`).
+    /// (the `active_4p` / `active_3p` value read from `config` at
+    /// `start_game`). Empty until the first `start_game`.
     active_name: String,
     runner: Option<Box<dyn BotRunner>>,
     /// Events seen since the last `react()` call.
@@ -80,21 +85,18 @@ impl BotManager {
     pub fn new(
         runtime: PythonRuntime,
         bot_dir: PathBuf,
-        active_4p: String,
-        active_3p: String,
+        config: Arc<RwLock<AppConfig>>,
         out_tx: BotResponseBus,
         status_tx: BotStatusBus,
         notify_tx: NotifyBus,
         inspector: InspectorWriter,
         syncs_in_flight: Arc<Mutex<HashSet<String>>>,
     ) -> Self {
-        let active_name = active_4p.clone();
         Self {
             runtime,
             bot_dir,
-            active_4p,
-            active_3p,
-            active_name,
+            config,
+            active_name: String::new(),
             runner: None,
             pending: Vec::new(),
             actor_id: None,
@@ -117,10 +119,7 @@ impl BotManager {
     /// `Sender` so the manager doesn't keep the channel alive itself —
     /// makes shutdown deterministic when the proxy stops producing.
     pub async fn run(mut self, mut rx: broadcast::Receiver<MjaiEvent>) -> Result<()> {
-        info!(
-            bot = %self.active_name,
-            "bot manager subscribed to MJAI bus; waiting for start_game"
-        );
+        info!("bot manager subscribed to MJAI bus; waiting for start_game (active bot is read from config at each start_game)");
         // Surface the initial state to any IPC consumer that subscribes
         // late. Send is no-op when no subscribers exist yet.
         self.emit_status(BotStatus::Idle);
@@ -155,12 +154,17 @@ impl BotManager {
         } = &event
         {
             self.actor_id = Some(*seat);
-            // Pick the active bot for this game's player count.
-            let chosen = if *num_players == 3 {
-                &self.active_3p
-            } else {
-                &self.active_4p
-            };
+            // Pick the active bot for this game's player count, reading the
+            // *current* config so a runtime model switch takes effect on the
+            // next game (the manager outlives many games — a snapshot taken
+            // at construction would pin the startup selection forever).
+            let chosen = self
+                .config
+                .read()
+                .await
+                .bot
+                .active_for(*num_players)
+                .to_string();
             if chosen.is_empty() {
                 warn!(
                     "no bot configured for {np}p; running analysis-only for this game",
@@ -171,7 +175,7 @@ impl BotManager {
                 self.emit_status(BotStatus::Idle);
                 return Ok(());
             }
-            self.active_name = chosen.clone();
+            self.active_name = chosen;
             self.spawn_runner().await?;
             self.pending.clear();
         }
@@ -540,6 +544,16 @@ mod tests {
         Arc::new(Mutex::new(HashSet::new()))
     }
 
+    /// Shared config handle pre-seeded with a 4p active bot (and no 3p bot),
+    /// matching how the supervisor hands the manager its live config. The
+    /// active-bot selection is read from this at every `start_game`.
+    fn cfg_with(active_4p: &str) -> Arc<RwLock<AppConfig>> {
+        let mut c = AppConfig::default();
+        c.bot.active_4p = active_4p.to_string();
+        c.bot.active_3p = String::new();
+        Arc::new(RwLock::new(c))
+    }
+
     /// Tempfile-backed inspector writer for tests. The file is leaked
     /// for the test duration (the OS reaps it on process exit) — keeps
     /// the constructor a one-liner without per-test cleanup boilerplate.
@@ -573,8 +587,7 @@ mod tests {
         let mut mgr = BotManager::new(
             dummy_runtime(),
             empty_bot_dir(),
-            "mock".into(),
-            String::new(),
+            cfg_with("mock"),
             bus,
             status,
             notify,
@@ -583,7 +596,10 @@ mod tests {
         );
         // Pre-seat the actor and inject the mock so we don't go through
         // the registry / runtime path (covered by runner.rs tests).
+        // `start_game` normally sets `active_name` alongside the runner, so
+        // mirror that invariant here for status emissions to be realistic.
         mgr.actor_id = Some(2);
+        mgr.active_name = "mock".into();
         mgr.runner = Some(Box::new(mock));
         (mgr, calls, resp_rx, status_rx, notify_rx)
     }
@@ -775,8 +791,7 @@ mod tests {
         let mut mgr = BotManager::new(
             dummy_runtime(),
             empty_bot_dir(),
-            "mock".into(),
-            String::new(),
+            cfg_with("mock"),
             bus,
             status,
             notify,
@@ -784,6 +799,7 @@ mod tests {
             fresh_syncs(),
         );
         mgr.actor_id = Some(2);
+        mgr.active_name = "mock".into();
         mgr.runner = Some(Box::new(MockBotRunner::failing("kaboom")));
 
         // Trigger a decision point — react() returns error.
@@ -816,8 +832,7 @@ mod tests {
         let mut mgr = BotManager::new(
             dummy_runtime(),
             empty_bot_dir(),
-            "ghost".into(),
-            String::new(),
+            cfg_with("ghost"),
             bus,
             status,
             notify,
@@ -847,6 +862,64 @@ mod tests {
         assert!(n.title.contains("Bot not found"));
     }
 
+    /// Regression (issue #157): switching the active bot after the manager
+    /// is constructed must take effect on the next `start_game`. Pre-fix the
+    /// manager snapshotted `active_4p`/`active_3p` at construction, so a
+    /// runtime model switch via the Bots page was silently ignored until
+    /// Akagi was relaunched.
+    ///
+    /// We can't run the full spawn (no real Python runtime in tests), so we
+    /// lean on `spawn_runner`'s registry lookup: with an empty registry the
+    /// spawn errors "bot not found", and the emitted `BotStatus::Error`
+    /// carries the bot name the manager *tried* to spawn. Seeing the
+    /// post-switch name there proves the manager re-read config at
+    /// `start_game` rather than using the construction-time snapshot.
+    #[tokio::test]
+    async fn active_bot_switch_takes_effect_on_next_start_game() {
+        let bus = bot_response_bus();
+        let status = bot_status_bus();
+        let notify = notify_bus();
+        let mut status_rx = status.subscribe();
+
+        let config = cfg_with("old-bot");
+        let mut mgr = BotManager::new(
+            dummy_runtime(),
+            empty_bot_dir(),
+            config.clone(),
+            bus,
+            status,
+            notify,
+            dummy_inspector(),
+            fresh_syncs(),
+        );
+
+        // Switch the active bot AFTER construction, exactly as `set_active_bot`
+        // does to the shared config while the manager task is already running.
+        config.write().await.bot.active_4p = "new-bot".to_string();
+
+        let err = mgr
+            .handle(MjaiEvent::StartGame {
+                names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+                kyoku_first: None,
+                aka_flag: None,
+                id: Some(0),
+                num_players: 4,
+            })
+            .await
+            .unwrap_err();
+        // The spawn must have been attempted for the *new* bot, not the
+        // snapshot taken at construction.
+        let msg = format!("{err:#}");
+        assert!(msg.contains("new-bot"), "error should name new-bot: {msg}");
+        assert!(!msg.contains("old-bot"), "must not use stale bot: {msg}");
+
+        let s = status_rx.try_recv().unwrap();
+        assert!(
+            matches!(s, BotStatus::Error { ref bot, .. } if bot == "new-bot"),
+            "expected Error{{bot=new-bot}}, got {s:?}"
+        );
+    }
+
     #[tokio::test]
     async fn events_before_start_game_are_dropped() {
         // Manager freshly constructed → no actor_id, no runner.
@@ -856,8 +929,7 @@ mod tests {
         let mut mgr = BotManager::new(
             dummy_runtime(),
             empty_bot_dir(),
-            "mock".into(),
-            String::new(),
+            cfg_with("mock"),
             bus,
             status,
             notify,
@@ -892,8 +964,7 @@ mod tests {
         let mut mgr = BotManager::new(
             dummy_runtime(),
             bot_dir.clone(),
-            "latebot".into(),
-            String::new(),
+            cfg_with("latebot"),
             bus,
             status,
             notify,
@@ -943,8 +1014,7 @@ mod tests {
         let mut mgr = BotManager::new(
             dummy_runtime(),
             empty_bot_dir(),
-            "mock".into(),
-            String::new(),
+            cfg_with("mock"),
             bot_bus,
             status,
             notify,

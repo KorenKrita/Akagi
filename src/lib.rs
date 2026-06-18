@@ -110,7 +110,6 @@ pub fn run() {
 
     let bot_enabled = cfg.bot.enabled;
     let proxy_enabled = cfg.proxy.enabled;
-    let bot_cfg = cfg.bot.clone();
     let autoplay_enabled = cfg.autoplay.enabled;
 
     // Game-state tracker handle is built up front so AppState can carry
@@ -203,6 +202,7 @@ pub fn run() {
                 ));
 
                 if bot_enabled {
+                    let cfg_for_bot = state.config.clone();
                     let mjai_for_bot = mjai_bus.clone();
                     let resp = bot_response_bus.clone();
                     let bs = bot_status_bus.clone();
@@ -215,7 +215,7 @@ pub fn run() {
                         .store(true, std::sync::atomic::Ordering::SeqCst);
                     tauri::async_runtime::spawn(async move {
                         if let Err(e) = bot::run_bot_manager(
-                            bot_cfg,
+                            cfg_for_bot,
                             mjai_for_bot,
                             resp,
                             bs,
