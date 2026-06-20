@@ -47,29 +47,28 @@ export function RiskChartTile({ bp }: { bp: Breakpoint }) {
   )
 }
 
-// Risk tiers reuse the original RiskChartTile cutoffs (>=20 red, >=10 amber,
-// else emerald). Each tier maps to a colored glow ring around the tile plus a
-// matching badge tint; foreground colors are split light/dark so the numbers
-// stay legible in both themes. The glow is an inline box-shadow rather than an
-// arbitrary `shadow-[...]` class: Tailwind's scanner drops multi-layer arbitrary
-// shadows (the commas break candidate extraction), so the class would be purged.
-type Tier = { glow: string; badge: string }
+// Map deal-in risk to a smooth blue -> green -> yellow -> red colour (continuous,
+// not bucketed). Hue runs linearly from 240 deg (blue, safest) down to 0 deg
+// (red) over a 0..RISK_MAX range; values past RISK_MAX clamp to red. RISK_MAX is
+// tuned so green lands near a ~10% deal-in and red near ~20%, lining up with the
+// risk levels the old discrete cutoffs used. Colours are inline styles (not
+// Tailwind classes) since the hue is computed per tile.
+const RISK_MAX = 20
 
-function riskTier(v: number | null): Tier {
-  if (v == null) return { glow: 'none', badge: 'bg-muted text-muted-foreground' }
-  if (v >= 20)
-    return {
-      glow: '0 0 0 2px rgba(239,68,68,0.75), 0 0 10px 2px rgba(239,68,68,0.55)',
-      badge: 'bg-red-500/15 text-red-600 dark:text-red-400',
-    }
-  if (v >= 10)
-    return {
-      glow: '0 0 0 2px rgba(245,158,11,0.75), 0 0 10px 2px rgba(245,158,11,0.5)',
-      badge: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
-    }
+type RiskColor = { ring: string; glow: string; chip: string }
+
+function riskColor(value: number | null): RiskColor {
+  if (value == null) {
+    // No analysis yet: neutral grey, no hue.
+    return { ring: 'hsl(0 0% 55%)', glow: 'hsl(0 0% 55% / 0.4)', chip: 'hsl(0 0% 45%)' }
+  }
+  const t = Math.min(1, Math.max(0, value / RISK_MAX))
+  const hue = 240 * (1 - t)
   return {
-    glow: '0 0 0 2px rgba(16,185,129,0.55), 0 0 8px 1px rgba(16,185,129,0.4)',
-    badge: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+    ring: `hsl(${hue} 80% 55%)`,
+    glow: `hsl(${hue} 85% 55% / 0.5)`,
+    // Darker so white text on the chip stays legible across the whole gradient.
+    chip: `hsl(${hue} 70% 40%)`,
   }
 }
 
@@ -82,14 +81,21 @@ function RiskTile({
   value: number | null
   rowRef: RefObject<HTMLDivElement | null>
 }) {
-  const tier = riskTier(value)
+  const c = riskColor(value)
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="rounded-[3px] leading-none" style={{ boxShadow: tier.glow }}>
-        <Mahgen seq={mjaiToMahgen([tile])} kind="hand-risk" containerRef={rowRef} />
+      {/* flex + leading-0 so the wrapper shrink-wraps the <mah-gen> tile exactly
+          (the host is display:inline, which otherwise reserves line-box space the
+          ring would expose as a gap above the tile). */}
+      <div
+        className="flex rounded-[3px] leading-[0]"
+        style={{ boxShadow: `0 0 0 2px ${c.ring}, 0 0 8px 2px ${c.glow}` }}
+      >
+        <Mahgen seq={mjaiToMahgen([tile])} kind="hand-risk" containerRef={rowRef} className="leading-[0]" />
       </div>
       <span
-        className={`min-w-[2.4em] rounded px-1 py-0.5 text-center text-[10px] font-mono tabular-nums leading-none ${tier.badge}`}
+        className="min-w-[2.4em] rounded px-1 py-0.5 text-center text-[10px] font-mono tabular-nums leading-none text-white"
+        style={{ backgroundColor: c.chip }}
       >
         {value == null ? '—' : value.toFixed(1)}
       </span>
