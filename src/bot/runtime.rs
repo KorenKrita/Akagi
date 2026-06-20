@@ -105,19 +105,29 @@ impl PythonRuntime {
 
         let current = current_signature(&pyproject, &lock)?;
         if venv.is_dir() && stamp_matches(&stamp_path, &current).await? {
-            if venv_python_alive(&venv) {
+            if venv_python_alive(&venv) && venv_home_exists(&venv) {
                 return Ok(());
             }
-            // Stamp says the deps are in sync, but `bin/python` is a
-            // dangling symlink. The AppImage case: each launch creates a
-            // fresh `/tmp/.mount_Akagi_<rand>/` mount, and uv bakes that
-            // absolute path into `bin/python` + `pyvenv.cfg.home` at
-            // sync time, so the venv built under a previous mount has
-            // dead pointers on the next launch. The standalone python +
-            // installed wheels are binary-identical across launches, so
-            // we repoint the venv to the current python without paying
-            // for a full re-sync (which would otherwise re-run on every
-            // single launch under AppImage).
+            // Stamp says the deps are in sync, but the venv's baked-in
+            // absolute pointers to the base interpreter are stale. Two
+            // ways this happens:
+            //   1. AppImage: each launch creates a fresh
+            //      `/tmp/.mount_Akagi_<rand>/` mount, so the `bin/python`
+            //      symlink built under a previous mount now dangles
+            //      (`venv_python_alive` is false).
+            //   2. The user moved/renamed the whole Akagi folder, so the
+            //      `pyvenv.cfg.home` directory uv baked in at sync time is
+            //      gone (`venv_home_exists` is false). On Unix this also
+            //      dangles the symlink, but on Windows `Scripts/python.exe`
+            //      is a real copy that survives the move, so the missing
+            //      `home` dir is the only on-disk tell — without it we'd
+            //      hand a dead interpreter to the runner and the first
+            //      stdin write dies with `os error 232` ("The pipe is
+            //      being closed").
+            // The standalone python + installed wheels are binary-identical
+            // regardless of location, so we repoint the venv to the current
+            // python without paying for a full re-sync (which would
+            // otherwise re-run on every single launch under AppImage).
             match repoint_venv(&venv, &self.python).await {
                 Ok(()) => {
                     info!(
@@ -301,6 +311,52 @@ fn venv_python_alive(venv: &Path) -> bool {
     std::fs::metadata(venv_python(venv))
         .map(|m| m.is_file())
         .unwrap_or(false)
+}
+
+/// Pull the `home = …` value out of a `pyvenv.cfg` body, if present.
+/// Matches the `home` key exactly (not `homepage` etc.) and tolerates
+/// the surrounding whitespace uv writes (`home = /path`).
+fn home_dir_from_cfg(cfg: &str) -> Option<String> {
+    for line in cfg.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("home") {
+            if let Some(value) = rest.trim_start().strip_prefix('=') {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// True when the venv's recorded base-python `home` directory still
+/// exists on disk. `uv` bakes the *absolute* path of the base
+/// interpreter into `pyvenv.cfg` (`home = …`) at sync time. When the
+/// Akagi folder is moved or renamed, that absolute path is gone: the
+/// venv python can no longer find its base interpreter/stdlib and dies
+/// at startup, which surfaces downstream as a broken pipe on the first
+/// stdin write — `os error 232` ("The pipe is being closed") on Windows,
+/// `Broken pipe (os error 32)` on Unix.
+///
+/// On Unix a moved venv is already caught by `venv_python_alive` (the
+/// `bin/python` symlink dangles), but on Windows `Scripts/python.exe` is
+/// a real copy that survives the move, so the missing `home` directory
+/// is the only on-disk tell. Checking it lets `ensure_synced` fall
+/// through to repair (repoint, or re-sync) instead of handing a dead
+/// interpreter to the runner.
+///
+/// Returns `true` (assume current) when there is no `pyvenv.cfg` or it
+/// carries no `home` key — there is nothing to invalidate on, and
+/// `venv_python_alive` stays the backstop. Note a *copy* of the folder
+/// (original left in place) keeps the old `home` dir alive, so the venv
+/// still works and we correctly leave it untouched; only a true
+/// move/rename trips this.
+fn venv_home_exists(venv: &Path) -> bool {
+    let Ok(cfg) = std::fs::read_to_string(venv.join("pyvenv.cfg")) else {
+        return true;
+    };
+    match home_dir_from_cfg(&cfg) {
+        Some(home) => Path::new(&home).is_dir(),
+        None => true,
+    }
 }
 
 /// Repoint a venv at `new_python` without re-running `uv sync`. Used
@@ -605,6 +661,142 @@ mod tests {
             !cfg.contains("mount_OLD"),
             "pyvenv.cfg must not retain the stale mount path, got:\n{cfg}"
         );
+    }
+
+    #[test]
+    fn home_dir_from_cfg_extracts_home() {
+        let cfg = "home = /opt/py/bin\nimplementation = CPython\nversion_info = 3.12.13\n";
+        assert_eq!(home_dir_from_cfg(cfg).as_deref(), Some("/opt/py/bin"));
+        // Tolerate the no-space form uv never writes but is still legal.
+        assert_eq!(home_dir_from_cfg("home=/x").as_deref(), Some("/x"));
+    }
+
+    #[test]
+    fn home_dir_from_cfg_ignores_lookalike_keys_and_missing_home() {
+        // `homepage`/`home_dir` must not be mistaken for the `home` key.
+        assert_eq!(home_dir_from_cfg("homepage = /x\nhome_dir = /y\n"), None);
+        // No home line at all.
+        assert_eq!(home_dir_from_cfg("implementation = CPython\n"), None);
+    }
+
+    #[test]
+    fn venv_home_exists_tracks_the_baked_home_dir() {
+        let tmp = TempDir::new().unwrap();
+        let venv = tmp.path().join(AKAGI_DIR).join(VENV_DIR);
+        std::fs::create_dir_all(&venv).unwrap();
+
+        // No pyvenv.cfg → nothing to invalidate on → assume current.
+        assert!(venv_home_exists(&venv));
+
+        // home points at a directory that exists → current.
+        let live_home = tmp.path().join("runtime/python/bin");
+        std::fs::create_dir_all(&live_home).unwrap();
+        std::fs::write(
+            venv.join("pyvenv.cfg"),
+            format!("home = {}\nversion_info = 3.12.13\n", live_home.display()),
+        )
+        .unwrap();
+        assert!(venv_home_exists(&venv));
+
+        // home points at a vanished directory (folder was moved) → stale.
+        std::fs::write(
+            venv.join("pyvenv.cfg"),
+            "home = /no/such/old/runtime/python/bin\n",
+        )
+        .unwrap();
+        assert!(!venv_home_exists(&venv));
+
+        // pyvenv.cfg with no home key → assume current (alive check backstops).
+        std::fs::write(venv.join("pyvenv.cfg"), "implementation = CPython\n").unwrap();
+        assert!(venv_home_exists(&venv));
+    }
+
+    /// Regression (the Windows folder-move bug → `write newline: The pipe is
+    /// being closed. (os error 232)`): a venv whose interpreter file still
+    /// exists — on Windows `Scripts/python.exe` is a real copy that survives a
+    /// move, unlike the Unix symlink which dangles — but whose pyvenv.cfg
+    /// `home` directory is gone must NOT short-circuit as ready. The
+    /// `ensure_synced` fast path now requires BOTH `venv_python_alive` AND
+    /// `venv_home_exists`; before this fix only the former was checked, so the
+    /// dead venv was handed to the runner and its first stdin write hit
+    /// `os error 232`.
+    #[test]
+    fn venv_with_live_python_but_missing_home_reads_as_stale() {
+        let tmp = TempDir::new().unwrap();
+        let venv = tmp.path().join(AKAGI_DIR).join(VENV_DIR);
+        // Create the per-platform interpreter file so the test is correct on
+        // both Unix (`bin/python`) and Windows (`Scripts/python.exe`).
+        let py = venv_python(&venv);
+        std::fs::create_dir_all(py.parent().unwrap()).unwrap();
+        std::fs::write(&py, "").unwrap();
+        std::fs::write(
+            venv.join("pyvenv.cfg"),
+            "home = /vanished/old/akagi/runtime/python/bin\n",
+        )
+        .unwrap();
+
+        assert!(
+            venv_python_alive(&venv),
+            "interpreter file is present (Windows copy survives the move)"
+        );
+        assert!(
+            !venv_home_exists(&venv),
+            "but the baked `home` dir is gone → the venv is stale and must be repaired"
+        );
+    }
+
+    /// Regression: end-to-end, `ensure_synced` must repair (not silently
+    /// accept) a moved venv whose python is alive but whose `home` is stale.
+    /// On Unix the repair is an in-place repoint; this asserts the observable
+    /// outcome — afterwards the venv's `home` resolves again. (On Windows the
+    /// same detection routes to a full re-sync, since the base path is baked
+    /// into the trampoline `.exe` and can't be edited in place.)
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ensure_synced_repairs_venv_with_live_python_but_stale_home() {
+        let tmp = TempDir::new().unwrap();
+        let bot = tmp.path();
+        write(&bot.join("pyproject.toml"), "[project]\nname='a'\n");
+
+        // The current (post-move) bundled interpreter, at a valid path.
+        let py_dir = tmp.path().join("runtime/bin");
+        std::fs::create_dir_all(&py_dir).unwrap();
+        let python = py_dir.join("python3");
+        std::fs::write(&python, "").unwrap();
+
+        // Pre-seed the "moved" venv: bin/python present, but home vanished,
+        // and a stamp that matches so the short-circuit branch is reached.
+        let akagi = bot.join(AKAGI_DIR);
+        let venv = akagi.join(VENV_DIR);
+        std::fs::create_dir_all(venv.join("bin")).unwrap();
+        std::fs::write(venv.join("bin").join("python"), "").unwrap();
+        std::fs::write(
+            venv.join("pyvenv.cfg"),
+            "home = /no/such/old/runtime/bin\nversion_info = 3.12.13\n",
+        )
+        .unwrap();
+        let sig =
+            current_signature(&bot.join("pyproject.toml"), &bot.join("uv.lock")).unwrap();
+        std::fs::write(akagi.join(STAMP_FILE), &sig).unwrap();
+        assert!(
+            venv_python_alive(&venv) && !venv_home_exists(&venv),
+            "precondition: the os-error-232 state — live python, dead home"
+        );
+
+        // uv is never invoked: the Unix repoint succeeds in place. A bogus
+        // path proves we didn't fall through to a real sync.
+        let rt = PythonRuntime::from_paths(
+            python,
+            PathBuf::from("/dev/null/uv"),
+            RuntimeMode::System,
+        );
+        rt.ensure_synced(bot).await.unwrap();
+
+        assert!(
+            venv_home_exists(&venv),
+            "ensure_synced must repair the stale home in place"
+        );
+        assert!(venv_python_alive(&venv));
     }
 
     #[test]
