@@ -6,7 +6,7 @@
 
 export type MahgenKind =
   | 'river' | 'hand' | 'melds' | 'dora' | 'rec' | 'bot-action' | 'bot-show'
-  | 'board-hand' | 'board-river' | 'board-meld'
+  | 'board-hand' | 'board-river' | 'board-meld' | 'hand-risk'
 
 type SizeCtx =
   | { mode: 'river'; maxScale?: number; minScale?: number }
@@ -42,6 +42,12 @@ const SIZE_CTX: Record<MahgenKind, SizeCtx> = {
   'board-hand':  { mode: 'linear', base: 28, ref: 250, min: 16, max: 80 },
   'board-river': { mode: 'river',  maxScale: 1.0, minScale: 0.14 },
   'board-meld':  { mode: 'linear', base: 34, ref: 240, min: 16, max: 80 },
+  // hand-risk: individual hand tiles in the RiskChartTile, each rendered as its
+  // own <mah-gen> so a per-tile risk glow + badge can sit around it. Container
+  // ref is the shared content row, so all tiles get the same height and the
+  // strip wraps when the panel is narrow. Tuned for a ~13–14 tile hand; refine
+  // visually in the webview.
+  'hand-risk':   { mode: 'linear', base: 36, ref: 230, min: 26, max: 64 },
 }
 
 const RIVER_FULL_ROW_W = 420
