@@ -28,7 +28,10 @@ type Variant = {
   glyph: string
   /** Translucent background tint. Null disables the tinted backdrop. */
   color: string | null
-  /** Tint for the left calligraphy glyph (a black-on-transparent PNG). Dahai = white. */
+  /** Tint for the left calligraphy glyph (a black-on-transparent PNG). The
+   *  achromatic glyphs (dahai 打 / none) use theme-aware CSS vars
+   *  (`var(--bot-glyph-*)`) so they stay legible in light mode; colored
+   *  actions carry their own hex. */
   glyphColor: string
   /** i18n key for the action label (under `mahjong.*`). */
   labelKey: string
@@ -47,7 +50,7 @@ function describe(r: BotResponse, t: (k: string, opts?: Record<string, unknown>)
       return {
         glyph: dahaiGlyph,
         color: null,
-        glyphColor: '#ffffff',
+        glyphColor: 'var(--bot-glyph-neutral)',
         labelKey: 'mahjong.dahai',
         extra: '',
         mahgen: mjaiToMahgen([r.pai]),
@@ -153,7 +156,7 @@ function describe(r: BotResponse, t: (k: string, opts?: Record<string, unknown>)
       return {
         glyph: noneGlyph,
         color: '#a0a0a0',
-        glyphColor: '#d3d3d3',
+        glyphColor: 'var(--bot-glyph-muted)',
         labelKey: 'mahjong.none',
         extra: t('mahjong.skip'),
         mahgen: '',
