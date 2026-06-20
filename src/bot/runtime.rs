@@ -218,6 +218,13 @@ fn scrub_python_env(cmd: &mut Command) {
 /// NOT require `venv_python_alive`: a dangling venv symlink (the AppImage
 /// mount-changed case) is repaired by a cheap repoint inside `ensure_synced`,
 /// not a slow full re-sync, so it shouldn't block a bot from being activated.
+///
+/// It DOES, however, report not-installed for a venv that survived a
+/// folder move but can only be repaired by a full re-sync (see
+/// [`needs_out_of_band_resync`]). That keeps the readiness signal honest:
+/// the UI re-offers "Install environment", `set_active_bot` won't (re)gate
+/// it active, and game-start skips it instead of stalling a live game on an
+/// inline `uv sync`.
 pub fn is_synced(bot_dir: &Path) -> bool {
     let pyproject = bot_dir.join("pyproject.toml");
     if !pyproject.is_file() {
@@ -232,10 +239,38 @@ pub fn is_synced(bot_dir: &Path) -> bool {
     if !venv.is_dir() {
         return false;
     }
+    if needs_out_of_band_resync(bot_dir) {
+        return false;
+    }
     match std::fs::read_to_string(&stamp_path) {
         Ok(saved) => saved.trim() == current,
         Err(_) => false,
     }
+}
+
+/// True when the bot's venv is present but in a state that game-start
+/// **cannot cheaply repair**, so letting `ensure_synced` run inline there
+/// would do a slow `uv sync` that stalls the live game while the bot misses
+/// its turns — the historical game-start-timeout hazard that `set_active_bot`
+/// guards against by requiring a pre-installed env.
+///
+/// The one production trigger is a moved/renamed Akagi folder whose venv
+/// interpreter file *survived* the move but whose baked base-python `home`
+/// is gone. That happens on **Windows**, where the venv's
+/// `Scripts/python.exe` is a real trampoline copy with the base path
+/// embedded in the binary — `ensure_synced` can't repoint it in place and
+/// must re-sync from scratch. On **Unix** the same move dangles the
+/// `bin/python` symlink instead (interpreter not "alive"), which
+/// `ensure_synced` repoints cheaply, so this returns false and game-start
+/// proceeds as before. A genuinely absent venv also returns false — the
+/// cold first install is a separate, out-of-band concern.
+///
+/// The check is the *semantic* condition (interpreter alive AND base `home`
+/// gone), not an OS `cfg`, so it's testable on any platform and naturally
+/// fires only for the move shape that actually needs a re-sync.
+pub fn needs_out_of_band_resync(bot_dir: &Path) -> bool {
+    let venv = bot_dir.join(AKAGI_DIR).join(VENV_DIR);
+    venv.is_dir() && venv_python_alive(&venv) && !venv_home_exists(&venv)
 }
 
 /// Wipe the stamp file and the venv so the next `ensure_synced` runs from
@@ -797,6 +832,87 @@ mod tests {
             "ensure_synced must repair the stale home in place"
         );
         assert!(venv_python_alive(&venv));
+    }
+
+    /// `needs_out_of_band_resync` must fire only for the move shape that
+    /// truly can't be repaired cheaply at game-start: the interpreter file
+    /// survived (Windows copy) but its baked base `home` is gone. A dangling
+    /// symlink (the Unix move/AppImage shape) is cheaply repointable, and an
+    /// absent or healthy venv needs nothing — all three must return false so
+    /// game-start isn't needlessly downgraded to analysis-only.
+    #[test]
+    fn needs_out_of_band_resync_only_for_alive_interp_with_dead_home() {
+        let tmp = TempDir::new().unwrap();
+        let bot = tmp.path();
+        let venv = bot.join(AKAGI_DIR).join(VENV_DIR);
+
+        // No venv at all (cold install) → not a re-sync-needed state.
+        assert!(!needs_out_of_band_resync(bot));
+
+        // Interpreter present + home dir present (healthy / warm) → false.
+        let py = venv_python(&venv);
+        std::fs::create_dir_all(py.parent().unwrap()).unwrap();
+        std::fs::write(&py, "").unwrap();
+        let live_home = tmp.path().join("runtime/python/bin");
+        std::fs::create_dir_all(&live_home).unwrap();
+        std::fs::write(
+            venv.join("pyvenv.cfg"),
+            format!("home = {}\n", live_home.display()),
+        )
+        .unwrap();
+        assert!(!needs_out_of_band_resync(bot));
+
+        // Interpreter present but home dir vanished (the Windows folder-move
+        // shape) → the one true case.
+        std::fs::write(venv.join("pyvenv.cfg"), "home = /no/such/old/bin\n").unwrap();
+        assert!(needs_out_of_band_resync(bot));
+    }
+
+    /// Unix move shape: the interpreter is a dangling symlink, so it's NOT
+    /// "alive" — `ensure_synced` repoints it cheaply and `needs_out_of_band_resync`
+    /// must stay false (no analysis-only downgrade, no out-of-band reinstall).
+    #[cfg(unix)]
+    #[test]
+    fn needs_out_of_band_resync_false_for_dangling_symlink() {
+        let tmp = TempDir::new().unwrap();
+        let bot = tmp.path();
+        let venv = bot.join(AKAGI_DIR).join(VENV_DIR);
+        std::fs::create_dir_all(venv.join("bin")).unwrap();
+        std::os::unix::fs::symlink("/no/such/old/bin/python3", venv.join("bin").join("python"))
+            .unwrap();
+        std::fs::write(venv.join("pyvenv.cfg"), "home = /no/such/old/bin\n").unwrap();
+        assert!(!venv_python_alive(&venv), "dangling symlink is not alive");
+        assert!(!needs_out_of_band_resync(bot));
+    }
+
+    /// Regression: a moved venv that needs a full re-sync must read as
+    /// not-installed so the UI re-offers "Install environment" and game-start
+    /// skips it — even though its stamp still matches (a move preserves the
+    /// pyproject/lock mtimes the stamp is keyed on).
+    #[test]
+    fn is_synced_false_for_moved_venv_needing_resync() {
+        let tmp = TempDir::new().unwrap();
+        let bot = tmp.path();
+        let py = bot.join("pyproject.toml");
+        write(&py, "[project]\nname='a'\n");
+        let venv = bot.join(AKAGI_DIR).join(VENV_DIR);
+        // Alive interpreter (survived the move) + vanished home.
+        let interp = venv_python(&venv);
+        std::fs::create_dir_all(interp.parent().unwrap()).unwrap();
+        std::fs::write(&interp, "").unwrap();
+        std::fs::write(venv.join("pyvenv.cfg"), "home = /vanished/old/bin\n").unwrap();
+        // Stamp matches current signature — the move kept the mtimes.
+        let sig = current_signature(&py, &bot.join("uv.lock")).unwrap();
+        std::fs::write(bot.join(AKAGI_DIR).join(STAMP_FILE), &sig).unwrap();
+
+        assert!(
+            needs_out_of_band_resync(bot),
+            "precondition: this venv needs a re-sync"
+        );
+        assert!(
+            !is_synced(bot),
+            "a moved venv needing a re-sync must not read as installed"
+        );
     }
 
     #[test]

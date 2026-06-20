@@ -293,6 +293,38 @@ impl BotManager {
             bail!(msg);
         }
 
+        // Game-start must never run a slow `uv sync` inline: it would stall
+        // the live game while the bot misses its turns (the historical
+        // game-start-timeout bug, otherwise prevented by `set_active_bot`
+        // refusing to activate a bot whose env isn't pre-installed). A
+        // moved/renamed Akagi folder can silently invalidate an *already
+        // active* bot's venv in a way only a full re-sync can repair —
+        // Windows bakes the base-python path into the `Scripts/python.exe`
+        // trampoline, so it can't be repointed in place the way `ensure_synced`
+        // repoints the Unix symlink. Detect that here and fall back to
+        // analysis-only with a reinstall prompt instead of blocking the game;
+        // the user repairs it out-of-band (Bots page → Install environment)
+        // and the next game spawns cleanly. Returning Ok (not bail) leaves the
+        // runner unset so this game simply runs analysis-only.
+        if crate::bot::runtime::needs_out_of_band_resync(&entry.dir) {
+            let msg = format!(
+                "{bot_name}'s Python environment needs reinstalling — the Akagi \
+                 folder was moved or renamed. Open the Bots page and click \
+                 Install environment."
+            );
+            warn!(bot = %bot_name, "{msg}");
+            self.emit_status(BotStatus::Error {
+                bot: bot_name.clone(),
+                error: msg.clone(),
+            });
+            self.emit_notify(
+                Notification::error("Bot environment needs reinstalling").body(msg),
+            );
+            self.runner = None;
+            self.pending.clear();
+            return Ok(());
+        }
+
         let load_id = format!("bot-loading-{bot_name}");
 
         // Phase 1: dep sync. ensure_synced is a no-op when stamp matches,
@@ -999,6 +1031,84 @@ mod tests {
             !msg.contains("not found in registry"),
             "registry rescan failed to pick up post-construction install: {msg}"
         );
+    }
+
+    /// Regression: an ACTIVE bot whose venv was invalidated by a folder move
+    /// (the interpreter file survived but its base `home` is gone — the
+    /// Windows shape, where `Scripts/python.exe` is a real trampoline copy)
+    /// must NOT trigger an inline `uv sync` at game-start. That would stall
+    /// the live game while the bot misses its turns — the historical
+    /// game-start-timeout bug. `spawn_runner` detects the un-repointable venv
+    /// up front and runs analysis-only with a reinstall prompt, never calling
+    /// `ensure_synced`.
+    #[tokio::test]
+    async fn moved_venv_skips_inline_sync_and_runs_analysis_only() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let bot_dir = tmp.path().to_path_buf();
+        let bot = bot_dir.join("mybot");
+        std::fs::create_dir_all(&bot).unwrap();
+        std::fs::write(bot.join("bot.py"), b"").unwrap();
+        std::fs::write(bot.join("pyproject.toml"), b"[project]\nname='x'\n").unwrap();
+        // Moved-venv state: interpreter file present, but pyvenv.cfg `home`
+        // points at a directory that no longer exists.
+        let venv = bot.join(".akagi").join("venv");
+        std::fs::create_dir_all(venv.join("bin")).unwrap();
+        std::fs::write(venv.join("bin").join("python"), b"").unwrap();
+        std::fs::write(
+            venv.join("pyvenv.cfg"),
+            b"home = /vanished/old/runtime/bin\n",
+        )
+        .unwrap();
+
+        let bus = bot_response_bus();
+        let status = bot_status_bus();
+        let notify = notify_bus();
+        let mut status_rx = status.subscribe();
+        let mut notify_rx = notify.subscribe();
+        let mut mgr = BotManager::new(
+            dummy_runtime(),
+            bot_dir,
+            cfg_with("mybot"),
+            bus,
+            status,
+            notify,
+            dummy_inspector(),
+            fresh_syncs(),
+        );
+
+        mgr.handle(MjaiEvent::StartGame {
+            names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            kyoku_first: None,
+            aka_flag: None,
+            id: Some(0),
+            num_players: 4,
+        })
+        .await
+        .expect("handle returns Ok (analysis-only), not an error");
+
+        assert!(mgr.runner.is_none(), "must not spawn a bot needing re-sync");
+
+        // The guard fired BEFORE ensure_synced: an Error status naming the
+        // bot with the reinstall message — NOT a 'uv sync failed' message,
+        // which is what we'd see if the inline sync had been attempted.
+        let s = status_rx.try_recv().expect("status emitted");
+        match s {
+            BotStatus::Error { bot, error } => {
+                assert_eq!(bot, "mybot");
+                assert!(
+                    error.contains("reinstalling"),
+                    "expected reinstall prompt, got: {error}"
+                );
+                assert!(
+                    !error.contains("uv sync"),
+                    "must not have attempted an inline sync: {error}"
+                );
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+        let n = notify_rx.try_recv().expect("notification emitted");
+        assert_eq!(n.level, crate::schema::NotifyLevel::Error);
+        assert!(n.title.contains("reinstalling"), "got title: {}", n.title);
     }
 
     #[tokio::test]
