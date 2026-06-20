@@ -21,7 +21,7 @@ export function TileFrame({ id, title, bp, rightSlot, children, closable = true,
   const { t } = useTranslation()
   const hide = useLayoutStore((s) => s.hide)
   return (
-    <Card className="h-full overflow-hidden flex flex-col gap-0 py-0">
+    <Card className="tile-frame h-full overflow-hidden flex flex-col gap-0 py-0">
       <CardHeader className="tile-drag-handle cursor-move select-none flex flex-row items-center justify-between px-3 py-2 border-b border-border">
         <CardTitle className="text-xs font-medium tracking-wide uppercase text-muted-foreground">
           {title}
