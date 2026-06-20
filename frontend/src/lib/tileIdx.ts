@@ -74,3 +74,22 @@ export function mjaiToMahgen(tiles: string[] | null | undefined): string {
   if (backs > 0) out += '0'.repeat(backs) + 'z'
   return out
 }
+
+// Display-order rank for an mjai tile: m < p < s < honors (E S W N P F C),
+// ascending within suit, with red fives (5mr/5pr/5sr) placed just after the
+// plain 5. Mirrors the ordering inside mjaiToMahgen.
+function tileSortRank(mjai: string): number {
+  if (HONOR_INDEX[mjai] !== undefined) return 300 + (Z_INDEX[mjai] ?? 0)
+  const isRed = mjai.endsWith('r')
+  const suit = isRed ? mjai[mjai.length - 2] : mjai[mjai.length - 1]
+  const suitRank = suit === 'm' ? 0 : suit === 'p' ? 100 : suit === 's' ? 200 : 900
+  const num = isRed ? 5.5 : parseInt(mjai[0], 10)
+  return suitRank + (Number.isNaN(num) ? 99 : num)
+}
+
+// Sort mjai tile strings into the same display order the Self Hand panel uses
+// (via mjaiToMahgen), returned as an array so callers can annotate each tile
+// individually. Stable, so duplicate tiles keep their relative order.
+export function sortMjaiTiles(tiles: string[]): string[] {
+  return [...tiles].sort((a, b) => tileSortRank(a) - tileSortRank(b))
+}
