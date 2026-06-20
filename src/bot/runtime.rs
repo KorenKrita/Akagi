@@ -810,8 +810,7 @@ mod tests {
             "home = /no/such/old/runtime/bin\nversion_info = 3.12.13\n",
         )
         .unwrap();
-        let sig =
-            current_signature(&bot.join("pyproject.toml"), &bot.join("uv.lock")).unwrap();
+        let sig = current_signature(&bot.join("pyproject.toml"), &bot.join("uv.lock")).unwrap();
         std::fs::write(akagi.join(STAMP_FILE), &sig).unwrap();
         assert!(
             venv_python_alive(&venv) && !venv_home_exists(&venv),
@@ -820,11 +819,8 @@ mod tests {
 
         // uv is never invoked: the Unix repoint succeeds in place. A bogus
         // path proves we didn't fall through to a real sync.
-        let rt = PythonRuntime::from_paths(
-            python,
-            PathBuf::from("/dev/null/uv"),
-            RuntimeMode::System,
-        );
+        let rt =
+            PythonRuntime::from_paths(python, PathBuf::from("/dev/null/uv"), RuntimeMode::System);
         rt.ensure_synced(bot).await.unwrap();
 
         assert!(

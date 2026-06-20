@@ -317,9 +317,7 @@ impl BotManager {
                 bot: bot_name.clone(),
                 error: msg.clone(),
             });
-            self.emit_notify(
-                Notification::error("Bot environment needs reinstalling").body(msg),
-            );
+            self.emit_notify(Notification::error("Bot environment needs reinstalling").body(msg));
             self.runner = None;
             self.pending.clear();
             return Ok(());
