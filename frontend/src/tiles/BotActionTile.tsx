@@ -221,17 +221,26 @@ export function BotActionTile({ bp }: { bp: Breakpoint }) {
   // runs on the pre-mask solid rectangle (no edges → no shadow). The wrapper
   // owns the filter; the inner div owns the mask + tinted fill, and the
   // wrapper's filter then composites against the inner's masked output.
+  //
+  // The achromatic glyphs (dahai 打 / none) carry a CSS-var fill, which
+  // hexToRgba can't parse — a JS-computed bloom would fall back to black and
+  // smear a heavy black halo (ugly on the light card, invisible on dark). They
+  // use a theme-aware filter token instead; colour glyphs keep their hex-tinted
+  // glow.
+  const isNeutralGlyph = variant?.glyphColor.startsWith('var(')
   const glyphFilter = variant
-    ? {
-        // Layered shadows: wide diffuse colour bloom → tighter colour halo →
-        // soft directional drop. Together they emphasize the glyph without
-        // hard edges, so it reads as glowing rather than stamped on.
-        filter: [
-          `drop-shadow(0 0 10px ${hexToRgba(variant.glyphColor, 0.55) ?? 'rgba(0,0,0,0.5)'})`,
-          `drop-shadow(0 0 4px ${hexToRgba(variant.glyphColor, 0.45) ?? 'rgba(0,0,0,0.4)'})`,
-          'drop-shadow(0 2px 5px rgba(0,0,0,0.55))',
-        ].join(' '),
-      }
+    ? isNeutralGlyph
+      ? { filter: 'var(--bot-glyph-filter)' }
+      : {
+          // Layered shadows: wide diffuse colour bloom → tighter colour halo →
+          // soft directional drop. Together they emphasize the glyph without
+          // hard edges, so it reads as glowing rather than stamped on.
+          filter: [
+            `drop-shadow(0 0 10px ${hexToRgba(variant.glyphColor, 0.55) ?? 'rgba(0,0,0,0.5)'})`,
+            `drop-shadow(0 0 4px ${hexToRgba(variant.glyphColor, 0.45) ?? 'rgba(0,0,0,0.4)'})`,
+            'drop-shadow(0 2px 5px rgba(0,0,0,0.55))',
+          ].join(' '),
+        }
     : undefined
   const glyphMask = variant
     ? {

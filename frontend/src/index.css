@@ -106,6 +106,13 @@
      * `.dark` below. Colored action glyphs carry their own hex and ignore these. */
     --bot-glyph-neutral: #1f1f1f;
     --bot-glyph-muted: #5a5a5a;
+    /* Drop-shadow filter for the achromatic glyphs (dahai 打 / none). Colour
+     * action glyphs compute a tinted glow in JS from their hex fill; the
+     * neutral glyphs can't (their fill is a CSS var, not hex), so a JS-computed
+     * bloom falls back to black and smears a heavy black halo around the
+     * already-dark glyph on the light card. Use a soft lift only here so the
+     * glyph reads as clean ink; the dark-mode glow lives in `.dark` below. */
+    --bot-glyph-filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.18));
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: oklch(0.205 0 0);
@@ -141,6 +148,14 @@
     /* Neutral glyph fills on dark — keeps the original HUD look. */
     --bot-glyph-neutral: #ffffff;
     --bot-glyph-muted: #d3d3d3;
+    /* Soft white glow + directional drop for the achromatic glyphs on dark,
+     * restoring the glowing HUD look. (Before this token the glow was computed
+     * in JS from the glyph's hex fill; once that fill became a CSS var the glow
+     * fell back to black and vanished against the dark surface.) */
+    --bot-glyph-filter:
+        drop-shadow(0 0 10px rgba(255, 255, 255, 0.5))
+        drop-shadow(0 0 4px rgba(255, 255, 255, 0.4))
+        drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
     --chart-1: oklch(0.81 0.10 252);
     --chart-2: oklch(0.62 0.19 260);
     --chart-3: oklch(0.55 0.22 263);
