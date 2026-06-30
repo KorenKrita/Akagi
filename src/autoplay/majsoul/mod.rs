@@ -339,6 +339,15 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
 /// and is showing all 14 tiles continuously on the rack (no tsumohai
 /// offset). Detected by: we're oya, our hand size is 14, and we have
 /// no discards or melds yet.
+///
+/// 3p caveat: a kita (北抜き) declared on the opening hand keeps the
+/// hand at 14 (North removed → rinshan drawn) with an empty river and
+/// empty `melds` (the North goes to the kita pool, not `melds`). But
+/// after a kita the rinshan sits as a *separated* tsumohai on the far
+/// right — the layout is no longer the continuous 14-tile deal. So a
+/// non-empty kita pool must fall through to the normal tsumohai-offset
+/// path, otherwise every closed tile sorting after the rinshan gets
+/// clicked one slot too far right.
 fn is_dealer_first_discard(ctx: &ActionContext) -> bool {
     let our_seat = ctx.our_seat as usize;
     let Some(player) = ctx.snapshot.players.get(our_seat) else {
@@ -348,6 +357,7 @@ fn is_dealer_first_discard(ctx: &ActionContext) -> bool {
         && player.tehai.len() == 14
         && player.river.is_empty()
         && player.melds.is_empty()
+        && player.kita_tiles.is_empty()
 }
 
 /// Plan a chi/pon/daiminkan: action button click + optional candidate
@@ -1071,6 +1081,107 @@ mod tests {
         let result = MajsoulAutoplay::new().plan(&ctx);
         // No dealer pad: just [pre-delay, click].
         assert_eq!(result.steps.len(), 2);
+    }
+
+    /// Build a 3-player snapshot for our seat with optional kita pool and
+    /// an explicit drawn (tsumohai) tile.
+    fn snapshot_3p_with_kita(
+        seat: u8,
+        oya: u8,
+        tehai: Vec<&str>,
+        kita: Vec<&str>,
+        drawn: Option<&str>,
+    ) -> GameStateSnapshot {
+        let players = (0..3u8)
+            .map(|i| PlayerSnapshot {
+                seat: i,
+                tehai: if i == seat {
+                    tehai.iter().map(|s| s.to_string()).collect()
+                } else {
+                    Vec::new()
+                },
+                melds: Vec::new(),
+                river: Vec::new(),
+                score: 35000,
+                riichi_declared: false,
+                riichi_stage: false,
+                double_riichi: false,
+                riichi_declaration_index: None,
+                kita_tiles: if i == seat {
+                    kita.iter().map(|s| s.to_string()).collect()
+                } else {
+                    Vec::new()
+                },
+                drawn_tile: if i == seat {
+                    drawn.map(|s| s.to_string())
+                } else {
+                    None
+                },
+            })
+            .collect();
+        GameStateSnapshot {
+            bakaze: "E".into(),
+            kyoku: 1,
+            honba: 0,
+            kyotaku: 0,
+            oya,
+            current_player: seat,
+            turn_count: 0,
+            phase: Phase::WaitAct,
+            is_done: false,
+            num_players: 3,
+            players,
+            dora_markers: Vec::new(),
+            our_seat: Some(seat),
+        }
+    }
+
+    #[test]
+    fn dealer_opening_kita_then_discard_is_not_off_by_one() {
+        // 3p regression: dealer (oya == our seat) declares kita on the
+        // opening hand, draws a rinshan replacement, then discards. The
+        // North goes to the kita pool — NOT to `melds` and NOT to the
+        // river — so `is_dealer_first_discard`'s naive (oya + 14 tiles +
+        // empty river + empty melds) test still matched, forcing the
+        // "continuous 14-tile" dealer layout. But after a kita the rinshan
+        // sits as a separated tsumohai on the far right, so every closed
+        // tile that sorts *after* the rinshan was clicked one slot too far
+        // right. Repro: rinshan "1m" sorts first, so discarding the
+        // rightmost closed tile "5p" must land on TILES[12] (its true
+        // visual slot), not TILES[13] (sorted-14 index, one tile right).
+        let tehai = vec![
+            "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p", "1m",
+        ];
+        let snap = snapshot_3p_with_kita(0, 0, tehai, vec!["N"], Some("1m"));
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5p".into(),
+            tsumogiri: false,
+        };
+        let cfg_ref = cfg();
+        let ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            None,        // opening turn: no kawa tile yet
+            Some("1m"),  // rinshan replacement is the live tsumohai
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        match result.steps.last().unwrap() {
+            Step::Click { x_norm, .. } => {
+                assert!(
+                    (*x_norm - TILES[12].0).abs() < 1e-9,
+                    "post-kita discard must click the true visual slot TILES[12] \
+                     ({}), got {x_norm} (TILES[13]={} would be one tile too far right)",
+                    TILES[12].0,
+                    TILES[13].0,
+                );
+            }
+            other => panic!("expected click, got {other:?}"),
+        }
     }
 
     #[test]
