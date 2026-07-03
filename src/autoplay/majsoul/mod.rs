@@ -1163,8 +1163,8 @@ mod tests {
             &act,
             &snap,
             &[],
-            None,        // opening turn: no kawa tile yet
-            Some("1m"),  // rinshan replacement is the live tsumohai
+            None,       // opening turn: no kawa tile yet
+            Some("1m"), // rinshan replacement is the live tsumohai
             false,
             ReachState::Idle,
             &cfg_ref,
