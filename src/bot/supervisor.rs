@@ -13,7 +13,7 @@ use crate::config::AppConfig;
 use crate::event_bus::{BotResponseBus, BotStatusBus, MjaiBus, NotifyBus};
 use crate::inspector::InspectorWriter;
 use crate::util;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -48,7 +48,12 @@ pub async fn run_bot_manager(
         // mis-config quickly in logs, not to gate startup.
         let registry = BotRegistry::scan(&bot_dir)?;
         for (label, name) in [("4p", &cfg.bot.active_4p), ("3p", &cfg.bot.active_3p)] {
-            if !name.is_empty() && registry.find(name).is_none() {
+            // Built-in native bots aren't in the `mjai_bot/` registry — don't
+            // warn about them being "missing".
+            if !name.is_empty()
+                && !crate::bot::native::is_native(name)
+                && registry.find(name).is_none()
+            {
                 warn!(
                     "configured {} bot {:?} not found under {}; available: {:?}",
                     label,
@@ -61,8 +66,15 @@ pub async fn run_bot_manager(
         bot_dir
     };
 
-    let runtime = runtime
-        .ok_or_else(|| anyhow!("bot mode is enabled but no python3+uv runtime was found"))?;
+    // A Python runtime is optional: the built-in native bot needs none. Only
+    // Python `mjai_bot/*` subprocess bots require it, and that's enforced
+    // per-spawn inside the manager (a missing runtime fails just that spawn,
+    // not the whole manager) so the native bot always runs.
+    if runtime.is_none() {
+        warn!(
+            "no python3+uv runtime found; the built-in bot will still work, but Python mjai_bot subprocess bots cannot be spawned"
+        );
+    }
 
     let manager = BotManager::new(
         runtime,

@@ -27,7 +27,11 @@ import type { AppConfig, BotInfo, BotSettings, DetectedBrowser, PlatformKind } f
 
 type Step = 'welcome' | 'platform' | 'mode' | 'config' | 'bots' | 'configure' | 'finish'
 
-const STEPS: Step[] = ['welcome', 'platform', 'mode', 'config', 'bots', 'configure', 'finish']
+// The 'bots' (install Mortal from GitHub) step is intentionally omitted: the
+// built-in native bot is the zero-install default, so the wizard no longer
+// installs an author bot. The 'configure' (bot settings) step is kept as the
+// future home for built-in-bot settings. `BotsStep` is retained but unreachable.
+const STEPS: Step[] = ['welcome', 'platform', 'mode', 'config', 'configure', 'finish']
 
 // Author-provided MJAI bots installed by the first-run wizard. Same
 // install path as the manual Bots → Install From GitHub flow, just
@@ -134,11 +138,12 @@ export function Setup() {
         general: { ...draft.general, first_run_completed: true },
         bot: {
           ...draft.bot,
-          // Auto-enable + select author bots when the wizard installed
-          // them. Don't downgrade an existing custom config (e.g. user
-          // re-runs setup but keeps their own bot.active_4p): only
-          // touch active_* when the corresponding bot is present.
-          enabled: draft.bot.enabled || has4p || has3p,
+          // Enable the assistant on setup completion: there's always a working
+          // zero-install built-in bot (the BotConfig defaults select it), so
+          // the user gets recommendations out of the box. If a previous run
+          // installed the author bots, keep selecting them; otherwise the
+          // defaults (built-in native bot) stand.
+          enabled: true,
           active_4p: has4p ? BOT_4P_NAME : draft.bot.active_4p,
           active_3p: has3p ? BOT_3P_NAME : draft.bot.active_3p,
         },

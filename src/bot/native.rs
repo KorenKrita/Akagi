@@ -67,11 +67,14 @@ impl BotRunner for NativeBot {
             }
         }
 
-        let action = match self.engine.decide()? {
-            Some(d) => bot_action_to_mjai(d.action, self.actor_id),
-            None => MjaiEvent::None,
+        let (action, meta) = match self.engine.decide()? {
+            Some(d) => {
+                let meta = build_show_meta(&d.action);
+                (bot_action_to_mjai(d.action, self.actor_id), meta)
+            }
+            None => (MjaiEvent::None, None),
         };
-        Ok(BotResponse { action, meta: None })
+        Ok(BotResponse { action, meta })
     }
 
     async fn reset(&mut self) -> Result<()> {
@@ -83,6 +86,37 @@ impl BotRunner for NativeBot {
 fn take_n<const N: usize>(v: Vec<String>) -> [String; N] {
     let mut it = v.into_iter();
     std::array::from_fn(|_| it.next().unwrap_or_default())
+}
+
+/// Build the HUD "Bot Show" recommendation card (`meta.show`) from the chosen
+/// action, so the built-in bot's suggestion renders like other bots'. `None`
+/// for a pass (nothing to recommend — the previous card stays).
+fn build_show_meta(a: &BotAction) -> Option<serde_json::Value> {
+    use serde_json::json;
+    let with = |lead: &str, rest: &[String]| -> Vec<String> {
+        std::iter::once(lead.to_string())
+            .chain(rest.iter().cloned())
+            .collect()
+    };
+    let (label, pais): (&str, Vec<String>) = match a {
+        BotAction::Dahai { pai, .. } => ("Discard", vec![pai.clone()]),
+        BotAction::Reach { pai } => ("Riichi", vec![pai.clone()]),
+        BotAction::Pon { pai, consumed, .. } => ("Pon", with(pai, consumed)),
+        BotAction::Chi { pai, consumed, .. } => ("Chi", with(pai, consumed)),
+        BotAction::Daiminkan { pai, consumed, .. } => ("Kan", with(pai, consumed)),
+        BotAction::Ankan { consumed } => ("Ankan", consumed.clone()),
+        BotAction::Kakan { pai, consumed } => ("Kakan", with(pai, consumed)),
+        BotAction::Hora { .. } => ("Hora", vec![]),
+        BotAction::Kyushu => ("Ryukyoku", vec![]),
+        BotAction::Kita => ("Kita", vec!["N".into()]),
+        BotAction::Pass => return None,
+    };
+    let item = if pais.is_empty() {
+        json!({ "label": label })
+    } else {
+        json!({ "label": label, "pais": pais })
+    };
+    Some(json!({ "show": { "title": "Akagi", "items": [item] } }))
 }
 
 /// Map a schema-agnostic [`BotAction`] to Akagi's `MjaiEvent` reply.

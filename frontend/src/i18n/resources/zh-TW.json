@@ -459,8 +459,8 @@
     "install_env_tooltip": "建立此 Bot 的 Python 環境（uv sync），之後才能啟用",
     "installing_env": "安裝中…",
     "activate_failed": "無法切換啟用中的 Bot",
-    "native_4p": "赤木內建 (四人)",
-    "native_3p": "赤木內建 (三人)",
+    "native_4p": "Akagi 內建 (四人)",
+    "native_3p": "Akagi 內建 (三人)",
     "native_builtin": "內建 · 免安裝",
     "native_version": "內建"
   },
