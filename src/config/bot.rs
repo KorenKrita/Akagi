@@ -54,7 +54,10 @@ impl BotConfig {
 impl Default for BotConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            // Enabled by default: the built-in native bots (below) are always
+            // available and need no install, so a fresh install shows bot
+            // recommendations out of the box.
+            enabled: true,
             // Built-in, pure-Rust default bots (no Python / libriichi). See
             // `crate::bot::native`. They are always available and need no
             // install, so they make sensible out-of-the-box defaults.

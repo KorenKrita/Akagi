@@ -1395,10 +1395,10 @@ mod tests {
         assert_eq!(back.proxy.addr, "127.0.0.1:9999");
     }
 
-    /// Regression: the first-run wizard ships a fresh-install Akagi with
-    /// `bot.enabled = false` (defaults), then calls `update_config` to
-    /// flip it to `true`. Before the fix the bot manager was never
-    /// spawned in this process — the user had to relaunch the app.
+    /// Regression: when a user has `bot.enabled = false` and then flips it to
+    /// `true` (e.g. via the wizard or Settings), `update_config` must spawn the
+    /// bot manager in-process. Before the fix the manager was never spawned on
+    /// that flip — the user had to relaunch the app.
     /// `claim_bot_manager_spawn` is the gate that makes
     /// `update_config` spawn the manager exactly once on that flip.
     #[test]
