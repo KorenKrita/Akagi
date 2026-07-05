@@ -37,6 +37,17 @@ import { useConfigStore } from '@/stores/configStore'
 import type { AppConfig, BotInfo, BotSettings } from '@/types'
 import { ManifestField } from '@/components/ManifestField'
 
+// Reserved names of the built-in, pure-Rust bots (see `src/bot/native.rs`).
+// They have no directory, no manifest, and nothing to install/configure/delete.
+const NATIVE_4P = 'akagi-native'
+const NATIVE_3P = 'akagi-native3p'
+function isNativeBot(name: string): boolean {
+  return name === NATIVE_4P || name === NATIVE_3P
+}
+function nativeModes(name: string): string[] {
+  return name === NATIVE_3P ? ['3p'] : ['4p']
+}
+
 export function Bots() {
   const { t } = useTranslation()
   const list = useBotStore((s) => s.list)
@@ -112,8 +123,16 @@ export function Bots() {
   }
 
   function supportsMode(bot: BotInfo, mode: '4p' | '3p'): boolean {
+    if (isNativeBot(bot.name)) return nativeModes(bot.name).includes(mode)
     const modes = bot.manifest?.bot.supported_modes ?? ['4p']
     return modes.includes(mode)
+  }
+
+  // Friendly label for the built-in bots (they have no manifest `display`).
+  function botLabel(bot: BotInfo): string {
+    if (bot.name === NATIVE_4P) return t('bots.native_4p')
+    if (bot.name === NATIVE_3P) return t('bots.native_3p')
+    return bot.manifest?.bot.display ?? bot.name
   }
 
   return (
@@ -156,11 +175,15 @@ export function Bots() {
               <TableRow key={bot.name}>
                 <TableCell>
                   <div className="flex flex-col">
-                    <span className="font-medium">{bot.manifest?.bot.display ?? bot.name}</span>
-                    <span className="text-xs text-muted-foreground font-mono">{bot.dir}</span>
+                    <span className="font-medium">{botLabel(bot)}</span>
+                    <span className="text-xs text-muted-foreground font-mono">
+                      {isNativeBot(bot.name) ? t('bots.native_builtin') : bot.dir}
+                    </span>
                   </div>
                 </TableCell>
-                <TableCell className="font-mono text-xs">{bot.manifest?.bot.version ?? '—'}</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {isNativeBot(bot.name) ? t('bots.native_version') : (bot.manifest?.bot.version ?? '—')}
+                </TableCell>
                 <TableCell>{bot.manifest ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : '—'}</TableCell>
                 <TableCell>
                   <span title={!bot.env_ready && !isActive4p ? t('bots.env_not_ready_tooltip') : undefined}>
@@ -184,6 +207,9 @@ export function Bots() {
                   </span>
                 </TableCell>
                 <TableCell className="text-right">
+                  {isNativeBot(bot.name) ? (
+                    <span className="text-xs text-muted-foreground">{t('bots.native_builtin')}</span>
+                  ) : (
                   <div className="flex items-center justify-end gap-1">
                     {bot.has_pyproject && !bot.env_ready && (
                       <Button
@@ -219,6 +245,7 @@ export function Bots() {
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
+                  )}
                 </TableCell>
               </TableRow>
             )

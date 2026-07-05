@@ -188,12 +188,31 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
     Ok(())
 }
 
+/// Synthetic `BotInfo` entries for the built-in native bots. They have no
+/// directory, no `pyproject.toml`, and are always "ready" (weights are embedded
+/// in the binary — nothing to install).
+fn native_bot_infos() -> Vec<BotInfo> {
+    [crate::bot::native::NATIVE_4P, crate::bot::native::NATIVE_3P]
+        .into_iter()
+        .map(|name| BotInfo {
+            name: name.to_string(),
+            dir: String::new(),
+            has_pyproject: false,
+            env_ready: true,
+            manifest: None,
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn list_bots(state: State<'_, AppState>) -> CmdResult<Vec<BotInfo>> {
     let dir = state.config.read().await.bot.dir.clone();
     let resolved = resolve_dir(Path::new(&dir));
     let registry = BotRegistry::scan(&resolved).map_err(|e| format!("scan bots: {e:#}"))?;
-    Ok(registry.entries().iter().map(entry_to_info).collect())
+    // Built-in native bots first, then discovered `mjai_bot/*` bots.
+    let mut bots = native_bot_infos();
+    bots.extend(registry.entries().iter().map(entry_to_info));
+    Ok(bots)
 }
 
 /// Read the merged settings (manifest + on-disk values) for one bot.
@@ -265,7 +284,9 @@ pub async fn set_active_bot(
     name: String,
     state: State<'_, AppState>,
 ) -> CmdResult<()> {
-    if !name.is_empty() {
+    // Built-in native bots are always available (no venv); skip the registry
+    // + environment checks that only apply to Python `mjai_bot/*` bots.
+    if !name.is_empty() && !crate::bot::native::is_native(&name) {
         let dir = state.config.read().await.bot.dir.clone();
         let resolved = resolve_dir(Path::new(&dir));
         let registry = BotRegistry::scan(&resolved).map_err(|e| format!("scan bots: {e:#}"))?;

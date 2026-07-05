@@ -62,6 +62,9 @@ pub struct BotManager {
     /// (the `active_4p` / `active_3p` value read from `config` at
     /// `start_game`). Empty until the first `start_game`.
     active_name: String,
+    /// Player count of the in-progress game (from `start_game.num_players`).
+    /// Used to construct the built-in native bot for the right mode.
+    game_num_players: u8,
     runner: Option<Box<dyn BotRunner>>,
     /// Events seen since the last `react()` call.
     pending: Vec<MjaiEvent>,
@@ -97,6 +100,7 @@ impl BotManager {
             bot_dir,
             config,
             active_name: String::new(),
+            game_num_players: 4,
             runner: None,
             pending: Vec::new(),
             actor_id: None,
@@ -154,6 +158,7 @@ impl BotManager {
         } = &event
         {
             self.actor_id = Some(*seat);
+            self.game_num_players = *num_players;
             // Pick the active bot for this game's player count, reading the
             // *current* config so a runtime model switch takes effect on the
             // next game (the manager outlives many games — a snapshot taken
@@ -259,6 +264,32 @@ impl BotManager {
         let actor_id = self
             .actor_id
             .context("spawn_runner called without actor_id")?;
+
+        // Built-in native bots (pure Rust, no Python) bypass the registry /
+        // venv path entirely: no `bot.py`, no `uv sync`, weights are embedded.
+        if crate::bot::native::is_native(&bot_name) {
+            match crate::bot::native::NativeBot::new(actor_id, self.game_num_players) {
+                Ok(b) => {
+                    info!(
+                        bot = %bot_name,
+                        actor_id,
+                        num_players = self.game_num_players,
+                        "native bot runner constructed"
+                    );
+                    self.emit_status(BotStatus::Ready {
+                        bot: bot_name.clone(),
+                        actor_id,
+                    });
+                    self.runner = Some(Box::new(b));
+                    return Ok(());
+                }
+                Err(e) => {
+                    let msg = format!("native bot init failed: {e:#}");
+                    self.fail_load(&bot_name, &msg, "Built-in bot failed to load");
+                    bail!(msg);
+                }
+            }
+        }
 
         // Rescan on each spawn so bots installed after the supervisor
         // started (Setup wizard, Install-from-GitHub) are visible. A

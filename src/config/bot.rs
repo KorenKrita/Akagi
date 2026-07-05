@@ -55,8 +55,11 @@ impl Default for BotConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            active_4p: "example".to_string(),
-            active_3p: String::new(),
+            // Built-in, pure-Rust default bots (no Python / libriichi). See
+            // `crate::bot::native`. They are always available and need no
+            // install, so they make sensible out-of-the-box defaults.
+            active_4p: crate::bot::native::NATIVE_4P.to_string(),
+            active_3p: crate::bot::native::NATIVE_3P.to_string(),
             active: String::new(),
             auto_sync: true,
             dir: "mjai_bot".to_string(),

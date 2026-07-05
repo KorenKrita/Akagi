@@ -458,7 +458,11 @@
     "install_env": "Install environment",
     "install_env_tooltip": "Build the Python environment (uv sync) so this bot can be activated",
     "installing_env": "Installing…",
-    "activate_failed": "Couldn't change active bot"
+    "activate_failed": "Couldn't change active bot",
+    "native_4p": "Akagi built-in (4p)",
+    "native_3p": "Akagi built-in (3p)",
+    "native_builtin": "Built-in · no install",
+    "native_version": "built-in"
   },
   "overview": {
     "title": "Overview",

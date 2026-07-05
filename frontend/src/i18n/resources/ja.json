@@ -458,7 +458,11 @@
     "install_env": "環境をインストール",
     "install_env_tooltip": "このボットを有効化できるよう Python 環境を構築します（uv sync）",
     "installing_env": "インストール中…",
-    "activate_failed": "有効なボットを切り替えられませんでした"
+    "activate_failed": "有効なボットを切り替えられませんでした",
+    "native_4p": "Akagi 内蔵 (4人)",
+    "native_3p": "Akagi 内蔵 (3人)",
+    "native_builtin": "内蔵 · インストール不要",
+    "native_version": "内蔵"
   },
   "overview": {
     "title": "概要",

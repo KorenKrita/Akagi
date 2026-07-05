@@ -458,7 +458,11 @@
     "install_env": "安装环境",
     "install_env_tooltip": "构建此 Bot 的 Python 环境（uv sync），之后才能启用",
     "installing_env": "安装中…",
-    "activate_failed": "无法切换启用中的 Bot"
+    "activate_failed": "无法切换启用中的 Bot",
+    "native_4p": "赤木内建 (四人)",
+    "native_3p": "赤木内建 (三人)",
+    "native_builtin": "内建 · 免安装",
+    "native_version": "内建"
   },
   "overview": {
     "title": "总览",

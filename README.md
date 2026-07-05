@@ -270,6 +270,18 @@ auto-migrated into `active_4p` on load.
 
 ## Bots
 
+### Built-in bot (no install)
+
+Akagi ships a **built-in, pure-Rust bot** that runs entirely in-process — no
+Python, no libriichi, no `uv sync`, nothing to download. It's the out-of-the-box
+default for both modes (`bot.active_4p = "akagi-native"`,
+`bot.active_3p = "akagi-native3p"`) and appears at the top of the **Bots** tab,
+always "ready".
+
+It's a small neural net behavior-cloned from Tenhou logs (weights are embedded
+in the binary), so its strength is **modest by design** — a sensible default,
+not a top-tier engine.
+
 ### Install a bot
 
 The Setup wizard or the **Bots** tab can install bots straight from a
