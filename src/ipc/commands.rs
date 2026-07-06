@@ -663,28 +663,28 @@ fn open_path(path: &Path) -> CmdResult<()> {
 }
 
 /// Opens an `http(s)://` URL in the user's default browser. Used by the
-/// first-run wizard for the GitHub / Discord links — Tauri 2's webview
-/// won't reliably honour `target="_blank"` without the opener plugin, so
-/// we route the click through the OS's native handler ourselves.
-/// Validates the scheme to keep this from being abused as a generic
-/// process spawn.
+/// first-run wizard's GitHub / Discord links and the purchase flow's PayPal
+/// approve page — Tauri 2's webview won't reliably honour `target="_blank"`
+/// without the opener plugin, so we route the click through the OS's native
+/// handler ourselves. Validates the scheme to keep this from being abused as
+/// a generic process spawn.
+///
+/// Goes through the `opener` crate (ShellExecuteW on Windows, `open` on
+/// macOS, xdg-open on Linux) rather than spawning `explorer <url>`:
+/// explorer.exe silently opens the Documents folder instead of the browser
+/// when the URL carries a query string (e.g. PayPal's `?token=...`).
 #[tauri::command]
 pub async fn open_external_url(url: String) -> CmdResult<()> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(format!("refused non-http(s) url: {url}"));
     }
-    #[cfg(target_os = "linux")]
-    let cmd = "xdg-open";
-    #[cfg(target_os = "macos")]
-    let cmd = "open";
-    #[cfg(target_os = "windows")]
-    let cmd = "explorer";
-
-    std::process::Command::new(cmd)
-        .arg(&url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("open url {url}: {e}"))
+    // `opener::open` can block briefly (it may wait on the launcher), so keep
+    // it off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || {
+        opener::open(&url).map_err(|e| format!("open url {url}: {e}"))
+    })
+    .await
+    .map_err(|e| format!("open url task: {e}"))?
 }
 
 /// Strict matcher for session directory names — `YYYYMMDD-HHMMSS`. Used
@@ -1496,6 +1496,26 @@ macro_rules! ipc_handlers {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Only `http(s)://` may reach the OS opener — anything else could be
+    /// abused as a generic process/file launcher. (That a query-string URL
+    /// reaches the *browser* — not explorer.exe's Documents fallback — is
+    /// the manual half of this regression: opener uses ShellExecuteW.)
+    #[tokio::test]
+    async fn open_external_url_refuses_non_http_schemes() {
+        for url in [
+            "file:///C:/Windows",
+            "ftp://host/x",
+            "javascript:alert(1)",
+            "C:\\Users",
+            "httpss://not-http",
+        ] {
+            assert!(
+                open_external_url(url.to_string()).await.is_err(),
+                "{url} must be refused"
+            );
+        }
+    }
 
     #[test]
     fn persist_config_round_trips() {
