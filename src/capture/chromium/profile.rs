@@ -22,6 +22,10 @@
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+#[cfg(windows)]
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+#[cfg(windows)]
+use crate::util::NoConsoleWindow;
 use tracing::{debug, info, warn};
 
 /// How long to wait for a polite SIGTERM/`taskkill` to take effect before
@@ -59,10 +63,81 @@ pub fn resolve_profile_dir(configured: &str) -> Result<PathBuf> {
 /// Blocking (it may sleep while waiting for the owner to exit); call it off
 /// the async runtime via `spawn_blocking`.
 pub fn reclaim_singleton(profile: &Path) -> Result<()> {
+    // On Windows, Chrome writes no `SingletonLock` file (it uses a named mutex +
+    // hidden message window), so the lock-file path below can't see a surviving
+    // controlled browser — a second `--user-data-dir` launch would just open a
+    // duplicate tab in it, leaving our relaunch with no DevTools endpoint. So on
+    // Windows we locate that browser by its command-line `--user-data-dir` and
+    // terminate it first. On Unix, Chrome *does* write SingletonLock, so
+    // `reclaim_singleton_inner` already handles the live owner — that proven
+    // path is left untouched (this block is compiled out on non-Windows).
+    #[cfg(windows)]
+    {
+        if let Some(pid) = find_controlled_browser_pid(profile) {
+            info!(
+                "terminating existing controlled chromium pid {pid} to reclaim profile {}",
+                profile.display()
+            );
+            if !terminate_pid_windows(pid) {
+                return Err(anyhow!(
+                    "couldn't terminate the browser already using profile {} (pid {pid}) — \
+                     close it manually and click Restart",
+                    profile.display()
+                ));
+            }
+        }
+    }
     if !profile.exists() {
-        return Ok(()); // fresh dir, nothing to clean
+        return Ok(()); // fresh dir, nothing else to clean
     }
     reclaim_singleton_inner(profile)
+}
+
+/// True when a process with this `name` and command-line `cmd` is the **browser
+/// process** of the controlled Chromium for `profile`: it carries our
+/// `--user-data-dir=<profile>` and is not a `--type=…` renderer/GPU child
+/// (killing the browser process takes its children down with it). Pure so the
+/// matching is unit-testable without a live browser.
+///
+/// Windows-only: this is the reclaim mechanism there because Chrome writes no
+/// SingletonLock file. Unix uses the lock symlink instead (see module docs).
+#[cfg(windows)]
+fn is_controlled_browser(name: &str, cmd: &[String], profile: &Path) -> bool {
+    let name = name.to_ascii_lowercase();
+    if !name.contains("chrome") && !name.contains("chromium") {
+        return false;
+    }
+    let needle = format!("--user-data-dir={}", profile.display());
+    let has_profile = cmd.iter().any(|a| a.contains(needle.as_str()));
+    let is_child = cmd.iter().any(|a| a.starts_with("--type="));
+    has_profile && !is_child
+}
+
+/// Find the PID of the controlled Chromium **browser** process for `profile`,
+/// if one is still running, by matching the process command line via `sysinfo`.
+/// Windows-only (Unix reclaims via the SingletonLock symlink instead).
+#[cfg(windows)]
+fn find_controlled_browser_pid(profile: &Path) -> Option<u32> {
+    let mut sys = System::new();
+    // The default refresh does NOT fetch the command line; ask for it
+    // explicitly (that's what we match `--user-data-dir` against).
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+    );
+    for proc in sys.processes().values() {
+        let name = proc.name().to_string_lossy();
+        let cmd: Vec<String> = proc
+            .cmd()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        if is_controlled_browser(name.as_ref(), &cmd, profile) {
+            return Some(proc.pid().as_u32());
+        }
+    }
+    None
 }
 
 /// Best-effort removal of the three singleton marker files. A clean browser
@@ -230,6 +305,7 @@ fn process_alive_windows(pid: u32) -> bool {
     // line if the PID is gone. Avoids pulling in `windows-sys` for one syscall.
     let out = match std::process::Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+        .no_console_window()
         .output()
     {
         Ok(o) => o,
@@ -247,6 +323,7 @@ fn terminate_pid_windows(pid: u32) -> bool {
         .args(["/PID", &pid.to_string()])
         .stderr(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
+        .no_console_window()
         .status();
     if wait_until_dead_windows(pid, TERM_GRACE) {
         return true;
@@ -256,6 +333,7 @@ fn terminate_pid_windows(pid: u32) -> bool {
         .args(["/F", "/PID", &pid.to_string()])
         .stderr(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
+        .no_console_window()
         .status();
     wait_until_dead_windows(pid, KILL_GRACE)
 }
@@ -309,6 +387,90 @@ mod tests {
     fn reclaim_no_lock_is_ok() {
         let dir = tempfile::tempdir().unwrap();
         reclaim_singleton(dir.path()).unwrap();
+    }
+
+    /// Regression for the Windows duplicate-tab / DevToolsActivePort-timeout
+    /// bug: the surviving controlled browser must be identified by its
+    /// command-line `--user-data-dir` (Chrome writes no SingletonLock on
+    /// Windows), matching the browser process but not its renderer children or
+    /// an unrelated Chrome on a different profile.
+    #[cfg(windows)]
+    #[test]
+    fn is_controlled_browser_matches_browser_not_children() {
+        let profile = Path::new(if cfg!(windows) {
+            r"C:\p\chrome-profile"
+        } else {
+            "/p/chrome-profile"
+        });
+        let udir = format!("--user-data-dir={}", profile.display());
+
+        // Browser process: our --user-data-dir, no --type.
+        assert!(is_controlled_browser(
+            "chrome.exe",
+            &[udir.clone(), "--remote-debugging-port=1234".into()],
+            profile
+        ));
+        assert!(is_controlled_browser("chromium", &[udir.clone()], profile));
+
+        // Renderer/GPU child: has --type → not the process we target directly.
+        assert!(!is_controlled_browser(
+            "chrome.exe",
+            &[udir.clone(), "--type=renderer".into()],
+            profile
+        ));
+
+        // A chrome using a *different* profile is not ours.
+        let other = format!(
+            "--user-data-dir={}",
+            Path::new(if cfg!(windows) { r"C:\other" } else { "/other" }).display()
+        );
+        assert!(!is_controlled_browser("chrome.exe", &[other], profile));
+
+        // A non-chrome process is never matched, even with the arg.
+        assert!(!is_controlled_browser("firefox", &[udir], profile));
+    }
+
+    /// Real end-to-end check (run with `--ignored` and `AKAGI_TEST_CHROME` set
+    /// to a chrome/chromium binary): launch an actual headless browser with a
+    /// temp profile, confirm `find_controlled_browser_pid` locates it via the
+    /// live process command line (exercising the sysinfo `with_cmd` refresh),
+    /// and that `reclaim_singleton` terminates it. Skipped when the env var is
+    /// unset so CI without a browser stays green.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "needs a real browser binary via AKAGI_TEST_CHROME"]
+    fn find_and_reclaim_real_browser() {
+        let Ok(chrome) = std::env::var("AKAGI_TEST_CHROME") else {
+            eprintln!("AKAGI_TEST_CHROME not set; skipping");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path();
+        let mut child = std::process::Command::new(&chrome)
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .arg("--remote-debugging-port=0")
+            .arg("--headless=new")
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .spawn()
+            .expect("spawn browser");
+        std::thread::sleep(Duration::from_secs(3));
+
+        let found = find_controlled_browser_pid(profile);
+        assert!(
+            found.is_some(),
+            "find_controlled_browser_pid should locate the browser by its command line"
+        );
+
+        reclaim_singleton(profile).expect("reclaim should terminate the browser");
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(
+            find_controlled_browser_pid(profile).is_none(),
+            "browser should be gone after reclaim"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[cfg(unix)]

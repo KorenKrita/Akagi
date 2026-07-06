@@ -68,6 +68,29 @@ fn resolve_dir_inner(configured: &Path, appimage: bool, user_root: Option<PathBu
     exe_candidate.unwrap_or(cwd_candidate)
 }
 
+/// Extension for [`std::process::Command`] that stops Windows from briefly
+/// flashing a console window when the GUI app spawns a console helper
+/// (`tasklist`, `taskkill`, `reg`, …). Chainable and a **no-op off Windows**:
+///
+/// ```ignore
+/// Command::new("tasklist").args(["/FI", filter]).no_console_window().output()
+/// ```
+pub trait NoConsoleWindow {
+    fn no_console_window(&mut self) -> &mut Self;
+}
+
+impl NoConsoleWindow for std::process::Command {
+    fn no_console_window(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW: the child gets no console, so no window flashes.
+            self.creation_flags(0x0800_0000);
+        }
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

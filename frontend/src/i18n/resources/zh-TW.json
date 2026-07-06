@@ -560,12 +560,18 @@
   },
   "status": {
     "connected": "已連線",
-    "events_live": "事件：即時",
-    "analysis_live": "分析：即時",
     "api_active": "線上 API：即時",
     "api_degraded": "線上 API：離線",
     "api_active_hint": "內建 Bot 正在使用線上推論 API。",
-    "api_degraded_hint": "無法連線到線上推論 API —— 內建 Bot 已改用本機模型。"
+    "api_degraded_hint": "無法連線到線上推論 API —— 內建 Bot 已改用本機模型。",
+    "connecting": "連線中…",
+    "disconnected": "未連線",
+    "capture_error": "擷取錯誤",
+    "bot_idle": "Bot：待命",
+    "bot_loading": "Bot：載入中",
+    "bot_ready": "Bot：就緒",
+    "bot_error": "Bot：錯誤",
+    "bot_stopped": "Bot：已停止"
   },
   "platform": {
     "majsoul": "雀魂",

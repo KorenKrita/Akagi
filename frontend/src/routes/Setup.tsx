@@ -43,6 +43,11 @@ const BOT_4P_NAME = 'mortal'
 const BOT_3P_NAME = 'mortal3p'
 const BOT_4P_ASSET = 'release4p.zip'
 const BOT_3P_ASSET = 'release3p.zip'
+// Reserved names of the built-in, pure-Rust bots (see `src/bot/native.rs`).
+// Always available (weights are embedded in the binary), so a native active bot
+// is a working assistant — the wizard must not report "no bot / no analysis".
+const NATIVE_4P_NAME = 'akagi-native'
+const NATIVE_3P_NAME = 'akagi-native3p'
 
 export function Setup() {
   const { t } = useTranslation()
@@ -922,13 +927,20 @@ function FinishStep({ draft }: { draft: AppConfig }) {
   }, [])
   const has4p = installed?.some((b) => b.name === BOT_4P_NAME) ?? false
   const has3p = installed?.some((b) => b.name === BOT_3P_NAME) ?? false
-  const botSummary = has4p && has3p
-    ? `${BOT_4P_NAME} (4P), ${BOT_3P_NAME} (3P)`
-    : has4p
-      ? `${BOT_4P_NAME} (4P)`
-      : has3p
-        ? `${BOT_3P_NAME} (3P)`
-        : t('setup.finish.bots_none')
+  // Mirror what `finish()` actually persists: prefer the author Mortal bot when
+  // installed, otherwise keep the configured active bot (which defaults to the
+  // built-in native bot). A native active bot is a working assistant, so the
+  // summary must reflect it instead of claiming analysis is unavailable.
+  const eff4p = has4p ? BOT_4P_NAME : draft.bot.active_4p
+  const eff3p = has3p ? BOT_3P_NAME : draft.bot.active_3p
+  const botLabel = (name: string) =>
+    name === NATIVE_4P_NAME || name === NATIVE_3P_NAME ? t('bots.native_builtin') : name
+  const botParts = [
+    eff4p ? `${botLabel(eff4p)} (4P)` : null,
+    eff3p ? `${botLabel(eff3p)} (3P)` : null,
+  ].filter((p): p is string => p !== null)
+  const botSummary =
+    botParts.length > 0 ? botParts.join(', ') : t('setup.finish.bots_none')
   return (
     <div className="grid gap-3">
       <h2 className="text-lg font-semibold">{t('setup.finish.title')}</h2>
