@@ -242,7 +242,8 @@
     "none_paren": "(none)",
     "start": "Start",
     "stop": "Stop",
-    "restart": "Restart"
+    "restart": "Restart",
+    "close": "Close"
   },
   "settings": {
     "title": "Settings",
@@ -462,7 +463,48 @@
     "native_4p": "Akagi built-in (4p)",
     "native_3p": "Akagi built-in (3p)",
     "native_builtin": "Built-in · no install",
-    "native_version": "built-in"
+    "native_version": "built-in",
+    "api": {
+      "title": "Cloud inference (built-in bot)",
+      "desc": "Optionally route the built-in bot's moves to a remote inference server for a stronger model. The offline local model stays as an automatic fallback if the server is unreachable.",
+      "enable": "Use cloud inference API",
+      "enable_hint": "When on, the built-in bot asks the server for each move; it falls back to the local model on any error.",
+      "base_url": "Server URL",
+      "key": "API key",
+      "show_key": "Show key",
+      "hide_key": "Hide key",
+      "model_4p": "4-player model",
+      "model_3p": "3-player model",
+      "model_hint": "Model id from the server (e.g. 4p-ot2 / 3p-ot). Leave empty to use the server's default.",
+      "models_title": "Available models — click to fill",
+      "models_empty": "No models available for this key.",
+      "plan": "Plan",
+      "expires": "Expires",
+      "usage": "Usage today",
+      "rpm": "Rate / min",
+      "topk": "Candidates (top-k)",
+      "saved": "Cloud inference settings saved",
+      "save_failed": "Failed to save settings",
+      "check_key": "Check key",
+      "checking": "Checking…",
+      "fetch_models": "Fetch models",
+      "health": "Health check",
+      "health_ok": "Server: {{status}}",
+      "redeem": "Redeem code",
+      "need_url_key": "Enter the server URL and API key first.",
+      "need_url": "Enter the server URL first.",
+      "redeem_title": "Redeem a code",
+      "redeem_code": "Redemption code",
+      "redeem_email": "Email (optional)",
+      "redeem_email_hint": "Links keys to an account so they can be managed together. Leave blank to redeem anonymously.",
+      "redeem_renew": "Add time to my current key",
+      "redeem_renew_hint": "Stacks time onto the key saved above instead of minting a new one.",
+      "redeem_submit": "Redeem",
+      "redeeming": "Redeeming…",
+      "redeem_ok": "Code redeemed",
+      "redeem_new_key": "New {{plan}} key issued (…{{last4}}) and saved — you're ready to go.",
+      "redeemed_extended": "Key …{{last4}} extended. New expiry: {{expires}}."
+    }
   },
   "overview": {
     "title": "Overview",
@@ -519,7 +561,11 @@
   "status": {
     "connected": "Connected",
     "events_live": "Events: Live",
-    "analysis_live": "Analysis: Live"
+    "analysis_live": "Analysis: Live",
+    "api_active": "Online API: Live",
+    "api_degraded": "Online API: Offline",
+    "api_active_hint": "The built-in bot is using the online inference API.",
+    "api_degraded_hint": "The online inference API is unreachable — the built-in bot is using the local model instead."
   },
   "platform": {
     "majsoul": "Mahjong Soul",

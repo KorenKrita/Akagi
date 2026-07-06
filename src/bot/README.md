@@ -47,6 +47,22 @@ bridge to them.
   and the table's `num_players`. The manager picks `active_4p` or
   `active_3p` from `BotConfig` based on `num_players`; an empty slot for
   the matching mode means analysis-only for that game (no runner spawned).
+- `native` — the built-in, in-process bots (no Python, no subprocess).
+  Two reserved names select them: `akagi-native` (4p) / `akagi-native3p`
+  (3p). `NativeBot` runs the embedded pure-Rust `native_bot` candle model.
+  `ApiNativeBot` instead proxies each decision to the remote inference
+  API (see `api`), keeping `NativeBot`'s local model as a legal-action
+  gate (skip the API when we can't act) and an error/timeout fallback.
+  `native::build(actor_id, num_players, &api)` picks one via
+  `BotConfig.api.is_active()`; `BotManager::spawn_runner` calls it for the
+  reserved names, bypassing the registry / venv path entirely.
+- `api` — `ApiClient` + free `redeem`/`health`: a `reqwest` wrapper over
+  the remote inference server (`/v3/react`, `/v3/key`, `/v3/models`,
+  `/v3/redeem`, `/healthz`). Consumed by `ApiNativeBot` and by the
+  `native_api_*` IPC commands (redeem a code, check a key, list models).
+- `supervisor` — `run_bot_manager`: constructs the `BotManager` and drives
+  its run loop off the `MjaiBus`. Tolerates a missing Python runtime — the
+  built-in `native` bots need none.
 
 ## Adding a new bot
 

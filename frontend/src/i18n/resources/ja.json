@@ -242,7 +242,8 @@
     "none_paren": "（なし）",
     "start": "開始",
     "stop": "停止",
-    "restart": "再起動"
+    "restart": "再起動",
+    "close": "閉じる"
   },
   "settings": {
     "title": "設定",
@@ -462,7 +463,48 @@
     "native_4p": "Akagi 内蔵 (4人)",
     "native_3p": "Akagi 内蔵 (3人)",
     "native_builtin": "内蔵 · インストール不要",
-    "native_version": "内蔵"
+    "native_version": "内蔵",
+    "api": {
+      "title": "クラウド推論(内蔵ボット)",
+      "desc": "内蔵ボットの着手をリモート推論サーバーに問い合わせ、より強力なモデルを使用できます。サーバーに接続できない場合は、オフラインのローカルモデルへ自動的にフォールバックします。",
+      "enable": "クラウド推論APIを使用",
+      "enable_hint": "オンにすると内蔵ボットは着手ごとにサーバーへ問い合わせます。エラー時はローカルモデルにフォールバックします。",
+      "base_url": "サーバーURL",
+      "key": "APIキー",
+      "show_key": "キーを表示",
+      "hide_key": "キーを隠す",
+      "model_4p": "4人打ちモデル",
+      "model_3p": "3人打ちモデル",
+      "model_hint": "サーバーのモデルID(例:4p-ot2 / 3p-ot)。空欄でサーバー既定を使用します。",
+      "models_title": "利用可能なモデル — クリックで入力",
+      "models_empty": "このキーで利用できるモデルがありません。",
+      "plan": "プラン",
+      "expires": "有効期限",
+      "usage": "本日の使用量",
+      "rpm": "毎分レート",
+      "topk": "候補数(top-k)",
+      "saved": "クラウド推論の設定を保存しました",
+      "save_failed": "設定の保存に失敗しました",
+      "check_key": "キーを確認",
+      "checking": "確認中…",
+      "fetch_models": "モデルを取得",
+      "health": "ヘルスチェック",
+      "health_ok": "サーバー:{{status}}",
+      "redeem": "コードを引き換え",
+      "need_url_key": "先にサーバーURLとAPIキーを入力してください。",
+      "need_url": "先にサーバーURLを入力してください。",
+      "redeem_title": "コードを引き換え",
+      "redeem_code": "引き換えコード",
+      "redeem_email": "メール(任意)",
+      "redeem_email_hint": "キーをアカウントに紐付けてまとめて管理できます。空欄なら匿名で引き換えます。",
+      "redeem_renew": "現在のキーに期間を追加",
+      "redeem_renew_hint": "新しいキーを発行せず、上に保存されたキーへ期間を加算します。",
+      "redeem_submit": "引き換える",
+      "redeeming": "引き換え中…",
+      "redeem_ok": "コードを引き換えました",
+      "redeem_new_key": "新しい{{plan}}キーを発行し、保存しました(…{{last4}})。すぐに使えます。",
+      "redeemed_extended": "キー …{{last4}} を延長しました。新しい有効期限:{{expires}}。"
+    }
   },
   "overview": {
     "title": "概要",
@@ -519,7 +561,11 @@
   "status": {
     "connected": "接続済み",
     "events_live": "イベント: ライブ",
-    "analysis_live": "解析: ライブ"
+    "analysis_live": "解析: ライブ",
+    "api_active": "オンラインAPI: ライブ",
+    "api_degraded": "オンラインAPI: オフライン",
+    "api_active_hint": "内蔵ボットはオンライン推論APIを使用しています。",
+    "api_degraded_hint": "オンライン推論APIに接続できません。内蔵ボットはローカルモデルを使用しています。"
   },
   "platform": {
     "majsoul": "雀魂",

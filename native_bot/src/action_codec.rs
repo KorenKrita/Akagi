@@ -67,6 +67,50 @@ pub fn pick_by_logits(legal: &[Action], logits: &[f32], num_players: u8) -> Opti
     best.map(|(_, a)| a.clone())
 }
 
+/// Rank legal actions by logit (highest first) and return the top `top_n` as
+/// `(action, prob)` pairs, where `prob` is the softmax of the logits taken
+/// **over the legal actions only** (same normalization the remote API uses for
+/// its candidate distribution). The first element matches [`pick_by_logits`].
+pub fn rank_by_logits(
+    legal: &[Action],
+    logits: &[f32],
+    num_players: u8,
+    top_n: usize,
+) -> Vec<(Action, f32)> {
+    let mut scored: Vec<(&Action, f32)> = legal
+        .iter()
+        .filter_map(|a| {
+            action_index(a, num_players)
+                .map(|i| (a, logits.get(i).copied().unwrap_or(f32::NEG_INFINITY)))
+        })
+        .collect();
+    if scored.is_empty() {
+        return Vec::new();
+    }
+    let max_logit = scored
+        .iter()
+        .map(|(_, l)| *l)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let exps: Vec<f32> = scored.iter().map(|(_, l)| (l - max_logit).exp()).collect();
+    let sum: f32 = exps.iter().sum();
+    // Stable sort by logit desc: ties keep input order, matching pick_by_logits.
+    let mut order: Vec<usize> = (0..scored.len()).collect();
+    order.sort_by(|&a, &b| {
+        scored[b]
+            .1
+            .partial_cmp(&scored[a].1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    order
+        .into_iter()
+        .take(top_n)
+        .map(|i| {
+            let prob = if sum > 0.0 { exps[i] / sum } else { 0.0 };
+            (scored[i].0.clone(), prob)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +167,43 @@ mod tests {
         logits[41] = 5.0; // prefer pon
         let picked = pick_by_logits(&legal, &logits, 4).unwrap();
         assert_eq!(picked.action_type, ActionType::Pon);
+    }
+
+    #[test]
+    fn rank_orders_by_logit_and_normalizes_over_legal() {
+        let legal = vec![
+            Action::new(ActionType::Discard, Some(0), vec![], Some(0)), // idx 0
+            Action::new(ActionType::Pon, Some(4), vec![5, 6], Some(0)), // idx 41
+            Action::new(ActionType::Pass, None, vec![], Some(0)),       // idx 81
+        ];
+        let mut logits = vec![0.0f32; 82];
+        logits[0] = 1.0;
+        logits[41] = 3.0; // highest → ranked first
+        logits[81] = 2.0;
+
+        let ranked = rank_by_logits(&legal, &logits, 4, 3);
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].0.action_type, ActionType::Pon);
+        assert_eq!(ranked[1].0.action_type, ActionType::Pass);
+        assert_eq!(ranked[2].0.action_type, ActionType::Discard);
+        // Probs are a descending softmax that sums to ~1 over the legal set.
+        assert!(ranked[0].1 > ranked[1].1 && ranked[1].1 > ranked[2].1);
+        let sum: f32 = ranked.iter().map(|(_, p)| p).sum();
+        assert!((sum - 1.0).abs() < 1e-5, "probs should sum to 1, got {sum}");
+        // The top of the ranking matches pick_by_logits.
+        let picked = pick_by_logits(&legal, &logits, 4).unwrap();
+        assert_eq!(picked.action_type, ranked[0].0.action_type);
+    }
+
+    #[test]
+    fn rank_top_n_truncates() {
+        let legal = vec![
+            Action::new(ActionType::Discard, Some(0), vec![], Some(0)),
+            Action::new(ActionType::Discard, Some(4), vec![], Some(0)),
+            Action::new(ActionType::Discard, Some(8), vec![], Some(0)),
+        ];
+        let logits = vec![0.0f32; 82];
+        assert_eq!(rank_by_logits(&legal, &logits, 4, 2).len(), 2);
+        assert!(rank_by_logits(&[], &logits, 4, 3).is_empty());
     }
 }

@@ -7,7 +7,7 @@ mod platform;
 mod proxy;
 
 pub use autoplay::{AutoplayConfig, MajsoulAutoplayConfig};
-pub use bot::BotConfig;
+pub use bot::{BotConfig, NativeApiConfig};
 pub use capture::{CaptureConfig, CaptureMode, ChromiumConfig};
 pub use general::GeneralConfig;
 pub use logging::LoggingConfig;
@@ -235,6 +235,48 @@ mod tests {
         assert_eq!(round_trip.general.language, cfg.general.language);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The nested `[bot.api]` table must survive a TOML round-trip inside the
+    /// full `AppConfig` — a table field serialized among scalar `[bot]` keys is
+    /// an easy way to get "table before value" ordering wrong. Uses fake creds.
+    #[test]
+    fn bot_api_section_round_trips_through_toml() {
+        let mut cfg = AppConfig::default();
+        cfg.bot.api.enabled = true;
+        cfg.bot.api.base_url = "http://192.168.0.107:8080".into();
+        cfg.bot.api.key = "test-key-not-real".into();
+        cfg.bot.api.model_4p = "4p-ot2".into();
+        cfg.bot.api.model_3p = "3p-ot".into();
+
+        let body = toml::to_string_pretty(&cfg).unwrap();
+        assert!(
+            body.contains("[bot.api]"),
+            "expected a [bot.api] table in:\n{body}"
+        );
+
+        let back: AppConfig = toml::from_str(&body).unwrap();
+        assert!(back.bot.api.enabled);
+        assert_eq!(back.bot.api.base_url, "http://192.168.0.107:8080");
+        assert_eq!(back.bot.api.key, "test-key-not-real");
+        assert_eq!(back.bot.api.model_4p, "4p-ot2");
+        assert_eq!(back.bot.api.model_3p, "3p-ot");
+        assert!(back.bot.api.is_active());
+        assert_eq!(back.bot.api.model_for(3), "3p-ot");
+        assert_eq!(back.bot.api.model_for(4), "4p-ot2");
+    }
+
+    /// A legacy config file without any `[bot.api]` section still parses, with
+    /// the API path defaulting to off (fully offline local model). The default
+    /// server URL is pre-filled but that alone must not activate the API.
+    #[test]
+    fn missing_bot_api_section_defaults_to_disabled() {
+        let legacy = "[bot]\nenabled = true\nactive_4p = \"akagi-native\"\n";
+        let cfg: AppConfig = toml::from_str(legacy).unwrap();
+        assert!(!cfg.bot.api.enabled);
+        assert!(!cfg.bot.api.is_active(), "default URL alone must not activate");
+        assert_eq!(cfg.bot.api.base_url, NativeApiConfig::default().base_url);
+        assert!(!cfg.bot.api.base_url.is_empty(), "URL should be pre-filled");
     }
 
     #[test]

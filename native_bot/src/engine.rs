@@ -19,9 +19,13 @@ use riichienv_core::rule::GameRule;
 use riichienv_core::state::GameState;
 use riichienv_core::state_3p::GameState3P;
 
-use crate::action_codec::pick_by_logits;
+use crate::action_codec::{pick_by_logits, rank_by_logits};
 use crate::adapt::{obs_and_legal_3p, obs_and_legal_4p};
 use crate::model::Model;
+
+/// How many ranked candidates the engine surfaces for the HUD's multi-row
+/// recommendation card (top-N by policy probability).
+const SHOW_TOP_N: usize = 3;
 
 /// A schema-agnostic bot reply, ready to be mapped to Akagi's `MjaiEvent`.
 /// All tiles are mjai strings (e.g. `"5mr"`, `"P"`).
@@ -50,7 +54,11 @@ pub enum BotAction {
 /// Our seat's decision at a given point.
 pub struct Decision {
     pub action: BotAction,
-    /// Raw action logits (indexed by the mode's action space), for HUD meta.
+    /// Top legal actions ranked by policy probability (best first). `action`
+    /// is `candidates[0].0`; the rest are the runner-up recommendations the HUD
+    /// shows as a top-N card. Probabilities are a softmax over the legal set.
+    pub candidates: Vec<(BotAction, f32)>,
+    /// Raw action logits (indexed by the mode's action space).
     pub logits: Vec<f32>,
 }
 
@@ -123,7 +131,7 @@ impl Engine {
     /// legal action (not our turn / nothing to respond to).
     pub fn decide(&mut self) -> Result<Option<Decision>> {
         let seat = self.seat;
-        let (action, logits) = match &mut self.backend {
+        let (candidates, logits) = match &mut self.backend {
             Backend::Four { state, model } => {
                 let last_pid = state.last_discard.map(|(_, p)| p);
                 let drawn = state.drawn_tile;
@@ -132,16 +140,17 @@ impl Engine {
                     return Ok(None);
                 }
                 let logits = model.forward_logits(&obs)?;
-                let Some(chosen) = pick_by_logits(&legal, &logits, 4) else {
+                let ranked = rank_by_logits(&legal, &logits, 4, SHOW_TOP_N);
+                let Some((top, _)) = ranked.first() else {
                     return Ok(None);
                 };
-                let reach_pai = if chosen.action_type == ActionType::Riichi {
+                let reach_pai = if top.action_type == ActionType::Riichi {
                     predict_reach_discard(state, model, seat, 4)
                 } else {
                     None
                 };
                 (
-                    build_bot_action(&chosen, seat, last_pid, drawn, reach_pai),
+                    build_candidates(&ranked, seat, last_pid, drawn, reach_pai),
                     logits,
                 )
             }
@@ -153,22 +162,65 @@ impl Engine {
                     return Ok(None);
                 }
                 let logits = model.forward_logits(&obs)?;
-                let Some(chosen) = pick_by_logits(&legal, &logits, 3) else {
+                let ranked = rank_by_logits(&legal, &logits, 3, SHOW_TOP_N);
+                let Some((top, _)) = ranked.first() else {
                     return Ok(None);
                 };
-                let reach_pai = if chosen.action_type == ActionType::Riichi {
+                let reach_pai = if top.action_type == ActionType::Riichi {
                     predict_reach_discard_3p(state, model, seat)
                 } else {
                     None
                 };
                 (
-                    build_bot_action(&chosen, seat, last_pid, drawn, reach_pai),
+                    build_candidates(&ranked, seat, last_pid, drawn, reach_pai),
                     logits,
                 )
             }
         };
-        Ok(Some(Decision { action, logits }))
+        let action = candidates[0].0.clone();
+        Ok(Some(Decision {
+            action,
+            candidates,
+            logits,
+        }))
     }
+
+    /// The tile the local model would discard if it declared riichi right now,
+    /// as an mjai string. Used by the API-backed runner as a fallback for the
+    /// reach two-step (declare → discard) when the remote follow-up call fails.
+    /// `None` if there is no riichi-legal discard from the current state.
+    pub fn reach_discard(&mut self) -> Option<String> {
+        let seat = self.seat;
+        match &mut self.backend {
+            Backend::Four { state, model } => {
+                predict_reach_discard(state, model, seat, 4).map(tid_to_mjai)
+            }
+            Backend::Three { state, model } => {
+                predict_reach_discard_3p(state, model, seat).map(tid_to_mjai)
+            }
+        }
+    }
+}
+
+/// Map a ranked `(Action, prob)` list into displayable `(BotAction, prob)`
+/// candidates. The riichi-discard prediction is applied only to the top action
+/// (index 0) — predicting it for every runner-up would run the model N extra
+/// times for tiles that only decorate an alternative row.
+fn build_candidates(
+    ranked: &[(Action, f32)],
+    seat: u8,
+    last_discarder: Option<u8>,
+    drawn: Option<u8>,
+    reach_pai: Option<u8>,
+) -> Vec<(BotAction, f32)> {
+    ranked
+        .iter()
+        .enumerate()
+        .map(|(i, (a, p))| {
+            let rp = if i == 0 { reach_pai } else { None };
+            (build_bot_action(a, seat, last_discarder, drawn, rp), *p)
+        })
+        .collect()
 }
 
 /// Predict the tile we'd discard on a riichi declaration, by advancing a clone

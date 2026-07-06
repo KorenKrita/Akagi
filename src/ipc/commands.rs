@@ -1314,6 +1314,60 @@ pub async fn apply_update(
     crate::updater::apply::download_and_apply(&app, &info).await
 }
 
+// ---------- Built-in bot cloud inference (native API) ----------
+//
+// Thin passthroughs to `crate::bot::api`. They take the server URL / key as
+// explicit args (rather than reading them from config) so the frontend can
+// verify a key before saving it, and redeem a code before any key exists.
+
+/// Redeem a prepaid code (`POST /v3/redeem`, no auth). By default mints a new
+/// key; pass `renew_key` to stack time onto a key you already hold.
+#[tauri::command]
+pub async fn native_api_redeem(
+    base_url: String,
+    code: String,
+    email: Option<String>,
+    renew_key: Option<String>,
+) -> CmdResult<crate::bot::api::RedeemResponse> {
+    crate::bot::api::redeem(&base_url, &code, email.as_deref(), renew_key.as_deref())
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Fetch a key's plan / expiry / live limits (`GET /v3/key`).
+#[tauri::command]
+pub async fn native_api_key_status(
+    base_url: String,
+    key: String,
+) -> CmdResult<crate::bot::api::KeyStatus> {
+    crate::bot::api::ApiClient::new(&base_url, &key)
+        .map_err(|e| format!("{e:#}"))?
+        .key_status()
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// List the models a key's plan may use (`GET /v3/models`).
+#[tauri::command]
+pub async fn native_api_models(
+    base_url: String,
+    key: String,
+) -> CmdResult<Vec<crate::bot::api::ModelInfo>> {
+    crate::bot::api::ApiClient::new(&base_url, &key)
+        .map_err(|e| format!("{e:#}"))?
+        .models()
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Liveness + per-model queue depth (`GET /healthz`, no auth).
+#[tauri::command]
+pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::Health> {
+    crate::bot::api::health(&base_url)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 fn persist_config(config: &AppConfig, path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1368,6 +1422,10 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::delete_game_history_entry,
             $crate::ipc::commands::check_for_update,
             $crate::ipc::commands::apply_update,
+            $crate::ipc::commands::native_api_redeem,
+            $crate::ipc::commands::native_api_key_status,
+            $crate::ipc::commands::native_api_models,
+            $crate::ipc::commands::native_api_health,
         ]
     };
 }

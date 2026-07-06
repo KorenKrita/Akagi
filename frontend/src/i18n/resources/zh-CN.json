@@ -242,7 +242,8 @@
     "none_paren": "（无）",
     "start": "启动",
     "stop": "停止",
-    "restart": "重启"
+    "restart": "重启",
+    "close": "关闭"
   },
   "settings": {
     "title": "设置",
@@ -462,7 +463,48 @@
     "native_4p": "Akagi 内建 (四人)",
     "native_3p": "Akagi 内建 (三人)",
     "native_builtin": "内建 · 免安装",
-    "native_version": "内建"
+    "native_version": "内建",
+    "api": {
+      "title": "云端推理(内建 Bot)",
+      "desc": "可选择将内建 Bot 的每一步交给远程推理服务器,使用更强的模型。若服务器无法连接,会自动回退到离线的本地模型。",
+      "enable": "使用云端推理 API",
+      "enable_hint": "开启后,内建 Bot 每步都会向服务器询问;发生错误时会回退到本地模型。",
+      "base_url": "服务器地址",
+      "key": "API 密钥",
+      "show_key": "显示密钥",
+      "hide_key": "隐藏密钥",
+      "model_4p": "四人模型",
+      "model_3p": "三人模型",
+      "model_hint": "服务器提供的模型 ID(例:4p-ot2 / 3p-ot)。留空则使用服务器默认。",
+      "models_title": "可用模型 — 点击填入",
+      "models_empty": "此密钥没有可用的模型。",
+      "plan": "方案",
+      "expires": "到期时间",
+      "usage": "今日用量",
+      "rpm": "每分钟速率",
+      "topk": "候选数(top-k)",
+      "saved": "已保存云端推理设置",
+      "save_failed": "保存设置失败",
+      "check_key": "查询密钥",
+      "checking": "查询中…",
+      "fetch_models": "获取模型",
+      "health": "健康检查",
+      "health_ok": "服务器:{{status}}",
+      "redeem": "兑换码",
+      "need_url_key": "请先输入服务器地址与 API 密钥。",
+      "need_url": "请先输入服务器地址。",
+      "redeem_title": "兑换码",
+      "redeem_code": "兑换码",
+      "redeem_email": "邮箱(可选)",
+      "redeem_email_hint": "将密钥绑定账号以便统一管理。留空则以匿名方式兑换。",
+      "redeem_renew": "为当前密钥续期",
+      "redeem_renew_hint": "将时间叠加到上方已保存的密钥,而不是发放新密钥。",
+      "redeem_submit": "兑换",
+      "redeeming": "兑换中…",
+      "redeem_ok": "已兑换",
+      "redeem_new_key": "已发放并保存新的 {{plan}} 密钥(…{{last4}}),可立即使用。",
+      "redeemed_extended": "密钥 …{{last4}} 已延长。新到期时间:{{expires}}。"
+    }
   },
   "overview": {
     "title": "总览",
@@ -519,7 +561,11 @@
   "status": {
     "connected": "已连接",
     "events_live": "事件：实时",
-    "analysis_live": "分析：实时"
+    "analysis_live": "分析：实时",
+    "api_active": "在线 API：实时",
+    "api_degraded": "在线 API：离线",
+    "api_active_hint": "内建 Bot 正在使用在线推理 API。",
+    "api_degraded_hint": "无法连接到在线推理 API —— 内建 Bot 已改用本地模型。"
   },
   "platform": {
     "majsoul": "雀魂",

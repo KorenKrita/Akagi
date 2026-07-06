@@ -12,8 +12,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Cloud } from 'lucide-react'
 import { Toaster } from '@/components/ui/sonner'
 import { InstallBlockingOverlay } from '@/components/InstallBlockingOverlay'
+import { NativeApiFields } from '@/components/NativeApiFields'
 import { invoke } from '@/lib/tauri'
 import { withInstallBlock } from '@/lib/install'
 import { useTauriBridge } from '@/hooks/useTauriBridge'
@@ -182,6 +184,8 @@ export function Setup() {
           {step === 'bots' && <BotsStep />}
           {step === 'configure' && (
             <ConfigureBotsStep
+              draft={draft}
+              setDraft={setDraft}
               drafts={botSettingsDraft}
               setDrafts={setBotSettingsDraft}
             />
@@ -726,9 +730,13 @@ function BotInstallCard({
 }
 
 function ConfigureBotsStep({
+  draft,
+  setDraft,
   drafts,
   setDrafts,
 }: {
+  draft: AppConfig
+  setDraft: (c: AppConfig) => void
   drafts: Record<string, BotSettings>
   setDrafts: React.Dispatch<React.SetStateAction<Record<string, BotSettings>>>
 }) {
@@ -776,68 +784,74 @@ function ConfigureBotsStep({
     (b) => b.name === BOT_4P_NAME || b.name === BOT_3P_NAME,
   )
 
-  if (installed === null) {
-    return <div className="text-sm text-muted-foreground">{t('setup.configure.loading')}</div>
-  }
-
-  if (wizardBots.length === 0) {
-    return (
-      <div className="grid gap-3">
-        <h2 className="text-lg font-semibold">{t('setup.configure.title')}</h2>
-        <p className="text-sm text-muted-foreground">
-          {t('setup.configure.empty_desc')}
-        </p>
-      </div>
-    )
-  }
-
   return (
     <div className="grid gap-4">
       <h2 className="text-lg font-semibold">{t('setup.configure.title')}</h2>
-      <p className="text-sm text-muted-foreground">
-        {t('setup.configure.normal_desc')}
-      </p>
 
-      {/* The Mortal weights bundled in the GitHub release are a
-          placeholder forced by GitHub's file-size limit — they prove
-          the install works but aren't strong enough for real play.
-          Point users at Discord for the real weights (paid hosted API
-          + free local models both live there) before they walk away
-          unimpressed by the placeholder's playstyle. */}
-      <div className="rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 grid gap-2">
-        <div className="flex items-center gap-2 text-indigo-200 font-semibold text-sm">
-          <DiscordMark className="h-4 w-4" />
-          {t('setup.configure.models_title')}
+      {/* Built-in bot: optional cloud inference. Shown first — the built-in
+          bot is the always-present default, so this is the primary thing to
+          configure here even when no author bots are installed. */}
+      <div className="rounded-md border p-3 grid gap-3">
+        <div className="flex items-center gap-2 font-medium text-sm">
+          <Cloud className="h-4 w-4" />
+          {t('bots.api.title')}
         </div>
-        <p className="text-sm text-indigo-100/90">
-          {t('setup.configure.models_body')}
-        </p>
-        <div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => openExternal(AKAGI_DISCORD_URL)}
-          >
-            <DiscordMark className="h-4 w-4 mr-1.5" />
-            {t('setup.configure.models_btn')}
-          </Button>
-        </div>
-      </div>
-      {wizardBots.map((b) => (
-        <BotSettingsForm
-          key={b.name}
-          name={b.name}
-          loadError={loadErrors[b.name]}
-          settings={drafts[b.name]}
-          onChange={(values) =>
-            setDrafts((prev) => {
-              const cur = prev[b.name]
-              if (!cur) return prev
-              return { ...prev, [b.name]: { ...cur, values } }
-            })
-          }
+        <NativeApiFields
+          value={draft.bot.api}
+          onChange={(api) => setDraft({ ...draft, bot: { ...draft.bot, api } })}
         />
-      ))}
+      </div>
+
+      {/* Author-bot (Mortal) manifest settings — only when such bots are
+          installed from a previous run. */}
+      {installed === null ? (
+        <div className="text-sm text-muted-foreground">{t('setup.configure.loading')}</div>
+      ) : wizardBots.length > 0 ? (
+        <>
+          <p className="text-sm text-muted-foreground">
+            {t('setup.configure.normal_desc')}
+          </p>
+
+          {/* The Mortal weights bundled in the GitHub release are a
+              placeholder forced by GitHub's file-size limit — they prove
+              the install works but aren't strong enough for real play.
+              Point users at Discord for the real weights. */}
+          <div className="rounded-md border border-indigo-500/40 bg-indigo-500/10 p-3 grid gap-2">
+            <div className="flex items-center gap-2 text-indigo-200 font-semibold text-sm">
+              <DiscordMark className="h-4 w-4" />
+              {t('setup.configure.models_title')}
+            </div>
+            <p className="text-sm text-indigo-100/90">
+              {t('setup.configure.models_body')}
+            </p>
+            <div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openExternal(AKAGI_DISCORD_URL)}
+              >
+                <DiscordMark className="h-4 w-4 mr-1.5" />
+                {t('setup.configure.models_btn')}
+              </Button>
+            </div>
+          </div>
+          {wizardBots.map((b) => (
+            <BotSettingsForm
+              key={b.name}
+              name={b.name}
+              loadError={loadErrors[b.name]}
+              settings={drafts[b.name]}
+              onChange={(values) =>
+                setDrafts((prev) => {
+                  const cur = prev[b.name]
+                  if (!cur) return prev
+                  return { ...prev, [b.name]: { ...cur, values } }
+                })
+              }
+            />
+          ))}
+        </>
+      ) : null}
     </div>
   )
 }
