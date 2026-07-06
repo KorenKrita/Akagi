@@ -93,18 +93,30 @@ pub fn reclaim_singleton(profile: &Path) -> Result<()> {
     reclaim_singleton_inner(profile)
 }
 
+/// Process names of the Chromium-family browsers the backend can drive: every
+/// browser `detect::detect_system_browsers` can return (chrome.exe,
+/// msedge.exe, brave.exe, Chromium's chrome.exe), Chrome-for-Testing (also
+/// chrome.exe), plus common ones a user may point `capture.chromium.
+/// executable` at. The reclaim matcher only kills processes whose name is in
+/// this family — the `--user-data-dir` match alone could hit an unrelated
+/// wrapper (e.g. a cmd.exe that *launched* the browser carries the same
+/// argument but no `--type=`).
+#[cfg(windows)]
+const BROWSER_NAME_HINTS: [&str; 6] = ["chrome", "chromium", "msedge", "brave", "vivaldi", "opera"];
+
 /// True when a process with this `name` and command-line `cmd` is the **browser
-/// process** of the controlled Chromium for `profile`: it carries our
-/// `--user-data-dir=<profile>` and is not a `--type=…` renderer/GPU child
-/// (killing the browser process takes its children down with it). Pure so the
-/// matching is unit-testable without a live browser.
+/// process** of the controlled Chromium for `profile`: a Chromium-family
+/// process name, carrying our `--user-data-dir=<profile>`, and not a
+/// `--type=…` renderer/GPU child (killing the browser process takes its
+/// children down with it). Pure so the matching is unit-testable without a
+/// live browser.
 ///
 /// Windows-only: this is the reclaim mechanism there because Chrome writes no
 /// SingletonLock file. Unix uses the lock symlink instead (see module docs).
 #[cfg(windows)]
 fn is_controlled_browser(name: &str, cmd: &[String], profile: &Path) -> bool {
     let name = name.to_ascii_lowercase();
-    if !name.contains("chrome") && !name.contains("chromium") {
+    if !BROWSER_NAME_HINTS.iter().any(|h| name.contains(h)) {
         return false;
     }
     let needle = format!("--user-data-dir={}", profile.display());
@@ -426,8 +438,20 @@ mod tests {
         );
         assert!(!is_controlled_browser("chrome.exe", &[other], profile));
 
-        // A non-chrome process is never matched, even with the arg.
-        assert!(!is_controlled_browser("firefox", &[udir], profile));
+        // A non-browser process is never matched, even with the arg — e.g.
+        // the cmd.exe that launched the browser carries the same argument.
+        assert!(!is_controlled_browser("firefox", &[udir.clone()], profile));
+        assert!(!is_controlled_browser("cmd.exe", &[udir.clone()], profile));
+
+        // Regression: every browser family the backend can auto-detect must
+        // match, not just chrome/chromium — a surviving msedge.exe went
+        // unreclaimed and capture timed out waiting for the CDP endpoint.
+        for name in ["msedge.exe", "brave.exe", "vivaldi.exe", "opera.exe"] {
+            assert!(
+                is_controlled_browser(name, &[udir.clone()], profile),
+                "{name} must be reclaimable"
+            );
+        }
     }
 
     /// Real end-to-end check (run with `--ignored` and `AKAGI_TEST_CHROME` set
