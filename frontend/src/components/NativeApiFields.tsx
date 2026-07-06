@@ -1,6 +1,16 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CheckCircle2, RefreshCw, Eye, EyeOff, Ticket, Activity } from 'lucide-react'
+import {
+  CheckCircle2,
+  RefreshCw,
+  Eye,
+  EyeOff,
+  Ticket,
+  Activity,
+  ShoppingCart,
+  AlertTriangle,
+  XCircle,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,6 +24,8 @@ import {
 } from '@/components/ui/dialog'
 import { invoke } from '@/lib/tauri'
 import { toast } from '@/components/ui/sonner'
+import { PurchaseDialog } from '@/components/PurchaseDialog'
+import { usePurchaseStore, type PurchasePhase } from '@/stores/purchaseStore'
 import type { KeyStatus, ModelInfo, NativeApiConfig, RedeemResponse } from '@/types'
 
 /**
@@ -50,6 +62,8 @@ export function NativeApiFields({
   const [status, setStatus] = useState<KeyStatus | null>(null)
   const [models, setModels] = useState<ModelInfo[] | null>(null)
   const [redeemOpen, setRedeemOpen] = useState(false)
+  const [buyOpen, setBuyOpen] = useState(false)
+  const purchasePhase = usePurchaseStore((s) => s.phase)
   const [err, setErr] = useState<string | null>(null)
 
   const set = (patch: Partial<NativeApiConfig>) => onChange({ ...value, ...patch })
@@ -128,6 +142,22 @@ export function NativeApiFields({
       setErr(String(e))
     } finally {
       setLoadingModels(false)
+    }
+  }
+
+  // Shared sink for a freshly-minted key (redeemed code or purchase): the
+  // code/key is single-use and shown once, so reflect it in the edited value
+  // immediately and let the caller persist it (Bots page) before it can be
+  // lost. The Setup wizard omits `onKeyMinted` and persists on Finish.
+  const adoptNewKey = async (key: string) => {
+    const nextApi = { ...value, key }
+    onChange(nextApi)
+    if (onKeyMinted) {
+      try {
+        await onKeyMinted(nextApi)
+      } catch (e) {
+        toast.error(t('bots.api.save_failed'), { description: String(e) })
+      }
     }
   }
 
@@ -283,30 +313,63 @@ export function NativeApiFields({
           <Ticket className="h-4 w-4" />
           {t('bots.api.redeem')}
         </Button>
+        <Button variant="outline" size="sm" onClick={() => setBuyOpen(true)} className="gap-1.5">
+          <ShoppingCart className="h-4 w-4" />
+          {t('bots.api.buy')}
+        </Button>
       </div>
+
+      {purchasePhase !== 'idle' && !buyOpen && (
+        <PurchaseChip phase={purchasePhase} onOpen={() => setBuyOpen(true)} />
+      )}
 
       {redeemOpen && (
         <RedeemDialog
           baseUrl={value.base_url}
           currentKey={value.key}
           onClose={() => setRedeemOpen(false)}
-          onNewKey={async (key) => {
-            // A redeemed code is single-use and the raw key is shown once, so
-            // reflect it in the edited value immediately and let the caller
-            // persist it (Bots page) before it can be lost.
-            const nextApi = { ...value, key }
-            onChange(nextApi)
-            if (onKeyMinted) {
-              try {
-                await onKeyMinted(nextApi)
-              } catch (e) {
-                toast.error(t('bots.api.save_failed'), { description: String(e) })
-              }
-            }
-          }}
+          onNewKey={(key) => void adoptNewKey(key)}
+        />
+      )}
+
+      {buyOpen && (
+        <PurchaseDialog
+          baseUrl={value.base_url}
+          currentKey={value.key}
+          onClose={() => setBuyOpen(false)}
+          onNewKey={(key) => void adoptNewKey(key)}
         />
       )}
     </div>
+  )
+}
+
+/** Compact status row for a purchase running with its dialog closed, so the
+ *  buyer can find their way back to it (or see that it completed). */
+function PurchaseChip({ phase, onOpen }: { phase: PurchasePhase; onOpen: () => void }) {
+  const { t } = useTranslation()
+  const [label, icon] =
+    phase === 'redeem_failed'
+      ? [t('bots.api.buy_chip_action'), <AlertTriangle key="i" className="h-4 w-4 text-amber-400" />]
+      : phase === 'done'
+        ? [t('bots.api.buy_chip_done'), <CheckCircle2 key="i" className="h-4 w-4 text-emerald-400" />]
+        : phase === 'delivered'
+          ? [t('bots.api.buy_chip_delivered'), <CheckCircle2 key="i" className="h-4 w-4 text-emerald-400" />]
+          : phase === 'failed'
+            ? [t('bots.api.buy_chip_failed'), <XCircle key="i" className="h-4 w-4 text-red-400" />]
+            : [
+                t('bots.api.buy_chip_pending'),
+                <RefreshCw key="i" className="h-4 w-4 animate-spin text-muted-foreground" />,
+              ]
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-fit items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-accent"
+    >
+      {icon}
+      {label}
+    </button>
   )
 }
 

@@ -12,6 +12,7 @@ pub mod install;
 pub mod manager;
 pub mod manifest;
 pub mod native;
+pub mod purchase;
 pub mod registry;
 pub mod runner;
 pub mod runtime;

@@ -1368,6 +1368,64 @@ pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::H
         .map_err(|e| format!("{e:#}"))
 }
 
+// ---------- Self-serve key purchase (PayPal, see native_bot/API.md §13) ----------
+//
+// Thin passthroughs to `crate::bot::purchase`. The purchase state machine
+// (create → open approve_url → poll → redeem/store key) lives in the
+// frontend's purchase store; these commands are stateless like the rest of
+// the native-API family and all run without auth — the buyer is acquiring
+// a key, so they don't hold one yet.
+
+/// Start a one-time purchase (`POST /paypal/create-order`, no auth). Not
+/// idempotent — each call opens a fresh PayPal order.
+#[tauri::command]
+pub async fn native_api_create_order(
+    base_url: String,
+    product: String,
+) -> CmdResult<crate::bot::purchase::CreatedOrder> {
+    crate::bot::purchase::create_order(&base_url, &product)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Poll a one-time purchase (`POST /paypal/order-result`, no auth).
+/// Idempotent; returns `pending` until paid, then `ready` with the code.
+#[tauri::command]
+pub async fn native_api_order_result(
+    base_url: String,
+    order_id: String,
+    claim: String,
+) -> CmdResult<crate::bot::purchase::OrderResult> {
+    crate::bot::purchase::order_result(&base_url, &order_id, &claim)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Start a subscription (`POST /paypal/create-subscription`, no auth). Not
+/// idempotent — each call opens a fresh PayPal subscription.
+#[tauri::command]
+pub async fn native_api_create_subscription(
+    base_url: String,
+    product: String,
+) -> CmdResult<crate::bot::purchase::CreatedSubscription> {
+    crate::bot::purchase::create_subscription(&base_url, &product)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Poll a subscription (`POST /paypal/subscription-result`, no auth). On
+/// `ready` the response carries the API key directly (no redeem step).
+#[tauri::command]
+pub async fn native_api_subscription_result(
+    base_url: String,
+    subscription_id: String,
+    claim: String,
+) -> CmdResult<crate::bot::purchase::SubscriptionResult> {
+    crate::bot::purchase::subscription_result(&base_url, &subscription_id, &claim)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 fn persist_config(config: &AppConfig, path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1426,6 +1484,10 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::native_api_key_status,
             $crate::ipc::commands::native_api_models,
             $crate::ipc::commands::native_api_health,
+            $crate::ipc::commands::native_api_create_order,
+            $crate::ipc::commands::native_api_order_result,
+            $crate::ipc::commands::native_api_create_subscription,
+            $crate::ipc::commands::native_api_subscription_result,
         ]
     };
 }

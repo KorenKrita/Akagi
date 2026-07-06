@@ -261,14 +261,15 @@ fn build_http() -> Result<reqwest::Client> {
         .context("build inference-API http client")
 }
 
-fn normalize_base(base_url: &str) -> String {
+pub(crate) fn normalize_base(base_url: &str) -> String {
     base_url.trim().trim_end_matches('/').to_string()
 }
 
 /// Turn a non-2xx response into a descriptive error, surfacing the server's
 /// generic `{"error": "..."}` message and any `Retry-After` hint. Success
 /// passes the response through untouched for the caller to deserialize.
-async fn check(resp: reqwest::Response, what: &str) -> Result<reqwest::Response> {
+/// Shared with the purchase client ([`crate::bot::purchase`]).
+pub(crate) async fn check(resp: reqwest::Response, what: &str) -> Result<reqwest::Response> {
     let status = resp.status();
     if status.is_success() {
         return Ok(resp);
