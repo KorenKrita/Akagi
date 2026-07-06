@@ -270,6 +270,48 @@ auto-migrated into `active_4p` on load.
 
 ## Bots
 
+### Built-in bot (no install)
+
+Akagi ships a **built-in, pure-Rust bot** that runs entirely in-process — no
+Python, no libriichi, no `uv sync`, nothing to download. It's the out-of-the-box
+default for both modes (`bot.active_4p = "akagi-native"`,
+`bot.active_3p = "akagi-native3p"`) and appears at the top of the **Bots** tab,
+always "ready".
+
+It's a small neural net behavior-cloned from Tenhou logs (weights are embedded
+in the binary), so its strength is **modest by design** — a sensible default,
+not a top-tier engine.
+
+### Cloud inference (built-in bot)
+
+The built-in bot can optionally hand each decision to a **remote inference
+server** instead of running its embedded model — a stronger, hosted model
+reached over the network. The embedded local model stays loaded as an automatic
+**fallback**: if the server is unreachable, rate-limited, or the key is invalid,
+the bot silently plays the local model's move so a live game never stalls.
+
+Configure it on the **Bots** tab, under **Cloud inference (built-in bot)**:
+
+- **Use cloud inference API** — the master toggle. Off (default) ⇒ the fully
+  offline local model.
+- **Server URL** — the inference server. Defaults to `https://mjapi.shinkuan.me`;
+  point it at any host (`http://host:8080`, `https://host`) if you self-host.
+- **API key** — a 32-character key.
+- **4-player / 3-player model** — the model id to request per mode (e.g.
+  `4p-ot2` / `3p-ot`); leave empty to use the server's default. **Fetch models**
+  lists the ids your key may use.
+
+Buttons let you **Check key** (plan, expiry, today's usage vs. daily quota, rate
+limit), **Redeem code** (turn a prepaid code into a key — mint a new one, or add
+time to your current key), and **Health check** the server. To stay within the
+server's rate limit, the bot queries only at genuine decision points — it
+decides locally whether a call is even possible — never on every opponent
+discard.
+
+The settings persist under `[bot.api]` in `config.toml` (`enabled`, `base_url`,
+`key`, `model_4p`, `model_3p`). A server URL + API key are distributed through
+the [Discord server](https://discord.gg/Z2wjXUK8bN).
+
 ### Install a bot
 
 The Setup wizard or the **Bots** tab can install bots straight from a

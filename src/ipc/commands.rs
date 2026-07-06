@@ -188,12 +188,31 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
     Ok(())
 }
 
+/// Synthetic `BotInfo` entries for the built-in native bots. They have no
+/// directory, no `pyproject.toml`, and are always "ready" (weights are embedded
+/// in the binary — nothing to install).
+fn native_bot_infos() -> Vec<BotInfo> {
+    [crate::bot::native::NATIVE_4P, crate::bot::native::NATIVE_3P]
+        .into_iter()
+        .map(|name| BotInfo {
+            name: name.to_string(),
+            dir: String::new(),
+            has_pyproject: false,
+            env_ready: true,
+            manifest: None,
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn list_bots(state: State<'_, AppState>) -> CmdResult<Vec<BotInfo>> {
     let dir = state.config.read().await.bot.dir.clone();
     let resolved = resolve_dir(Path::new(&dir));
     let registry = BotRegistry::scan(&resolved).map_err(|e| format!("scan bots: {e:#}"))?;
-    Ok(registry.entries().iter().map(entry_to_info).collect())
+    // Built-in native bots first, then discovered `mjai_bot/*` bots.
+    let mut bots = native_bot_infos();
+    bots.extend(registry.entries().iter().map(entry_to_info));
+    Ok(bots)
 }
 
 /// Read the merged settings (manifest + on-disk values) for one bot.
@@ -265,7 +284,9 @@ pub async fn set_active_bot(
     name: String,
     state: State<'_, AppState>,
 ) -> CmdResult<()> {
-    if !name.is_empty() {
+    // Built-in native bots are always available (no venv); skip the registry
+    // + environment checks that only apply to Python `mjai_bot/*` bots.
+    if !name.is_empty() && !crate::bot::native::is_native(&name) {
         let dir = state.config.read().await.bot.dir.clone();
         let resolved = resolve_dir(Path::new(&dir));
         let registry = BotRegistry::scan(&resolved).map_err(|e| format!("scan bots: {e:#}"))?;
@@ -1293,6 +1314,60 @@ pub async fn apply_update(
     crate::updater::apply::download_and_apply(&app, &info).await
 }
 
+// ---------- Built-in bot cloud inference (native API) ----------
+//
+// Thin passthroughs to `crate::bot::api`. They take the server URL / key as
+// explicit args (rather than reading them from config) so the frontend can
+// verify a key before saving it, and redeem a code before any key exists.
+
+/// Redeem a prepaid code (`POST /v3/redeem`, no auth). By default mints a new
+/// key; pass `renew_key` to stack time onto a key you already hold.
+#[tauri::command]
+pub async fn native_api_redeem(
+    base_url: String,
+    code: String,
+    email: Option<String>,
+    renew_key: Option<String>,
+) -> CmdResult<crate::bot::api::RedeemResponse> {
+    crate::bot::api::redeem(&base_url, &code, email.as_deref(), renew_key.as_deref())
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Fetch a key's plan / expiry / live limits (`GET /v3/key`).
+#[tauri::command]
+pub async fn native_api_key_status(
+    base_url: String,
+    key: String,
+) -> CmdResult<crate::bot::api::KeyStatus> {
+    crate::bot::api::ApiClient::new(&base_url, &key)
+        .map_err(|e| format!("{e:#}"))?
+        .key_status()
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// List the models a key's plan may use (`GET /v3/models`).
+#[tauri::command]
+pub async fn native_api_models(
+    base_url: String,
+    key: String,
+) -> CmdResult<Vec<crate::bot::api::ModelInfo>> {
+    crate::bot::api::ApiClient::new(&base_url, &key)
+        .map_err(|e| format!("{e:#}"))?
+        .models()
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Liveness + per-model queue depth (`GET /healthz`, no auth).
+#[tauri::command]
+pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::Health> {
+    crate::bot::api::health(&base_url)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 fn persist_config(config: &AppConfig, path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1347,6 +1422,10 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::delete_game_history_entry,
             $crate::ipc::commands::check_for_update,
             $crate::ipc::commands::apply_update,
+            $crate::ipc::commands::native_api_redeem,
+            $crate::ipc::commands::native_api_key_status,
+            $crate::ipc::commands::native_api_models,
+            $crate::ipc::commands::native_api_health,
         ]
     };
 }
@@ -1374,10 +1453,10 @@ mod tests {
         assert_eq!(back.proxy.addr, "127.0.0.1:9999");
     }
 
-    /// Regression: the first-run wizard ships a fresh-install Akagi with
-    /// `bot.enabled = false` (defaults), then calls `update_config` to
-    /// flip it to `true`. Before the fix the bot manager was never
-    /// spawned in this process — the user had to relaunch the app.
+    /// Regression: when a user has `bot.enabled = false` and then flips it to
+    /// `true` (e.g. via the wizard or Settings), `update_config` must spawn the
+    /// bot manager in-process. Before the fix the manager was never spawned on
+    /// that flip — the user had to relaunch the app.
     /// `claim_bot_manager_spawn` is the gate that makes
     /// `update_config` spawn the manager exactly once on that flip.
     #[test]

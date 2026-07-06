@@ -242,7 +242,8 @@
     "none_paren": "（無）",
     "start": "啟動",
     "stop": "停止",
-    "restart": "重新啟動"
+    "restart": "重新啟動",
+    "close": "關閉"
   },
   "settings": {
     "title": "設定",
@@ -458,7 +459,52 @@
     "install_env": "安裝環境",
     "install_env_tooltip": "建立此 Bot 的 Python 環境（uv sync），之後才能啟用",
     "installing_env": "安裝中…",
-    "activate_failed": "無法切換啟用中的 Bot"
+    "activate_failed": "無法切換啟用中的 Bot",
+    "native_4p": "Akagi 內建 (四人)",
+    "native_3p": "Akagi 內建 (三人)",
+    "native_builtin": "內建 · 免安裝",
+    "native_version": "內建",
+    "api": {
+      "title": "雲端推論(內建 Bot)",
+      "desc": "可選擇將內建 Bot 的每一步交給遠端推論伺服器,使用更強的模型。若伺服器無法連線,會自動退回離線的本機模型。",
+      "enable": "使用雲端推論 API",
+      "enable_hint": "開啟後,內建 Bot 每步都會向伺服器詢問;發生錯誤時會退回本機模型。",
+      "base_url": "伺服器網址",
+      "key": "API 金鑰",
+      "show_key": "顯示金鑰",
+      "hide_key": "隱藏金鑰",
+      "model_4p": "四人模型",
+      "model_3p": "三人模型",
+      "model_hint": "伺服器提供的模型 ID(例:4p-ot2 / 3p-ot)。留空則使用伺服器預設。",
+      "models_title": "可用模型 — 點擊填入",
+      "models_empty": "此金鑰沒有可用的模型。",
+      "plan": "方案",
+      "expires": "到期時間",
+      "usage": "今日用量",
+      "rpm": "每分鐘速率",
+      "topk": "候選數(top-k)",
+      "saved": "已儲存雲端推論設定",
+      "save_failed": "儲存設定失敗",
+      "check_key": "查詢金鑰",
+      "checking": "查詢中…",
+      "fetch_models": "取得模型",
+      "health": "健康檢查",
+      "health_ok": "伺服器:{{status}}",
+      "redeem": "兌換序號",
+      "need_url_key": "請先輸入伺服器網址與 API 金鑰。",
+      "need_url": "請先輸入伺服器網址。",
+      "redeem_title": "兌換序號",
+      "redeem_code": "兌換碼",
+      "redeem_email": "電子郵件(選填)",
+      "redeem_email_hint": "將金鑰綁定帳號以便一併管理。留空則以匿名方式兌換。",
+      "redeem_renew": "為目前金鑰加值",
+      "redeem_renew_hint": "將時間疊加到上方已儲存的金鑰,而非發放新金鑰。",
+      "redeem_submit": "兌換",
+      "redeeming": "兌換中…",
+      "redeem_ok": "已兌換序號",
+      "redeem_new_key": "已發放並儲存新的 {{plan}} 金鑰(…{{last4}}),可立即使用。",
+      "redeemed_extended": "金鑰 …{{last4}} 已延長。新到期時間:{{expires}}。"
+    }
   },
   "overview": {
     "title": "總覽",
@@ -515,7 +561,11 @@
   "status": {
     "connected": "已連線",
     "events_live": "事件：即時",
-    "analysis_live": "分析：即時"
+    "analysis_live": "分析：即時",
+    "api_active": "線上 API：即時",
+    "api_degraded": "線上 API：離線",
+    "api_active_hint": "內建 Bot 正在使用線上推論 API。",
+    "api_degraded_hint": "無法連線到線上推論 API —— 內建 Bot 已改用本機模型。"
   },
   "platform": {
     "majsoul": "雀魂",
