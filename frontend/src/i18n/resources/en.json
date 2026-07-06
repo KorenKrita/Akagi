@@ -560,12 +560,18 @@
   },
   "status": {
     "connected": "Connected",
-    "events_live": "Events: Live",
-    "analysis_live": "Analysis: Live",
     "api_active": "Online API: Live",
     "api_degraded": "Online API: Offline",
     "api_active_hint": "The built-in bot is using the online inference API.",
-    "api_degraded_hint": "The online inference API is unreachable — the built-in bot is using the local model instead."
+    "api_degraded_hint": "The online inference API is unreachable — the built-in bot is using the local model instead.",
+    "connecting": "Connecting…",
+    "disconnected": "Disconnected",
+    "capture_error": "Capture error",
+    "bot_idle": "Bot: Idle",
+    "bot_loading": "Bot: Loading",
+    "bot_ready": "Bot: Ready",
+    "bot_error": "Bot: Error",
+    "bot_stopped": "Bot: Stopped"
   },
   "platform": {
     "majsoul": "Mahjong Soul",

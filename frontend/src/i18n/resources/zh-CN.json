@@ -560,12 +560,18 @@
   },
   "status": {
     "connected": "已连接",
-    "events_live": "事件：实时",
-    "analysis_live": "分析：实时",
     "api_active": "在线 API：实时",
     "api_degraded": "在线 API：离线",
     "api_active_hint": "内建 Bot 正在使用在线推理 API。",
-    "api_degraded_hint": "无法连接到在线推理 API —— 内建 Bot 已改用本地模型。"
+    "api_degraded_hint": "无法连接到在线推理 API —— 内建 Bot 已改用本地模型。",
+    "connecting": "连接中…",
+    "disconnected": "未连接",
+    "capture_error": "捕获错误",
+    "bot_idle": "Bot：待命",
+    "bot_loading": "Bot：加载中",
+    "bot_ready": "Bot：就绪",
+    "bot_error": "Bot：错误",
+    "bot_stopped": "Bot：已停止"
   },
   "platform": {
     "majsoul": "雀魂",
