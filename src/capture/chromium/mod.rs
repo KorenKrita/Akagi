@@ -80,14 +80,15 @@ impl CaptureBackend for ChromiumBackend {
         let profile_dir = profile::resolve_profile_dir(&self.cfg.user_data_dir)?;
         std::fs::create_dir_all(&profile_dir)
             .with_context(|| format!("creating chromium profile dir {}", profile_dir.display()))?;
-        // If a browser we previously launched is still running with this
-        // profile (e.g. the user closed Akagi but left Chrome open), terminate
-        // it before relaunching. Spawning a second `--user-data-dir` instance
-        // while the first is alive only opens a duplicate tab in it and then
-        // exits, leaving capture with no DevTools endpoint. (Two Akagi
-        // instances against one profile is unsupported.) `reclaim_singleton`
-        // blocks while waiting for the owner to exit, so run it off the async
-        // runtime.
+        // A browser we previously launched may still be running with this
+        // profile (e.g. the user closed Akagi but left Chrome open). Spawning a
+        // second `--user-data-dir` instance while the first is alive only opens
+        // a duplicate tab in it and then exits, leaving capture with no DevTools
+        // endpoint. (Two Akagi instances against one profile is unsupported.)
+        // `reclaim_singleton` finds and terminates that browser before we
+        // relaunch — via the `SingletonLock` symlink on Unix, or, on Windows
+        // (where Chrome writes no such file), by matching its command-line
+        // `--user-data-dir`. It blocks, so run it off the async runtime.
         {
             let pd = profile_dir.clone();
             tokio::task::spawn_blocking(move || profile::reclaim_singleton(&pd))
