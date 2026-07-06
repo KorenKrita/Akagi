@@ -24,6 +24,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 #[cfg(windows)]
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+#[cfg(windows)]
+use crate::util::NoConsoleWindow;
 use tracing::{debug, info, warn};
 
 /// How long to wait for a polite SIGTERM/`taskkill` to take effect before
@@ -303,6 +305,7 @@ fn process_alive_windows(pid: u32) -> bool {
     // line if the PID is gone. Avoids pulling in `windows-sys` for one syscall.
     let out = match std::process::Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+        .no_console_window()
         .output()
     {
         Ok(o) => o,
@@ -320,6 +323,7 @@ fn terminate_pid_windows(pid: u32) -> bool {
         .args(["/PID", &pid.to_string()])
         .stderr(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
+        .no_console_window()
         .status();
     if wait_until_dead_windows(pid, TERM_GRACE) {
         return true;
@@ -329,6 +333,7 @@ fn terminate_pid_windows(pid: u32) -> bool {
         .args(["/F", "/PID", &pid.to_string()])
         .stderr(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
+        .no_console_window()
         .status();
     wait_until_dead_windows(pid, KILL_GRACE)
 }

@@ -16,6 +16,8 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 use tracing::{debug, warn};
+#[cfg(windows)]
+use crate::util::NoConsoleWindow;
 
 const DEVTOOLS_FILE: &str = "DevToolsActivePort";
 const PORT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -317,6 +319,7 @@ pub async fn terminate(child: &mut Child) {
                 .args(["/PID", &pid.to_string()])
                 .stderr(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
+                .no_console_window()
                 .status();
         }
     }
