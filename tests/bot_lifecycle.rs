@@ -119,7 +119,7 @@ async fn loading_emits_syncing_then_spawning_then_ready() {
     let mut notify_rx = notify.subscribe();
 
     let mut mgr = BotManager::new(
-        runtime,
+        Some(runtime),
         registry_root.path().to_path_buf(),
         cfg_with("echo"),
         response_bus,
@@ -210,7 +210,7 @@ async fn second_spawn_skips_uv_sync_via_stamp() {
         let status_bus = bot_status_bus();
         let notify = notify_bus();
         let mut mgr = BotManager::new(
-            runtime.clone(),
+            Some(runtime.clone()),
             registry_root.path().to_path_buf(),
             cfg_with("echo"),
             response_bus,
@@ -241,7 +241,7 @@ async fn second_spawn_skips_uv_sync_via_stamp() {
     let notify = notify_bus();
     let mut status_rx = status_bus.subscribe();
     let mut mgr = BotManager::new(
-        runtime,
+        Some(runtime),
         registry_root.path().to_path_buf(),
         cfg_with("echo"),
         response_bus,
