@@ -149,8 +149,10 @@ export function NativeApiFields({
   // code/key is single-use and shown once, so reflect it in the edited value
   // immediately and let the caller persist it (Bots page) before it can be
   // lost. The Setup wizard omits `onKeyMinted` and persists on Finish.
+  // Also flips `enabled` on: whoever just paid for (or redeemed) a key wants
+  // it used — empty model slots are fine, the server picks its defaults.
   const adoptNewKey = async (key: string) => {
-    const nextApi = { ...value, key }
+    const nextApi = { ...value, key, enabled: true }
     onChange(nextApi)
     if (onKeyMinted) {
       try {

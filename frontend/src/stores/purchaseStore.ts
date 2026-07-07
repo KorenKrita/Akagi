@@ -27,7 +27,8 @@ import type {
 // A paid key must never be lost. When the key arrives, it is delivered to the
 // mounted purchase dialog (which routes it through the same onNewKey path as
 // the redeem dialog); if no dialog is mounted at that moment it is persisted
-// straight into `bot.api.key` on disk as a fallback.
+// straight into `bot.api.key` on disk as a fallback. Either way the API is
+// switched on (`enabled: true`) — buying a key implies wanting to use it.
 
 const POLL_MS = 3000
 /** Transient-error backoff cap. 404 (wrong claim) is terminal, never retried. */
@@ -140,7 +141,9 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
     } else {
       const cfg = useConfigStore.getState().config
       if (cfg) {
-        void persistApiConfig({ ...cfg.bot.api, key }).then(
+        // `enabled: true` matches the dialog path (adoptNewKey): a bought key
+        // should start serving inference without a manual toggle.
+        void persistApiConfig({ ...cfg.bot.api, key, enabled: true }).then(
           () => set({ persistedFallback: true }),
           () => {
             /* key stays visible in the store; email is the backstop */
