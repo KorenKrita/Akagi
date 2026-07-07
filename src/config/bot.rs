@@ -18,7 +18,7 @@ pub struct NativeApiConfig {
     /// `base_url` and `key` are also set (see [`NativeApiConfig::is_active`]).
     pub enabled: bool,
     /// Base URL of the inference server, e.g. `https://host` or
-    /// `http://192.168.0.107:8080`. A trailing slash is tolerated.
+    /// `http://127.0.0.1:8080`. A trailing slash is tolerated.
     pub base_url: String,
     /// Bearer API key (32 alphanumeric chars). Obtain one by redeeming a code.
     pub key: String,

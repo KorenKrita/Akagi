@@ -239,15 +239,17 @@ mod tests {
 
     /// The nested `[bot.api]` table must survive a TOML round-trip inside the
     /// full `AppConfig` — a table field serialized among scalar `[bot]` keys is
-    /// an easy way to get "table before value" ordering wrong. Uses fake creds.
+    /// an easy way to get "table before value" ordering wrong. Pure string
+    /// round-trip, no network: every value is a placeholder (loopback URL,
+    /// fake key, made-up model ids).
     #[test]
     fn bot_api_section_round_trips_through_toml() {
         let mut cfg = AppConfig::default();
         cfg.bot.api.enabled = true;
-        cfg.bot.api.base_url = "http://192.168.0.107:8080".into();
+        cfg.bot.api.base_url = "http://127.0.0.1:8080".into();
         cfg.bot.api.key = "test-key-not-real".into();
-        cfg.bot.api.model_4p = "4p-ot2".into();
-        cfg.bot.api.model_3p = "3p-ot".into();
+        cfg.bot.api.model_4p = "4p-model".into();
+        cfg.bot.api.model_3p = "3p-model".into();
 
         let body = toml::to_string_pretty(&cfg).unwrap();
         assert!(
@@ -257,13 +259,13 @@ mod tests {
 
         let back: AppConfig = toml::from_str(&body).unwrap();
         assert!(back.bot.api.enabled);
-        assert_eq!(back.bot.api.base_url, "http://192.168.0.107:8080");
+        assert_eq!(back.bot.api.base_url, "http://127.0.0.1:8080");
         assert_eq!(back.bot.api.key, "test-key-not-real");
-        assert_eq!(back.bot.api.model_4p, "4p-ot2");
-        assert_eq!(back.bot.api.model_3p, "3p-ot");
+        assert_eq!(back.bot.api.model_4p, "4p-model");
+        assert_eq!(back.bot.api.model_3p, "3p-model");
         assert!(back.bot.api.is_active());
-        assert_eq!(back.bot.api.model_for(3), "3p-ot");
-        assert_eq!(back.bot.api.model_for(4), "4p-ot2");
+        assert_eq!(back.bot.api.model_for(3), "3p-model");
+        assert_eq!(back.bot.api.model_for(4), "4p-model");
     }
 
     /// A legacy config file without any `[bot.api]` section still parses, with
