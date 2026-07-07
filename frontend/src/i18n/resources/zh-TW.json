@@ -475,7 +475,7 @@
       "hide_key": "隱藏金鑰",
       "model_4p": "四人模型",
       "model_3p": "三人模型",
-      "model_hint": "伺服器提供的模型 ID(例:4p-ot2 / 3p-ot)。留空則使用伺服器預設。",
+      "model_hint": "伺服器提供的模型 ID。留空則使用伺服器預設。",
       "models_title": "可用模型 — 點擊填入",
       "models_empty": "此金鑰沒有可用的模型。",
       "plan": "方案",

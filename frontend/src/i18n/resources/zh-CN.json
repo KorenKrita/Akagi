@@ -475,7 +475,7 @@
       "hide_key": "隐藏密钥",
       "model_4p": "四人模型",
       "model_3p": "三人模型",
-      "model_hint": "服务器提供的模型 ID(例:4p-ot2 / 3p-ot)。留空则使用服务器默认。",
+      "model_hint": "服务器提供的模型 ID。留空则使用服务器默认。",
       "models_title": "可用模型 — 点击填入",
       "models_empty": "此密钥没有可用的模型。",
       "plan": "方案",

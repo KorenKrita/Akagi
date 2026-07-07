@@ -475,7 +475,7 @@
       "hide_key": "Hide key",
       "model_4p": "4-player model",
       "model_3p": "3-player model",
-      "model_hint": "Model id from the server (e.g. 4p-ot2 / 3p-ot). Leave empty to use the server's default.",
+      "model_hint": "Model id from the server. Leave empty to use the server's default.",
       "models_title": "Available models — click to fill",
       "models_empty": "No models available for this key.",
       "plan": "Plan",
