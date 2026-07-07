@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn models_wrapper_parses() {
-        let raw = r#"{"models":[{"id":"4p-ot2","game":"4p","desc":"4p Mortal v4 (ot2), 192x40"},{"id":"3p-ot","game":"3p","desc":"3p Mortal v4"}]}"#;
+        let raw = r#"{"models":[{"id":"4p-ot2","game":"4p","desc":"4p Mortal v4 (ot2), 192x40"},{"id":"3p-ot2","game":"3p","desc":"3p Mortal v4"}]}"#;
         #[derive(Deserialize)]
         struct Wrap {
             #[serde(default)]
