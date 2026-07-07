@@ -237,7 +237,7 @@ export function NativeApiFields({
           <Input
             value={value.model_4p}
             onChange={(e) => set({ model_4p: e.target.value })}
-            placeholder="4p-ot2"
+            placeholder="4p-model"
             autoComplete="off"
             spellCheck={false}
             className="font-mono"
@@ -248,7 +248,7 @@ export function NativeApiFields({
           <Input
             value={value.model_3p}
             onChange={(e) => set({ model_3p: e.target.value })}
-            placeholder="3p-ot"
+            placeholder="3p-model"
             autoComplete="off"
             spellCheck={false}
             className="font-mono"
