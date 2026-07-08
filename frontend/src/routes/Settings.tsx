@@ -53,7 +53,7 @@ import {
 import type { AppConfig, CaptureMode, DetectedBrowser, PlatformKind } from '@/types'
 
 export function Settings() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const stored = useConfigStore((s) => s.config)
   const setStored = useConfigStore((s) => s.setConfig)
   const [draft, setDraft] = useState<AppConfig | null>(stored)
@@ -154,10 +154,14 @@ export function Settings() {
           <CardTitle>{t('settings.general')}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4">
+          {/* Language applies instantly and self-persists to localStorage via
+              i18next, mirroring the setup wizard and the sidebar switcher.
+              It is intentionally decoupled from the config draft/save flow —
+              nothing reads config.general.language to drive the UI language. */}
           <Field label={t('settings.language')}>
             <Select
-              value={draft.general.language}
-              onValueChange={(v) => setDraft({ ...draft, general: { ...draft.general, language: v } })}
+              value={i18n.language}
+              onValueChange={(v) => void i18n.changeLanguage(v)}
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
