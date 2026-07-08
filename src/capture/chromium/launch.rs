@@ -201,6 +201,40 @@ pub async fn wait_for_devtools_endpoint(
     }
 }
 
+/// Port of a `ws://127.0.0.1:PORT/devtools/...` endpoint URL.
+pub fn endpoint_port(ws_url: &str) -> Option<u16> {
+    let rest = ws_url.strip_prefix("ws://")?;
+    let hostport = rest.split('/').next()?;
+    hostport.rsplit(':').next()?.parse().ok()
+}
+
+/// True when a Chromium DevTools HTTP endpoint still answers on `port`.
+///
+/// Used to distinguish a real browser death from a **launcher handoff**:
+/// Edge (and Chrome in some setups, e.g. de-elevation or startup boost) may
+/// relaunch itself with the same arguments and exit the process we spawned
+/// with code 0 — while the relaunched browser keeps serving our debugging
+/// port. A few quick retries paper over the probe racing that relaunch.
+pub async fn devtools_http_alive(port: u16) -> bool {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(HTTP_DISCOVERY_TIMEOUT)
+        .build()
+    else {
+        return false;
+    };
+    let url = format!("http://127.0.0.1:{port}/json/version");
+    for attempt in 0..3 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 async fn fetch_devtools_endpoint(client: &reqwest::Client, url: &str) -> Result<String> {
     let json: serde_json::Value = client
         .get(url)
@@ -462,6 +496,52 @@ mod tests {
     fn suppress_crash_recovery_prompt_no_prefs_is_noop() {
         let dir = tempfile::tempdir().unwrap();
         suppress_crash_recovery_prompt(dir.path()); // must not panic
+    }
+
+    #[test]
+    fn endpoint_port_parses_ws_url() {
+        assert_eq!(
+            endpoint_port("ws://127.0.0.1:62211/devtools/browser/abc"),
+            Some(62211)
+        );
+        assert_eq!(endpoint_port("ws://127.0.0.1:9222/"), Some(9222));
+        assert_eq!(endpoint_port("http://127.0.0.1:9222/json"), None);
+        assert_eq!(endpoint_port("ws://127.0.0.1/devtools"), None);
+    }
+
+    /// `devtools_http_alive` must answer true for a live HTTP listener and
+    /// false for a closed port (fake local server; no real browser).
+    #[tokio::test]
+    async fn devtools_http_alive_detects_listener_state() {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf);
+            let body = r#"{"webSocketDebuggerUrl":"ws://127.0.0.1:1/devtools/browser/x"}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes());
+        });
+        assert!(
+            devtools_http_alive(port).await,
+            "live listener must probe true"
+        );
+        server.join().unwrap();
+
+        // Closed port: bind-then-drop guarantees nothing is listening.
+        let dead_port = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        assert!(
+            !devtools_http_alive(dead_port).await,
+            "closed port must probe false"
+        );
     }
 
     #[test]

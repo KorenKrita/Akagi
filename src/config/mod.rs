@@ -232,22 +232,27 @@ mod tests {
         assert_eq!(path, target);
         let body = std::fs::read_to_string(&target).unwrap();
         let round_trip: AppConfig = toml::from_str(&body).unwrap();
-        assert_eq!(round_trip.general.language, cfg.general.language);
+        assert_eq!(
+            round_trip.general.first_run_completed,
+            cfg.general.first_run_completed
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
     /// The nested `[bot.api]` table must survive a TOML round-trip inside the
     /// full `AppConfig` — a table field serialized among scalar `[bot]` keys is
-    /// an easy way to get "table before value" ordering wrong. Uses fake creds.
+    /// an easy way to get "table before value" ordering wrong. Pure string
+    /// round-trip, no network: every value is a placeholder (loopback URL,
+    /// fake key, made-up model ids).
     #[test]
     fn bot_api_section_round_trips_through_toml() {
         let mut cfg = AppConfig::default();
         cfg.bot.api.enabled = true;
-        cfg.bot.api.base_url = "http://192.168.0.107:8080".into();
+        cfg.bot.api.base_url = "http://127.0.0.1:8080".into();
         cfg.bot.api.key = "test-key-not-real".into();
-        cfg.bot.api.model_4p = "4p-ot2".into();
-        cfg.bot.api.model_3p = "3p-ot".into();
+        cfg.bot.api.model_4p = "4p-model".into();
+        cfg.bot.api.model_3p = "3p-model".into();
 
         let body = toml::to_string_pretty(&cfg).unwrap();
         assert!(
@@ -257,13 +262,13 @@ mod tests {
 
         let back: AppConfig = toml::from_str(&body).unwrap();
         assert!(back.bot.api.enabled);
-        assert_eq!(back.bot.api.base_url, "http://192.168.0.107:8080");
+        assert_eq!(back.bot.api.base_url, "http://127.0.0.1:8080");
         assert_eq!(back.bot.api.key, "test-key-not-real");
-        assert_eq!(back.bot.api.model_4p, "4p-ot2");
-        assert_eq!(back.bot.api.model_3p, "3p-ot");
+        assert_eq!(back.bot.api.model_4p, "4p-model");
+        assert_eq!(back.bot.api.model_3p, "3p-model");
         assert!(back.bot.api.is_active());
-        assert_eq!(back.bot.api.model_for(3), "3p-ot");
-        assert_eq!(back.bot.api.model_for(4), "4p-ot2");
+        assert_eq!(back.bot.api.model_for(3), "3p-model");
+        assert_eq!(back.bot.api.model_for(4), "4p-model");
     }
 
     /// A legacy config file without any `[bot.api]` section still parses, with
@@ -283,10 +288,10 @@ mod tests {
     fn reuses_existing_cli_path() {
         let dir = temp_dir("cli-existing");
         let target = dir.join("config.toml");
-        std::fs::write(&target, "[general]\nlanguage = \"jp\"\n").unwrap();
+        std::fs::write(&target, "[general]\nfirst_run_completed = true\n").unwrap();
 
         let (cfg, path) = load_config(Some(&target));
-        assert_eq!(cfg.general.language, "jp");
+        assert!(cfg.general.first_run_completed);
         assert_eq!(path, target);
 
         std::fs::remove_dir_all(&dir).ok();

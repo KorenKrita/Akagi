@@ -145,17 +145,54 @@ impl CaptureBackend for ChromiumBackend {
                 r
             }
             status = child.wait() => {
-                match status {
-                    Ok(s) => {
-                        warn!("chromium backend: browser exited (status {s})");
-                        Err(anyhow::anyhow!("browser exited unexpectedly: {s}"))
+                // A clean exit of the process we spawned is not necessarily
+                // the browser dying: Edge (and Chrome in some setups) may
+                // relaunch itself with the same arguments and exit the
+                // original process with code 0 — a launcher handoff. The
+                // relaunched browser keeps serving our CDP endpoint, so probe
+                // it before declaring the browser dead.
+                let handoff = matches!(&status, Ok(s) if s.success())
+                    && match launch::endpoint_port(&cdp_endpoint) {
+                        Some(port) => launch::devtools_http_alive(port).await,
+                        None => false,
+                    };
+                if handoff {
+                    info!(
+                        "chromium backend: spawned process exited but the CDP \
+                         endpoint is still alive (launcher handoff); continuing"
+                    );
+                    tokio::select! {
+                        biased;
+                        _ = &mut shutdown_fut => {
+                            info!("chromium backend: shutdown requested");
+                            Ok(())
+                        }
+                        r = &mut cdp_fut => {
+                            match &r {
+                                Ok(()) => info!("chromium backend: CDP loop exited cleanly"),
+                                Err(e) => warn!("chromium backend: CDP loop error: {e:#}"),
+                            }
+                            r
+                        }
                     }
-                    Err(e) => Err(anyhow::anyhow!("child wait error: {e}")),
+                } else {
+                    match status {
+                        Ok(s) => {
+                            warn!("chromium backend: browser exited (status {s})");
+                            Err(anyhow::anyhow!("browser exited unexpectedly: {s}"))
+                        }
+                        Err(e) => Err(anyhow::anyhow!("child wait error: {e}")),
+                    }
                 }
             }
         };
 
-        // Best-effort browser shutdown.
+        // Best-effort shutdown of the process we spawned. After a launcher
+        // handoff this only reaps the (already dead) launcher and the real
+        // browser is deliberately left running: the user may be mid-match,
+        // and a surviving browser keeps the game connected even when Akagi
+        // itself stops or crashes. The next capture start reclaims it (see
+        // `reclaim_singleton` above) before relaunching.
         launch::terminate(&mut child).await;
         result
     }

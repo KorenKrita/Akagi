@@ -526,6 +526,10 @@ fn label_pais_mjai(ev: &MjaiEvent) -> Option<(&'static str, Vec<String>)> {
         MjaiEvent::Hora { .. } => ("Hora", vec![]),
         MjaiEvent::Ryukyoku { .. } => ("Ryukyoku", vec![]),
         MjaiEvent::Kita { .. } => ("Kita", vec!["N".into()]),
+        // Passing IS the chosen move on a call window (pon/chi/kan/ron
+        // offered, model declines) — show it, or the card would render only
+        // the runner-ups and read as recommending the call it just declined.
+        MjaiEvent::None => ("None", vec![]),
         _ => return None,
     };
     Some(out)
@@ -546,7 +550,10 @@ fn label_pais_candidate(action: &str) -> Option<(&'static str, Vec<String>)> {
         "hora" => ("Hora", vec![]),
         "ryukyoku" => ("Ryukyoku", vec![]),
         "nukidora" => ("Kita", vec!["N".into()]),
-        // "none" (pass) and any unknown label are not shown as a row.
+        // On a call window the pass option is half the decision (e.g. pon 55%
+        // vs none 45%) — a real ranked row, not noise.
+        "none" => ("None", vec![]),
+        // Unknown future labels are not shown as a row.
         _ => return None,
     };
     Some(out)
@@ -995,6 +1002,56 @@ mod tests {
         assert_eq!(items[2]["label"], "Discard");
         assert_eq!(items[2]["pais"][0], "9m");
         assert_eq!(items[2]["value"], "10%");
+    }
+
+    /// A call window where the model declines (pon 35% vs none 65%): the card
+    /// must show the chosen pass as row 0 AND keep `none` runner-up rows —
+    /// dropping them made the card read as recommending the declined call.
+    #[test]
+    fn api_show_meta_renders_pass_and_none_rows() {
+        // Chosen move is pass: row 0 = "None" with candidates[0]'s prob.
+        let cands = vec![
+            Candidate {
+                action: "none".into(),
+                prob: 0.65,
+            },
+            Candidate {
+                action: "pon".into(),
+                prob: 0.35,
+            },
+        ];
+        let meta = build_show_meta_mjai(&MjaiEvent::None, &cands).unwrap();
+        let items = meta["show"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["label"], "None");
+        assert_eq!(items[0]["value"], "65%");
+        assert_eq!(items[1]["label"], "Pon");
+        assert_eq!(items[1]["value"], "35%");
+
+        // Chosen move is the call: the none runner-up still gets a row.
+        let ev = MjaiEvent::Pon {
+            actor: 0,
+            target: 3,
+            pai: "4m".into(),
+            consumed: ["4m".into(), "4m".into()],
+        };
+        let cands = vec![
+            Candidate {
+                action: "pon".into(),
+                prob: 0.55,
+            },
+            Candidate {
+                action: "none".into(),
+                prob: 0.45,
+            },
+        ];
+        let meta = build_show_meta_mjai(&ev, &cands).unwrap();
+        let items = meta["show"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["label"], "Pon");
+        assert_eq!(items[0]["value"], "55%");
+        assert_eq!(items[1]["label"], "None");
+        assert_eq!(items[1]["value"], "45%");
     }
 
     #[test]

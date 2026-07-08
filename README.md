@@ -297,8 +297,7 @@ Configure it on the **Bots** tab, under **Cloud inference (built-in bot)**:
 - **Server URL** — the inference server. Defaults to `https://mjapi.shinkuan.me`;
   point it at any host (`http://host:8080`, `https://host`) if you self-host.
 - **API key** — a 32-character key.
-- **4-player / 3-player model** — the model id to request per mode (e.g.
-  `4p-ot2` / `3p-ot`); leave empty to use the server's default. **Fetch models**
+- **4-player / 3-player model** — the model id to request per mode; leave empty to use the server's default. **Fetch models**
   lists the ids your key may use.
 
 Buttons let you **Check key** (plan, expiry, today's usage vs. daily quota, rate

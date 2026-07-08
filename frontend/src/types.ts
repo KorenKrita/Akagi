@@ -122,7 +122,7 @@ export type NativeApiConfig = {
 }
 
 export type AppConfig = {
-  general: { language: string; first_run_completed: boolean }
+  general: { first_run_completed: boolean }
   logging: { dir: string; level: string; all_level: string }
   platform: { kind: PlatformKind }
   proxy: { enabled: boolean; addr: string; ca_dir: string }
@@ -168,6 +168,39 @@ export type ApiHealth = {
   status: string
   models: string[]
   queue_depth: Record<string, number>
+}
+
+// ---------- Self-serve key purchase (PayPal) ----------
+// Mirror the response shapes from `crate::bot::purchase`.
+
+/** `POST /paypal/create-order` — a pending one-time purchase. */
+export type CreatedOrder = {
+  order_id: string
+  approve_url: string
+  claim_secret: string
+}
+
+/** `POST /paypal/create-subscription` — a pending subscription. */
+export type CreatedSubscription = {
+  subscription_id: string
+  approve_url: string
+  claim_secret: string
+}
+
+/** One poll of `POST /paypal/order-result`. `code` only on `status: ready`. */
+export type OrderResult = {
+  status: string
+  code?: string | null
+  plan?: string | null
+  days?: number | null
+}
+
+/** One poll of `POST /paypal/subscription-result`. `key` only on `ready`. */
+export type SubscriptionResult = {
+  status: string
+  key?: string | null
+  plan?: string | null
+  next_billing?: string | null
 }
 
 export type FieldKind = 'string' | 'bool' | 'int' | 'float' | 'enum'

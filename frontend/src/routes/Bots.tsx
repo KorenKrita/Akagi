@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useBlocker } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive, Download, Cloud } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,6 +10,7 @@ import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -611,20 +613,56 @@ function NativeApiSettings() {
     if (api && !draft) setDraft({ ...api })
   }, [api, draft])
 
+  // Same unsaved-changes guard as the Settings page: block in-app navigation
+  // while the draft differs from the stored config, and warn on window close.
+  // (A minted key never trips this — `onKeyMinted` persists it immediately,
+  // so stored and draft move together.)
+  const dirty = !!api && !!draft && JSON.stringify(draft) !== JSON.stringify(api)
+
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      dirty && currentLocation.pathname !== nextLocation.pathname,
+  )
+
+  useEffect(() => {
+    if (!dirty) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [dirty])
+
   if (!config || !draft) return null
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     setSaving(true)
     try {
       const next = { ...config, bot: { ...config.bot, api: draft } }
       await invoke('update_config', { newConfig: next })
       setConfig(next)
       toast.success(t('bots.api.saved'))
+      return true
     } catch (e) {
       toast.error(t('bots.api.save_failed'), { description: String(e) })
+      return false
     } finally {
       setSaving(false)
     }
+  }
+
+  const saveAndLeave = async () => {
+    if (await save()) {
+      blocker.proceed?.()
+    } else {
+      blocker.reset?.()
+    }
+  }
+
+  const discardAndLeave = () => {
+    setDraft({ ...config.bot.api })
+    blocker.proceed?.()
   }
 
   return (
@@ -638,11 +676,41 @@ function NativeApiSettings() {
       <CardContent className="grid gap-4">
         <NativeApiFields value={draft} onChange={setDraft} onKeyMinted={persistApiConfig} />
         <div className="border-t border-border pt-3">
-          <Button onClick={save} disabled={saving}>
+          <Button onClick={save} disabled={saving || !dirty}>
             {saving ? t('common.saving') : t('common.save')}
           </Button>
         </div>
       </CardContent>
+
+      <Dialog
+        open={blocker.state === 'blocked'}
+        onOpenChange={(open) => {
+          if (!open) blocker.reset?.()
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>{t('settings.unsaved_title')}</DialogTitle>
+            <DialogDescription>{t('settings.unsaved_desc')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="bg-transparent p-0 border-0 mx-0 mb-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => blocker.reset?.()}
+              disabled={saving}
+            >
+              {t('common.stay')}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={discardAndLeave} disabled={saving}>
+              {t('common.discard')}
+            </Button>
+            <Button size="sm" onClick={saveAndLeave} disabled={saving}>
+              {saving ? t('common.saving') : t('settings.save_and_leave')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }

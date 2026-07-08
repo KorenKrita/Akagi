@@ -663,28 +663,28 @@ fn open_path(path: &Path) -> CmdResult<()> {
 }
 
 /// Opens an `http(s)://` URL in the user's default browser. Used by the
-/// first-run wizard for the GitHub / Discord links — Tauri 2's webview
-/// won't reliably honour `target="_blank"` without the opener plugin, so
-/// we route the click through the OS's native handler ourselves.
-/// Validates the scheme to keep this from being abused as a generic
-/// process spawn.
+/// first-run wizard's GitHub / Discord links and the purchase flow's PayPal
+/// approve page — Tauri 2's webview won't reliably honour `target="_blank"`
+/// without the opener plugin, so we route the click through the OS's native
+/// handler ourselves. Validates the scheme to keep this from being abused as
+/// a generic process spawn.
+///
+/// Goes through the `opener` crate (ShellExecuteW on Windows, `open` on
+/// macOS, xdg-open on Linux) rather than spawning `explorer <url>`:
+/// explorer.exe silently opens the Documents folder instead of the browser
+/// when the URL carries a query string (e.g. PayPal's `?token=...`).
 #[tauri::command]
 pub async fn open_external_url(url: String) -> CmdResult<()> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(format!("refused non-http(s) url: {url}"));
     }
-    #[cfg(target_os = "linux")]
-    let cmd = "xdg-open";
-    #[cfg(target_os = "macos")]
-    let cmd = "open";
-    #[cfg(target_os = "windows")]
-    let cmd = "explorer";
-
-    std::process::Command::new(cmd)
-        .arg(&url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("open url {url}: {e}"))
+    // `opener::open` can block briefly (it may wait on the launcher), so keep
+    // it off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || {
+        opener::open(&url).map_err(|e| format!("open url {url}: {e}"))
+    })
+    .await
+    .map_err(|e| format!("open url task: {e}"))?
 }
 
 /// Strict matcher for session directory names — `YYYYMMDD-HHMMSS`. Used
@@ -1368,6 +1368,64 @@ pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::H
         .map_err(|e| format!("{e:#}"))
 }
 
+// ---------- Self-serve key purchase (PayPal, see native_bot/API.md §13) ----------
+//
+// Thin passthroughs to `crate::bot::purchase`. The purchase state machine
+// (create → open approve_url → poll → redeem/store key) lives in the
+// frontend's purchase store; these commands are stateless like the rest of
+// the native-API family and all run without auth — the buyer is acquiring
+// a key, so they don't hold one yet.
+
+/// Start a one-time purchase (`POST /paypal/create-order`, no auth). Not
+/// idempotent — each call opens a fresh PayPal order.
+#[tauri::command]
+pub async fn native_api_create_order(
+    base_url: String,
+    product: String,
+) -> CmdResult<crate::bot::purchase::CreatedOrder> {
+    crate::bot::purchase::create_order(&base_url, &product)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Poll a one-time purchase (`POST /paypal/order-result`, no auth).
+/// Idempotent; returns `pending` until paid, then `ready` with the code.
+#[tauri::command]
+pub async fn native_api_order_result(
+    base_url: String,
+    order_id: String,
+    claim: String,
+) -> CmdResult<crate::bot::purchase::OrderResult> {
+    crate::bot::purchase::order_result(&base_url, &order_id, &claim)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Start a subscription (`POST /paypal/create-subscription`, no auth). Not
+/// idempotent — each call opens a fresh PayPal subscription.
+#[tauri::command]
+pub async fn native_api_create_subscription(
+    base_url: String,
+    product: String,
+) -> CmdResult<crate::bot::purchase::CreatedSubscription> {
+    crate::bot::purchase::create_subscription(&base_url, &product)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Poll a subscription (`POST /paypal/subscription-result`, no auth). On
+/// `ready` the response carries the API key directly (no redeem step).
+#[tauri::command]
+pub async fn native_api_subscription_result(
+    base_url: String,
+    subscription_id: String,
+    claim: String,
+) -> CmdResult<crate::bot::purchase::SubscriptionResult> {
+    crate::bot::purchase::subscription_result(&base_url, &subscription_id, &claim)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 fn persist_config(config: &AppConfig, path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1426,6 +1484,10 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::native_api_key_status,
             $crate::ipc::commands::native_api_models,
             $crate::ipc::commands::native_api_health,
+            $crate::ipc::commands::native_api_create_order,
+            $crate::ipc::commands::native_api_order_result,
+            $crate::ipc::commands::native_api_create_subscription,
+            $crate::ipc::commands::native_api_subscription_result,
         ]
     };
 }
@@ -1434,6 +1496,26 @@ macro_rules! ipc_handlers {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Only `http(s)://` may reach the OS opener — anything else could be
+    /// abused as a generic process/file launcher. (That a query-string URL
+    /// reaches the *browser* — not explorer.exe's Documents fallback — is
+    /// the manual half of this regression: opener uses ShellExecuteW.)
+    #[tokio::test]
+    async fn open_external_url_refuses_non_http_schemes() {
+        for url in [
+            "file:///C:/Windows",
+            "ftp://host/x",
+            "javascript:alert(1)",
+            "C:\\Users",
+            "httpss://not-http",
+        ] {
+            assert!(
+                open_external_url(url.to_string()).await.is_err(),
+                "{url} must be refused"
+            );
+        }
+    }
 
     #[test]
     fn persist_config_round_trips() {

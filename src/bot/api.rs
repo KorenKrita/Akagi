@@ -261,14 +261,15 @@ fn build_http() -> Result<reqwest::Client> {
         .context("build inference-API http client")
 }
 
-fn normalize_base(base_url: &str) -> String {
+pub(crate) fn normalize_base(base_url: &str) -> String {
     base_url.trim().trim_end_matches('/').to_string()
 }
 
 /// Turn a non-2xx response into a descriptive error, surfacing the server's
 /// generic `{"error": "..."}` message and any `Retry-After` hint. Success
 /// passes the response through untouched for the caller to deserialize.
-async fn check(resp: reqwest::Response, what: &str) -> Result<reqwest::Response> {
+/// Shared with the purchase client ([`crate::bot::purchase`]).
+pub(crate) async fn check(resp: reqwest::Response, what: &str) -> Result<reqwest::Response> {
     let status = resp.status();
     if status.is_success() {
         return Ok(resp);
@@ -372,7 +373,7 @@ mod tests {
 
     #[test]
     fn models_wrapper_parses() {
-        let raw = r#"{"models":[{"id":"4p-ot2","game":"4p","desc":"4p Mortal v4 (ot2), 192x40"},{"id":"3p-ot","game":"3p","desc":"3p Mortal v4"}]}"#;
+        let raw = r#"{"models":[{"id":"4p-ot2","game":"4p","desc":"4p Mortal v4 (ot2), 192x40"},{"id":"3p-ot2","game":"3p","desc":"3p Mortal v4"}]}"#;
         #[derive(Deserialize)]
         struct Wrap {
             #[serde(default)]
