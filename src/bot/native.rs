@@ -897,7 +897,10 @@ mod tests {
         let v = to_api_event(&r, 0, 4);
         assert_eq!(v["type"], "reach");
         assert_eq!(v["actor"], 0);
-        assert!(v.get("pai").is_none(), "predicted reach pai must be stripped");
+        assert!(
+            v.get("pai").is_none(),
+            "predicted reach pai must be stripped"
+        );
     }
 
     #[test]
@@ -1099,7 +1102,10 @@ mod tests {
 
         // still degraded: no repeat toast (would spam once per turn).
         bot.record_health(false, Some("boom again"));
-        assert!(rx.try_recv().is_err(), "must not toast without a transition");
+        assert!(
+            rx.try_recv().is_err(),
+            "must not toast without a transition"
+        );
 
         // recovered: one success toast, same id (replaces the warning).
         bot.record_health(true, None);

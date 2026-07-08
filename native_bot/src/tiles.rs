@@ -28,9 +28,9 @@ pub const AKA_TILE34: [usize; 3] = [4, 13, 22];
 pub const TILE34_TO_COMPACT: [Option<usize>; 34] = {
     let mut m = [None; 34];
     m[0] = Some(0); // 1m
-    // 1..=7 (2m-8m) stay None
+                    // 1..=7 (2m-8m) stay None
     m[8] = Some(1); // 9m
-    // 1p..9p -> 2..10
+                    // 1p..9p -> 2..10
     let mut i = 9;
     while i <= 17 {
         m[i] = Some(i - 7);

@@ -10,14 +10,14 @@
 //!    (Windows) → wait → SIGKILL.
 
 use crate::config::ChromiumConfig;
+#[cfg(windows)]
+use crate::util::NoConsoleWindow;
 use anyhow::{anyhow, Context, Result};
 use std::net::TcpListener;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 use tracing::{debug, warn};
-#[cfg(windows)]
-use crate::util::NoConsoleWindow;
 
 const DEVTOOLS_FILE: &str = "DevToolsActivePort";
 const PORT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);

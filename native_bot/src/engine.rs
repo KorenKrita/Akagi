@@ -31,18 +31,42 @@ const SHOW_TOP_N: usize = 3;
 /// All tiles are mjai strings (e.g. `"5mr"`, `"P"`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum BotAction {
-    Dahai { pai: String, tsumogiri: bool },
+    Dahai {
+        pai: String,
+        tsumogiri: bool,
+    },
     /// Riichi declaration; `pai` is the predicted riichi discard (mjai must
     /// carry it or autoplay stalls).
-    Reach { pai: String },
-    Pon { target: u8, pai: String, consumed: Vec<String> },
-    Chi { target: u8, pai: String, consumed: Vec<String> },
-    Daiminkan { target: u8, pai: String, consumed: Vec<String> },
-    Ankan { consumed: Vec<String> },
-    Kakan { pai: String, consumed: Vec<String> },
+    Reach {
+        pai: String,
+    },
+    Pon {
+        target: u8,
+        pai: String,
+        consumed: Vec<String>,
+    },
+    Chi {
+        target: u8,
+        pai: String,
+        consumed: Vec<String>,
+    },
+    Daiminkan {
+        target: u8,
+        pai: String,
+        consumed: Vec<String>,
+    },
+    Ankan {
+        consumed: Vec<String>,
+    },
+    Kakan {
+        pai: String,
+        consumed: Vec<String>,
+    },
     /// Ron or tsumo (both are mjai `hora`); `target` is the loser (self for
     /// tsumo, the discarder for ron).
-    Hora { target: u8 },
+    Hora {
+        target: u8,
+    },
     /// Nine-terminals abortive draw (mjai `ryukyoku`).
     Kyushu,
     /// Kita / nukidora (sanma).
@@ -63,8 +87,14 @@ pub struct Decision {
 }
 
 enum Backend {
-    Four { state: Box<GameState>, model: Model },
-    Three { state: Box<GameState3P>, model: Model },
+    Four {
+        state: Box<GameState>,
+        model: Model,
+    },
+    Three {
+        state: Box<GameState3P>,
+        model: Model,
+    },
 }
 
 pub struct Engine {
@@ -100,7 +130,9 @@ impl Engine {
     pub fn reset(&mut self) {
         let rule = GameRule::default_tenhou();
         match &mut self.backend {
-            Backend::Four { state, .. } => *state = Box::new(GameState::new(0, true, None, 0, rule)),
+            Backend::Four { state, .. } => {
+                *state = Box::new(GameState::new(0, true, None, 0, rule))
+            }
             Backend::Three { state, .. } => {
                 *state = Box::new(GameState3P::new(0, true, None, 0, rule))
             }

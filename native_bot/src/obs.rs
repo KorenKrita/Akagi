@@ -49,7 +49,7 @@ pub fn channels(num_players: u8) -> usize {
     let fixed = 4 + 1 + 1 + 1 + 1 + 1  // self hand(4)+aka+drawn+waits+dora_ind+dora_tile
         + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1; // last_discard, round_wind, seat_wind,
                                              // honba, sticks, turn, tenpai, dealer, kyoku, ...
-    // NOTE: recount below to keep in sync with `encode`.
+                                             // NOTE: recount below to keep in sync with `encode`.
     let per_player_groups = 5; // discards, melds, riichi, riichi_tile, score
     let kita_groups = if num_players == 3 { 1 } else { 0 };
     // `fixed` above is 4+5 self planes + 9 globals + 1 (self riichi-declared) = 19.

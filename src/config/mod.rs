@@ -279,7 +279,10 @@ mod tests {
         let legacy = "[bot]\nenabled = true\nactive_4p = \"akagi-native\"\n";
         let cfg: AppConfig = toml::from_str(legacy).unwrap();
         assert!(!cfg.bot.api.enabled);
-        assert!(!cfg.bot.api.is_active(), "default URL alone must not activate");
+        assert!(
+            !cfg.bot.api.is_active(),
+            "default URL alone must not activate"
+        );
         assert_eq!(cfg.bot.api.base_url, NativeApiConfig::default().base_url);
         assert!(!cfg.bot.api.base_url.is_empty(), "URL should be pre-filled");
     }

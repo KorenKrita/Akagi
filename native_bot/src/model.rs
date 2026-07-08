@@ -61,7 +61,11 @@ impl Model {
     /// Forward one flattened `[C*T]` observation to action logits `[A]`.
     pub fn forward_logits(&self, obs: &[f32]) -> Result<Vec<f32>> {
         let dev = Device::Cpu;
-        let x = Tensor::from_vec(obs.to_vec(), (1, self.geo.channels, self.geo.tile_dim), &dev)?;
+        let x = Tensor::from_vec(
+            obs.to_vec(),
+            (1, self.geo.channels, self.geo.tile_dim),
+            &dev,
+        )?;
         let mut x = self.conv_in.forward(&x)?.relu()?;
         for (c1, c2) in &self.res {
             let y = c1.forward(&x)?.relu()?;

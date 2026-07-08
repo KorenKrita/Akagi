@@ -64,7 +64,10 @@ impl Engine {
             Engine::Four(s) => obs_and_legal_4p(s, pid),
             Engine::Three(s) => obs_and_legal_3p(s, pid),
         };
-        (obs, crate::action_codec::legal_mask(&legal, self.num_players()))
+        (
+            obs,
+            crate::action_codec::legal_mask(&legal, self.num_players()),
+        )
     }
 }
 
@@ -84,19 +87,38 @@ fn decision(ev: &MjaiEvent) -> Option<(u8, Action)> {
             Action::new(ActionType::Riichi, None, vec![], Some(*actor as u8)),
         )),
         MjaiEvent::Pon {
-            actor, pai, consumed, ..
+            actor,
+            pai,
+            consumed,
+            ..
         } => Some((
             *actor as u8,
-            Action::new(ActionType::Pon, tid(pai), tids(consumed), Some(*actor as u8)),
+            Action::new(
+                ActionType::Pon,
+                tid(pai),
+                tids(consumed),
+                Some(*actor as u8),
+            ),
         )),
         MjaiEvent::Chi {
-            actor, pai, consumed, ..
+            actor,
+            pai,
+            consumed,
+            ..
         } => Some((
             *actor as u8,
-            Action::new(ActionType::Chi, tid(pai), tids(consumed), Some(*actor as u8)),
+            Action::new(
+                ActionType::Chi,
+                tid(pai),
+                tids(consumed),
+                Some(*actor as u8),
+            ),
         )),
         MjaiEvent::Kan {
-            actor, pai, consumed, ..
+            actor,
+            pai,
+            consumed,
+            ..
         } => Some((
             *actor as u8,
             Action::new(

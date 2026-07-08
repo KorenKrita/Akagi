@@ -72,7 +72,10 @@ fn main() -> Result<()> {
     let dataset_dir = PathBuf::from(&args[1]);
     let num_players: u8 = args[2].parse().context("num_players")?;
     let out_dir = PathBuf::from(&args[3]);
-    let max_games: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+    let max_games: usize = args
+        .get(4)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(usize::MAX);
     let max_samples: usize = args
         .get(5)
         .and_then(|s| s.parse().ok())
@@ -111,9 +114,12 @@ fn main() -> Result<()> {
         .par_iter()
         .enumerate()
         .map(|(ci, chunk)| -> usize {
-            let mut obs_w = BufWriter::new(File::create(out_dir.join(format!("{ci}.obs"))).unwrap());
-            let mut act_w = BufWriter::new(File::create(out_dir.join(format!("{ci}.act"))).unwrap());
-            let mut msk_w = BufWriter::new(File::create(out_dir.join(format!("{ci}.msk"))).unwrap());
+            let mut obs_w =
+                BufWriter::new(File::create(out_dir.join(format!("{ci}.obs"))).unwrap());
+            let mut act_w =
+                BufWriter::new(File::create(out_dir.join(format!("{ci}.act"))).unwrap());
+            let mut msk_w =
+                BufWriter::new(File::create(out_dir.join(format!("{ci}.msk"))).unwrap());
             let mut local = 0usize;
 
             for path in *chunk {

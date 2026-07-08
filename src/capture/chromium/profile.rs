@@ -19,13 +19,13 @@
 //! Running two Akagi instances against the same profile is unsupported — they
 //! would fight over the lock.
 
+#[cfg(windows)]
+use crate::util::NoConsoleWindow;
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 #[cfg(windows)]
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-#[cfg(windows)]
-use crate::util::NoConsoleWindow;
 use tracing::{debug, info, warn};
 
 /// How long to wait for a polite SIGTERM/`taskkill` to take effect before
