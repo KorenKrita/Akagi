@@ -122,7 +122,7 @@ export type NativeApiConfig = {
 }
 
 export type AppConfig = {
-  general: { language: string; first_run_completed: boolean }
+  general: { first_run_completed: boolean }
   logging: { dir: string; level: string; all_level: string }
   platform: { kind: PlatformKind }
   proxy: { enabled: boolean; addr: string; ca_dir: string }

@@ -232,7 +232,10 @@ mod tests {
         assert_eq!(path, target);
         let body = std::fs::read_to_string(&target).unwrap();
         let round_trip: AppConfig = toml::from_str(&body).unwrap();
-        assert_eq!(round_trip.general.language, cfg.general.language);
+        assert_eq!(
+            round_trip.general.first_run_completed,
+            cfg.general.first_run_completed
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -285,10 +288,10 @@ mod tests {
     fn reuses_existing_cli_path() {
         let dir = temp_dir("cli-existing");
         let target = dir.join("config.toml");
-        std::fs::write(&target, "[general]\nlanguage = \"jp\"\n").unwrap();
+        std::fs::write(&target, "[general]\nfirst_run_completed = true\n").unwrap();
 
         let (cfg, path) = load_config(Some(&target));
-        assert_eq!(cfg.general.language, "jp");
+        assert!(cfg.general.first_run_completed);
         assert_eq!(path, target);
 
         std::fs::remove_dir_all(&dir).ok();

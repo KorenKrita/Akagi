@@ -61,7 +61,7 @@ bar = "default_value"
 
 ## Existing sections
 
-- `general` (`general.rs`) — language; `first_run_completed` flag controls whether the setup wizard is shown on app start.
+- `general` (`general.rs`) — `first_run_completed` flag controls whether the setup wizard is shown on app start. (UI language lives in the webview's `localStorage`, managed by i18next — not in this config.)
 - `logging` (`logging.rs`) — log root dir, console default level (overridden by `RUST_LOG`), `all_level` severity filter for `all.log` (`EnvFilter` syntax).
 - `platform` (`platform.rs`) — game platform whose traffic to bridge. `kind` selects which `Bridge` impl runs in the capture pipeline. Currently only `Majsoul`.
 - `proxy` (`proxy.rs`) — MITM proxy enable flag, listen addr, CA cert dir. Authoritative when `capture.mode = "mitm"`.
