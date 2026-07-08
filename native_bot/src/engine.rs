@@ -21,6 +21,7 @@ use riichienv_core::state_3p::GameState3P;
 
 use crate::action_codec::{pick_by_logits, rank_by_logits};
 use crate::adapt::{obs_and_legal_3p, obs_and_legal_4p};
+use crate::mjai_compat::sanitize_3p;
 use crate::model::Model;
 
 /// How many ranked candidates the engine surfaces for the HUD's multi-row
@@ -36,7 +37,10 @@ pub enum BotAction {
         tsumogiri: bool,
     },
     /// Riichi declaration; `pai` is the predicted riichi discard (mjai must
-    /// carry it or autoplay stalls).
+    /// carry it or autoplay stalls). Always non-empty on [`Decision::action`] —
+    /// `decide` drops a riichi it can't name a discard for. Runner-up
+    /// `candidates` rows carry an empty `pai`: they only decorate the HUD, and
+    /// predicting a discard for each would run the model once per row.
     Reach {
         pai: String,
     },
@@ -152,10 +156,19 @@ impl Engine {
     }
 
     /// Drive one mjai event through the engine.
+    ///
+    /// Sanma events are sanitized first: Tenhou sanma logs carry 4-element
+    /// `scores`/`tehais` arrays that a 3-seat `GameState3P` would index out of
+    /// bounds on. The extractor already does this; doing it here too means a log
+    /// that replays cleanly can also be fed to the live engine without panicking.
     pub fn feed(&mut self, ev: MjaiEvent) {
         match &mut self.backend {
             Backend::Four { state, .. } => state.apply_mjai_event(ev),
-            Backend::Three { state, .. } => state.apply_mjai_event(ev),
+            Backend::Three { state, .. } => {
+                let mut ev = ev;
+                sanitize_3p(&mut ev);
+                state.apply_mjai_event(ev)
+            }
         }
     }
 
@@ -163,9 +176,10 @@ impl Engine {
     /// legal action (not our turn / nothing to respond to).
     pub fn decide(&mut self) -> Result<Option<Decision>> {
         let seat = self.seat;
-        let (candidates, logits) = match &mut self.backend {
+        let (mut ranked, logits, last_discarder, drawn, reach_pai) = match &mut self.backend {
             Backend::Four { state, model } => {
-                let last_pid = state.last_discard.map(|(_, p)| p);
+                // `last_discard` is `(discarder_pid, tile)`.
+                let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
                 let drawn = state.drawn_tile;
                 let (obs, legal) = obs_and_legal_4p(state, seat);
                 if legal.is_empty() {
@@ -181,13 +195,10 @@ impl Engine {
                 } else {
                     None
                 };
-                (
-                    build_candidates(&ranked, seat, last_pid, drawn, reach_pai),
-                    logits,
-                )
+                (ranked, logits, last_discarder, drawn, reach_pai)
             }
             Backend::Three { state, model } => {
-                let last_pid = state.last_discard.map(|(_, p)| p);
+                let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
                 let drawn = state.drawn_tile;
                 let (obs, legal) = obs_and_legal_3p(state, seat);
                 if legal.is_empty() {
@@ -203,12 +214,24 @@ impl Engine {
                 } else {
                     None
                 };
-                (
-                    build_candidates(&ranked, seat, last_pid, drawn, reach_pai),
-                    logits,
-                )
+                (ranked, logits, last_discarder, drawn, reach_pai)
             }
         };
+
+        // An mjai `reach` must name the discard or autoplay stalls (Majsoul fuses
+        // declaring and discarding into one click). If the riichi-discard
+        // prediction failed, drop riichi from the ranking rather than emit a
+        // reach we cannot complete — the next-best action is a plain discard.
+        if reach_pai.is_none()
+            && matches!(ranked.first(), Some((a, _)) if a.action_type == ActionType::Riichi)
+        {
+            ranked.retain(|(a, _)| a.action_type != ActionType::Riichi);
+        }
+        if ranked.is_empty() {
+            return Ok(None);
+        }
+
+        let candidates = build_candidates(&ranked, seat, last_discarder, drawn, reach_pai);
         let action = candidates[0].0.clone();
         Ok(Some(Decision {
             action,
@@ -287,6 +310,11 @@ fn predict_reach_discard_3p(state: &GameState3P, model: &Model, seat: u8) -> Opt
 
 /// Turn a riichienv `Action` (plus the little bit of table context the reply
 /// needs) into a [`BotAction`].
+///
+/// `last_discarder` is a **seat id**, taken from `GameState::last_discard.0`.
+/// It becomes the `target` of every claim (pon/chi/daiminkan) and of a ron —
+/// mjai consumers use it to identify the losing seat, so feeding a tile id here
+/// produces an out-of-range seat.
 fn build_bot_action(
     a: &Action,
     seat: u8,
@@ -336,5 +364,236 @@ fn build_bot_action(
         ActionType::KyushuKyuhai => BotAction::Kyushu,
         ActionType::Kita => BotAction::Kita,
         ActionType::Pass => BotAction::Pass,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use riichienv_core::replay::MjaiEvent;
+
+    fn ev(line: &str) -> MjaiEvent {
+        serde_json::from_str(line).expect("valid mjai event")
+    }
+
+    fn act(kind: ActionType, tile: Option<u8>, consumed: Vec<u8>) -> Action {
+        Action::new(kind, tile, consumed, Some(0))
+    }
+
+    // ---------- `build_bot_action` field mapping (pure) ----------
+
+    /// Every claim and a ron carry the **discarder's seat** as `target`.
+    #[test]
+    fn claims_and_ron_target_the_discarder_seat() {
+        let discarder = Some(3u8);
+        let seat = 0u8;
+
+        let pon = build_bot_action(
+            &act(ActionType::Pon, Some(4), vec![5, 6]),
+            seat,
+            discarder,
+            None,
+            None,
+        );
+        assert_eq!(
+            pon,
+            BotAction::Pon {
+                target: 3,
+                pai: "2m".into(),
+                consumed: vec!["2m".into(), "2m".into()],
+            }
+        );
+
+        let chi = build_bot_action(
+            &act(ActionType::Chi, Some(4), vec![8, 12]),
+            seat,
+            discarder,
+            None,
+            None,
+        );
+        assert!(matches!(chi, BotAction::Chi { target: 3, .. }));
+
+        let kan = build_bot_action(
+            &act(ActionType::Daiminkan, Some(4), vec![5, 6, 7]),
+            seat,
+            discarder,
+            None,
+            None,
+        );
+        assert!(matches!(kan, BotAction::Daiminkan { target: 3, .. }));
+
+        let ron = build_bot_action(
+            &act(ActionType::Ron, None, vec![]),
+            seat,
+            discarder,
+            None,
+            None,
+        );
+        assert_eq!(ron, BotAction::Hora { target: 3 });
+    }
+
+    /// A tsumo is a self-target hora; a ron with no recorded discarder degrades
+    /// to self rather than an out-of-range seat.
+    #[test]
+    fn tsumo_targets_self() {
+        let seat = 2u8;
+        let tsumo = build_bot_action(
+            &act(ActionType::Tsumo, None, vec![]),
+            seat,
+            Some(1),
+            None,
+            None,
+        );
+        assert_eq!(tsumo, BotAction::Hora { target: seat });
+
+        let ron_no_discarder =
+            build_bot_action(&act(ActionType::Ron, None, vec![]), seat, None, None, None);
+        assert_eq!(ron_no_discarder, BotAction::Hora { target: seat });
+    }
+
+    #[test]
+    fn discard_marks_tsumogiri_only_for_the_drawn_tile() {
+        let drawn = Some(88u8); // 5sr
+        let a = act(ActionType::Discard, Some(88), vec![]);
+        assert_eq!(
+            build_bot_action(&a, 0, None, drawn, None),
+            BotAction::Dahai {
+                pai: "5sr".into(),
+                tsumogiri: true
+            }
+        );
+        let a = act(ActionType::Discard, Some(0), vec![]);
+        assert_eq!(
+            build_bot_action(&a, 0, None, drawn, None),
+            BotAction::Dahai {
+                pai: "1m".into(),
+                tsumogiri: false
+            }
+        );
+    }
+
+    #[test]
+    fn closed_calls_and_terminals_map_without_a_target() {
+        assert_eq!(
+            build_bot_action(
+                &act(ActionType::Ankan, None, vec![0, 1, 2, 3]),
+                0,
+                Some(2),
+                None,
+                None
+            ),
+            BotAction::Ankan {
+                consumed: vec!["1m".into(), "1m".into(), "1m".into(), "1m".into()],
+            }
+        );
+        assert!(matches!(
+            build_bot_action(
+                &act(ActionType::Kakan, Some(0), vec![1]),
+                0,
+                Some(2),
+                None,
+                None
+            ),
+            BotAction::Kakan { .. }
+        ));
+        assert_eq!(
+            build_bot_action(
+                &act(ActionType::KyushuKyuhai, None, vec![]),
+                0,
+                None,
+                None,
+                None
+            ),
+            BotAction::Kyushu
+        );
+        assert_eq!(
+            build_bot_action(&act(ActionType::Kita, None, vec![]), 0, None, None, None),
+            BotAction::Kita
+        );
+        assert_eq!(
+            build_bot_action(&act(ActionType::Pass, None, vec![]), 0, None, None, None),
+            BotAction::Pass
+        );
+    }
+
+    #[test]
+    fn riichi_carries_the_predicted_discard() {
+        let a = act(ActionType::Riichi, None, vec![]);
+        assert_eq!(
+            build_bot_action(&a, 0, None, None, Some(36)),
+            BotAction::Reach { pai: "1p".into() }
+        );
+    }
+
+    // ---------- end-to-end: the seat/tile confusion `decide()` used to have ----------
+
+    /// Regression: `GameState::last_discard` is `(discarder_pid, tile)`, but
+    /// `decide()` destructured it as `(_, pid)` and handed the **tile id** to
+    /// `build_bot_action` as the discarder's seat. Every pon/chi/kan/ron reply
+    /// then carried a `target` of 0..=135 instead of a seat number, which lands
+    /// straight on Akagi's mjai bus.
+    #[test]
+    fn claim_target_is_a_seat_not_a_tile_id() {
+        // Our seat holds two 9s (tile ids 104..107), so seat 1's 9s discard opens
+        // a pon window. 9s is tile34 26 — a tile id far outside the seat range,
+        // so a regressed `target` can never coincide with the right answer.
+        let ours = r#"["9s","9s","1m","2m","3m","4m","5m","6m","7m","8m","9m","1p","2p"]"#;
+        let other = r#"["1m","2m","3m","4m","5m","6m","7m","8m","9m","1p","2p","3p","4p"]"#;
+        let mut eng = crate::defaults::engine(4, 0).expect("bundled 4p weights");
+        eng.feed(ev(r#"{"type":"start_game","names":["a","b","c","d"]}"#));
+        eng.feed(ev(&format!(
+            r#"{{"type":"start_kyoku","bakaze":"E","dora_marker":"2m","kyoku":1,"honba":0,
+                 "kyotaku":0,"oya":0,"scores":[25000,25000,25000,25000],
+                 "tehais":[{ours},{other},{other},{other}]}}"#
+        )));
+        eng.feed(ev(r#"{"type":"tsumo","actor":1,"pai":"9s"}"#));
+        eng.feed(ev(
+            r#"{"type":"dahai","actor":1,"pai":"9s","tsumogiri":true}"#,
+        ));
+
+        let d = eng
+            .decide()
+            .expect("forward pass")
+            .expect("a pon window is a decision point");
+
+        let mut saw_pon = false;
+        for (a, _) in &d.candidates {
+            match a {
+                BotAction::Pon { target, .. }
+                | BotAction::Chi { target, .. }
+                | BotAction::Daiminkan { target, .. }
+                | BotAction::Hora { target } => {
+                    assert_eq!(
+                        *target, 1,
+                        "target must be the discarder's seat, got {target}"
+                    );
+                    saw_pon |= matches!(a, BotAction::Pon { .. });
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            saw_pon,
+            "fixture invalid: no pon offered on the 9s discard ({:?})",
+            d.candidates.iter().map(|(a, _)| a).collect::<Vec<_>>()
+        );
+    }
+
+    /// A sanma engine must survive a Tenhou-style 4-seat `start_kyoku` (the
+    /// extractor sanitizes these; `feed` used to pass them straight through to a
+    /// 3-seat state, which indexes out of bounds).
+    #[test]
+    fn feed_sanitizes_four_seat_sanma_start_kyoku() {
+        let h = r#"["1m","9m","1p","2p","3p","4p","5p","6p","7p","8p","9p","1s","2s"]"#;
+        let mut eng = crate::defaults::engine(3, 0).expect("bundled 3p weights");
+        eng.feed(ev(r#"{"type":"start_game","names":["a","b","c","d"]}"#));
+        eng.feed(ev(&format!(
+            r#"{{"type":"start_kyoku","bakaze":"E","dora_marker":"1s","kyoku":1,"honba":0,
+                 "kyotaku":0,"oya":0,"scores":[35000,35000,35000,0],
+                 "tehais":[{h},{h},{h},{h}]}}"#
+        )));
+        eng.feed(ev(r#"{"type":"tsumo","actor":0,"pai":"9p"}"#));
+        let d = eng.decide().expect("forward pass");
+        assert!(d.is_some(), "our own draw is a decision point");
     }
 }
