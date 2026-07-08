@@ -106,8 +106,9 @@ const BROWSER_NAME_HINTS: [&str; 6] = ["chrome", "chromium", "msedge", "brave", 
 
 /// True when a process with this `name` and command-line `cmd` is the **browser
 /// process** of the controlled Chromium for `profile`: a Chromium-family
-/// process name, carrying our `--user-data-dir=<profile>`, and not a
-/// `--type=…` renderer/GPU child (killing the browser process takes its
+/// process name, carrying a `--user-data-dir` whose *value* names exactly our
+/// profile directory (per-OS path semantics, see [`PathMatchRules`]), and not
+/// a `--type=…` renderer/GPU child (killing the browser process takes its
 /// children down with it). Pure so the matching is unit-testable without a
 /// live browser.
 ///
@@ -119,10 +120,103 @@ fn is_controlled_browser(name: &str, cmd: &[String], profile: &Path) -> bool {
     if !BROWSER_NAME_HINTS.iter().any(|h| name.contains(h)) {
         return false;
     }
-    let needle = format!("--user-data-dir={}", profile.display());
-    let has_profile = cmd.iter().any(|a| a.contains(needle.as_str()));
+    // Select this build's path-comparison rules here, at the call site, so the
+    // matcher itself stays rule-parameterized and every platform's behavior is
+    // unit-testable from any host.
+    #[cfg(windows)]
+    const RULES: PathMatchRules = PathMatchRules::WINDOWS;
+    #[cfg(target_os = "macos")]
+    const RULES: PathMatchRules = PathMatchRules::MACOS;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    const RULES: PathMatchRules = PathMatchRules::LINUX;
+    let profile = profile.display().to_string();
+    let has_profile = cmd
+        .iter()
+        .any(|a| user_data_dir_arg_matches(a, &profile, RULES));
     let is_child = cmd.iter().any(|a| a.starts_with("--type="));
     has_profile && !is_child
+}
+
+/// Per-OS rules for comparing a `--user-data-dir` value against our profile
+/// path. Modeled as data rather than `cfg`-selected code so all three
+/// platforms' behaviors are unit-testable from any host; call sites pick
+/// their rule set with `cfg` (see [`is_controlled_browser`]).
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Clone, Copy, Debug)]
+struct PathMatchRules {
+    /// Compare ignoring case — the default filesystem behavior on Windows
+    /// (NTFS) and macOS (APFS/HFS+); Linux filesystems are case-sensitive.
+    /// This matters because the profile path derives from
+    /// `std::env::current_exe()`, whose casing can vary with how the exe was
+    /// invoked — a byte-exact compare would then silently miss the surviving
+    /// browser and the duplicate-tab/DevTools-timeout bug would reappear.
+    case_insensitive: bool,
+    /// Treat `/` and `\` as the same separator. Windows accepts both; on
+    /// Unix `\` is an ordinary filename character, so it is never unified
+    /// there.
+    unify_separators: bool,
+}
+
+#[allow(dead_code)] // which constants are referenced depends on the target OS
+impl PathMatchRules {
+    const WINDOWS: Self = Self {
+        case_insensitive: true,
+        unify_separators: true,
+    };
+    const MACOS: Self = Self {
+        case_insensitive: true,
+        unify_separators: false,
+    };
+    const LINUX: Self = Self {
+        case_insensitive: false,
+        unify_separators: false,
+    };
+}
+
+/// True when `arg` is a `--user-data-dir=<value>` argument whose value names
+/// the same directory as `profile` under `rules`. The value is compared
+/// **exactly** (never by substring), so `…\chromium-profile-backup` does not
+/// match a `…\chromium-profile` profile — the old substring compare would
+/// force-kill a browser Akagi doesn't own. Surrounding double quotes around
+/// the value are stripped defensively: sysinfo's Windows args come pre-split
+/// and unquoted via `CommandLineToArgvW`, but other platforms' sources
+/// (`/proc/<pid>/cmdline`, `ps` output) may retain them.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn user_data_dir_arg_matches(arg: &str, profile: &str, rules: PathMatchRules) -> bool {
+    let Some(value) = arg.strip_prefix("--user-data-dir=") else {
+        return false;
+    };
+    let value = value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .unwrap_or(value);
+    paths_match(value, profile, rules)
+}
+
+/// Pure path equality under per-OS `rules`: optional `/`≡`\` separator
+/// unification, optional case folding, and tolerance for a single trailing
+/// separator on either side. String-only — no filesystem access, so callers
+/// can compare paths that may no longer exist.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn paths_match(a: &str, b: &str, rules: PathMatchRules) -> bool {
+    fn normalize(s: &str, rules: PathMatchRules) -> String {
+        let mut s = if rules.unify_separators {
+            s.replace('/', "\\")
+        } else {
+            s.to_owned()
+        };
+        let sep = if rules.unify_separators { '\\' } else { '/' };
+        // Ignore one trailing separator (`…\profile\` vs `…\profile`), but
+        // never strip a bare root like `/`.
+        if s.len() > 1 && s.ends_with(sep) {
+            s.pop();
+        }
+        if rules.case_insensitive {
+            s = s.to_lowercase();
+        }
+        s
+    }
+    normalize(a, rules) == normalize(b, rules)
 }
 
 /// Find the PID of the controlled Chromium **browser** process for `profile`,
@@ -438,6 +532,23 @@ mod tests {
         );
         assert!(!is_controlled_browser("chrome.exe", &[other], profile));
 
+        // Regression: a profile that merely *extends* ours
+        // (`…\chrome-profile-backup`) is a different directory — the old
+        // substring compare matched it and force-killed a browser Akagi
+        // doesn't own.
+        let backup = format!("{udir}-backup");
+        assert!(!is_controlled_browser("chrome.exe", &[backup], profile));
+
+        // Regression: the profile path derives from current_exe(), whose
+        // casing can vary with how the exe was invoked — on Windows the
+        // match must be case-insensitive or reclaim silently misses the
+        // surviving browser.
+        let cased = format!(
+            "--user-data-dir={}",
+            profile.display().to_string().to_ascii_uppercase()
+        );
+        assert!(is_controlled_browser("chrome.exe", &[cased], profile));
+
         // A non-browser process is never matched, even with the arg — e.g.
         // the cmd.exe that launched the browser carries the same argument.
         assert!(!is_controlled_browser("firefox", &[udir.clone()], profile));
@@ -452,6 +563,162 @@ mod tests {
                 "{name} must be reclaimable"
             );
         }
+    }
+
+    // ---- `--user-data-dir` value matching, parameterized on per-OS rules ----
+    //
+    // These call the pure `user_data_dir_arg_matches` with explicit
+    // `PathMatchRules`, so every platform's semantics are verified regardless
+    // of the host OS running the tests.
+
+    /// Regression: the value must match *exactly*, not as a substring of the
+    /// whole argument — otherwise reclaim kills browsers it doesn't own.
+    #[test]
+    fn udd_exact_value_matches() {
+        let p = r"C:\Users\Akagi\chromium-profile";
+        let arg = format!("--user-data-dir={p}");
+        assert!(user_data_dir_arg_matches(&arg, p, PathMatchRules::WINDOWS));
+
+        let p = "/home/akagi/chromium-profile";
+        let arg = format!("--user-data-dir={p}");
+        assert!(user_data_dir_arg_matches(&arg, p, PathMatchRules::LINUX));
+        assert!(user_data_dir_arg_matches(&arg, p, PathMatchRules::MACOS));
+
+        // An arg that isn't --user-data-dir at all never matches.
+        assert!(!user_data_dir_arg_matches(
+            "--remote-debugging-port=1234",
+            p,
+            PathMatchRules::LINUX
+        ));
+    }
+
+    /// Regression: `…\chromium-profile-backup` extends our profile path but
+    /// is a different directory — must not match under any rule set.
+    #[test]
+    fn udd_prefix_extension_does_not_match() {
+        assert!(!user_data_dir_arg_matches(
+            r"--user-data-dir=C:\X\chromium-profile-backup",
+            r"C:\X\chromium-profile",
+            PathMatchRules::WINDOWS
+        ));
+        assert!(!user_data_dir_arg_matches(
+            "--user-data-dir=/x/chromium-profile-backup",
+            "/x/chromium-profile",
+            PathMatchRules::LINUX
+        ));
+        assert!(!user_data_dir_arg_matches(
+            "--user-data-dir=/x/chromium-profile-backup",
+            "/x/chromium-profile",
+            PathMatchRules::MACOS
+        ));
+        // Nor the reverse: our path extending the arg's value.
+        assert!(!user_data_dir_arg_matches(
+            r"--user-data-dir=C:\X\chromium",
+            r"C:\X\chromium-profile",
+            PathMatchRules::WINDOWS
+        ));
+    }
+
+    /// Casing differs (current_exe() casing varies with how the exe was
+    /// invoked): must match on case-insensitive filesystems (Windows NTFS,
+    /// macOS APFS) but not on case-sensitive Linux.
+    #[test]
+    fn udd_case_folding_windows_macos_not_linux() {
+        assert!(user_data_dir_arg_matches(
+            r"--user-data-dir=c:\P\CHROME-PROFILE",
+            r"C:\p\chrome-profile",
+            PathMatchRules::WINDOWS
+        ));
+        let arg = "--user-data-dir=/Users/Akagi/Chrome-Profile";
+        let p = "/users/akagi/chrome-profile";
+        assert!(user_data_dir_arg_matches(arg, p, PathMatchRules::MACOS));
+        assert!(!user_data_dir_arg_matches(arg, p, PathMatchRules::LINUX));
+    }
+
+    /// A double-quoted value must still match (defensive: sysinfo on Windows
+    /// pre-splits and unquotes, but other cmdline sources may not).
+    #[test]
+    fn udd_quoted_value_matches() {
+        let p = r"C:\p\chrome-profile";
+        let arg = format!("--user-data-dir=\"{p}\"");
+        assert!(user_data_dir_arg_matches(&arg, p, PathMatchRules::WINDOWS));
+        assert!(user_data_dir_arg_matches(
+            "--user-data-dir=\"/p/chrome-profile\"",
+            "/p/chrome-profile",
+            PathMatchRules::LINUX
+        ));
+    }
+
+    /// `/` vs `\` in the same path: equal under Windows rules (both are
+    /// separators there), distinct under Unix rules (`\` is a filename char).
+    #[test]
+    fn udd_separator_variance_windows_only() {
+        assert!(user_data_dir_arg_matches(
+            "--user-data-dir=C:/p/chrome-profile",
+            r"C:\p\chrome-profile",
+            PathMatchRules::WINDOWS
+        ));
+        assert!(user_data_dir_arg_matches(
+            r"--user-data-dir=C:\p\chrome-profile",
+            "C:/p/chrome-profile",
+            PathMatchRules::WINDOWS
+        ));
+        assert!(!user_data_dir_arg_matches(
+            r"--user-data-dir=\p\chrome-profile",
+            "/p/chrome-profile",
+            PathMatchRules::LINUX
+        ));
+        assert!(!user_data_dir_arg_matches(
+            r"--user-data-dir=\p\chrome-profile",
+            "/p/chrome-profile",
+            PathMatchRules::MACOS
+        ));
+    }
+
+    /// A single trailing separator on either side is ignored.
+    #[test]
+    fn udd_trailing_separator_tolerated() {
+        assert!(user_data_dir_arg_matches(
+            r"--user-data-dir=C:\p\chrome-profile\",
+            r"C:\p\chrome-profile",
+            PathMatchRules::WINDOWS
+        ));
+        assert!(user_data_dir_arg_matches(
+            r"--user-data-dir=C:\p\chrome-profile",
+            r"C:\p\chrome-profile\",
+            PathMatchRules::WINDOWS
+        ));
+        // Trailing `/` also counts as a separator under Windows rules.
+        assert!(user_data_dir_arg_matches(
+            "--user-data-dir=C:/p/chrome-profile/",
+            r"C:\p\chrome-profile",
+            PathMatchRules::WINDOWS
+        ));
+        assert!(user_data_dir_arg_matches(
+            "--user-data-dir=/p/chrome-profile/",
+            "/p/chrome-profile",
+            PathMatchRules::LINUX
+        ));
+        assert!(user_data_dir_arg_matches(
+            "--user-data-dir=/p/chrome-profile",
+            "/p/chrome-profile/",
+            PathMatchRules::MACOS
+        ));
+    }
+
+    /// An unrelated argument that merely *contains* the needle as a substring
+    /// (e.g. a wrapper flag embedding a full command line) is not a
+    /// `--user-data-dir` argument and must not match.
+    #[test]
+    fn udd_embedding_arg_does_not_match() {
+        let p = r"C:\p\chrome-profile";
+        let arg = format!("--wrapper-args=--user-data-dir={p}");
+        assert!(!user_data_dir_arg_matches(&arg, p, PathMatchRules::WINDOWS));
+        assert!(!user_data_dir_arg_matches(
+            "--log-cmd=--user-data-dir=/p/chrome-profile",
+            "/p/chrome-profile",
+            PathMatchRules::LINUX
+        ));
     }
 
     /// Real end-to-end check (run with `--ignored` and `AKAGI_TEST_CHROME` set
