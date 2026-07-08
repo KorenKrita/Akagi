@@ -11,11 +11,35 @@
 //! Two reserved bot names select it: [`NATIVE_4P`] (yonma) and [`NATIVE_3P`]
 //! (sanma). `BotManager::spawn_runner` recognises them and constructs this
 //! runner directly, bypassing the `bot.py`/registry path.
+//!
+//! ## Local model vs cloud inference
+//!
+//! One runner serves both paths. It always loads the embedded model, and it
+//! re-reads `bot.api` from the shared config at **every decision**, so the user
+//! can enable cloud inference, correct a mistyped key, or switch models in the
+//! middle of a hanchan and have it apply to the very next move. The local model
+//! stays in the loop even when the API is on:
+//!
+//! - **Gating** — the API's rate limits are low, and calling on every opponent
+//!   discard "just in case" roughly triples the request count. So we run the
+//!   local model's cheap legal-action check first and only hit the network when
+//!   our seat genuinely has a move to make.
+//! - **Fallback** — if the server is unreachable, rate-limited, or the key is
+//!   invalid, we play the local model's action so a live game never stalls.
+//! - **Circuit breaker** — after a failed call the API is skipped for a growing
+//!   backoff window ([`Breaker`]), so a dead server costs one slow turn rather
+//!   than a timeout on every single decision for the rest of the game.
+//!
+//! The remote service is stateless: every call re-uploads the current kyoku's
+//! mjai stream (from our seat's censored perspective). We accumulate that
+//! stream in [`NativeBot::stream`] — unconditionally, so switching the API on
+//! mid-kyoku has a complete stream to send — and shape it for the API in
+//! [`build_api_events`].
 
 use crate::bot::api::{ApiClient, Candidate};
 use crate::bot::runner::BotRunner;
 use crate::bot::types::BotResponse;
-use crate::config::NativeApiConfig;
+use crate::config::{AppConfig, NativeApiConfig};
 use crate::event_bus::NotifyBus;
 use crate::game_state::convert;
 use crate::schema::{MjaiEvent, Notification};
@@ -23,6 +47,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use native_bot::engine::{BotAction, Decision, Engine};
 use serde_json::Value;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 use tracing::warn;
 
 /// Reserved name for the built-in 4-player bot.
@@ -30,10 +57,18 @@ pub const NATIVE_4P: &str = "akagi-native";
 /// Reserved name for the built-in 3-player (sanma) bot.
 pub const NATIVE_3P: &str = "akagi-native3p";
 
-/// Notification id for the online-API health toasts (degrade / recover). A
-/// stable id lets the recovery toast replace the outage one, and the frontend
-/// keys its persistent "online API" status indicator off the same channel.
+/// Notification id for the online-API status toasts (enabled / degraded /
+/// recovered / disabled). A stable id lets each toast replace the previous one,
+/// and the frontend keys its persistent "online API" status indicator off the
+/// same channel: `warn`/`error` mean degraded, anything else means healthy.
 pub const NATIVE_API_HEALTH_ID: &str = "native-api-health";
+
+/// First backoff after an API failure. Roughly one Majsoul turn, so a blip
+/// costs a single local-model move.
+const BREAKER_BASE: Duration = Duration::from_secs(5);
+/// Ceiling for the exponential backoff. A server that has been down for two
+/// minutes is retried every two minutes — one slow turn per window.
+const BREAKER_MAX: Duration = Duration::from_secs(120);
 
 /// Whether `name` selects the built-in native bot (either mode).
 pub fn is_native(name: &str) -> bool {
@@ -50,128 +85,214 @@ pub fn display_name(name: &str) -> Option<&'static str> {
 }
 
 /// Construct the built-in bot runner for a game of `num_players` seated at
-/// `actor_id`. Picks the remote-inference-API path when
-/// [`NativeApiConfig::is_active`] (opted in with a server URL + key), otherwise
-/// the fully offline local model. The API path still loads the local model as
-/// a fallback, so this can never be "less available" than the local one.
-pub fn build(
+/// `actor_id`, holding `config` so `bot.api` can be re-read at each decision.
+///
+/// The cloud-inference session is seeded from the config as it stands now, and
+/// silently — a game starting with the API already on is not news. Later
+/// changes toast.
+pub async fn build(
     actor_id: u8,
     num_players: u8,
-    api: &NativeApiConfig,
+    config: Arc<RwLock<AppConfig>>,
     notify_tx: NotifyBus,
 ) -> Result<Box<dyn BotRunner>> {
-    if api.is_active() {
-        Ok(Box::new(ApiNativeBot::new(
-            actor_id,
-            num_players,
-            api,
-            notify_tx,
-        )?))
-    } else {
-        Ok(Box::new(NativeBot::new(actor_id, num_players)?))
+    let initial = config.read().await.bot.api.clone();
+    let mut bot = NativeBot::new(actor_id, num_players, config, notify_tx)?;
+    bot.apply_api_config(&initial, Announce::Silently);
+    Ok(Box::new(bot))
+}
+
+/// Whether an `bot.api` change should toast the user. Seeding at game start is
+/// silent; a change the user just made in Settings is worth confirming.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Announce {
+    Silently,
+    ToUser,
+}
+
+/// Suppresses calls to a failing inference server with exponential backoff, so
+/// only the first decision of an outage pays a request timeout. Reset whenever
+/// the user changes the API settings — that is an explicit "try again now".
+#[derive(Debug)]
+struct Breaker {
+    /// Whether the last API request succeeded. Toasts fire only on a change of
+    /// this flag, so a persistently-down server doesn't spam a toast per turn.
+    healthy: bool,
+    consecutive_failures: u32,
+    /// Skip the API until this instant. `None` ⇒ the breaker is closed.
+    open_until: Option<Instant>,
+}
+
+impl Breaker {
+    fn new() -> Self {
+        Self {
+            healthy: true,
+            consecutive_failures: 0,
+            open_until: None,
+        }
     }
+
+    /// Whether an API call may be attempted right now.
+    fn allows(&self) -> bool {
+        self.open_until.is_none_or(|t| Instant::now() >= t)
+    }
+
+    fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+        self.open_until = None;
+    }
+
+    /// Open the breaker for `BREAKER_BASE * 2^(failures-1)`, capped at
+    /// [`BREAKER_MAX`]. Returns the window, for logging.
+    fn record_failure(&mut self) -> Duration {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        let shift = (self.consecutive_failures - 1).min(16);
+        let backoff = BREAKER_BASE.saturating_mul(1u32 << shift).min(BREAKER_MAX);
+        self.open_until = Some(Instant::now() + backoff);
+        backoff
+    }
+
+    /// Back to a clean slate: retry immediately, and let the next failure toast.
+    fn reset(&mut self) {
+        self.healthy = true;
+        self.consecutive_failures = 0;
+        self.open_until = None;
+    }
+}
+
+/// The remote inference session: an authenticated client plus the settings it
+/// was built from, so a change to any of them rebuilds it.
+struct ApiSession {
+    client: ApiClient,
+    base_url: String,
+    key: String,
+    /// Model id to request; empty ⇒ let the server pick its game default.
+    model: String,
 }
 
 pub struct NativeBot {
     engine: Engine,
-    actor_id: u8,
+    seat: u8,
+    num_players: u8,
+    /// Shared, live application config. `bot.api` is re-read at every decision
+    /// (see [`NativeBot::react`]) so a mid-game settings change applies to the
+    /// next move rather than the next game.
+    config: Arc<RwLock<AppConfig>>,
+    /// Current-kyoku mjai stream (Akagi schema). Reset on each `start_kyoku`
+    /// but keeps the leading `start_game` the API requires as `events[0]`.
+    /// Accumulated even while the API is off, so enabling it mid-kyoku can
+    /// upload the kyoku so far.
+    stream: Vec<MjaiEvent>,
+    /// Toast channel — tells the user when cloud inference turns on/off, breaks,
+    /// and recovers.
+    notify_tx: NotifyBus,
+    /// `Some` while cloud inference is configured (`enabled` + URL + key).
+    api: Option<ApiSession>,
+    breaker: Breaker,
 }
 
 impl NativeBot {
     /// Build the in-process bot for a game of `num_players` with our seat at
-    /// `actor_id`, loading the bundled default weights for that mode.
-    pub fn new(actor_id: u8, num_players: u8) -> Result<Self> {
-        let engine = native_bot::defaults::engine(num_players, actor_id)?;
-        Ok(Self { engine, actor_id })
-    }
-}
-
-#[async_trait]
-impl BotRunner for NativeBot {
-    async fn react(&mut self, events: &[MjaiEvent]) -> Result<BotResponse> {
-        for ev in events {
-            // Keep our seat current if a start_game tags a (possibly new) seat.
-            if let MjaiEvent::StartGame { id: Some(seat), .. } = ev {
-                self.actor_id = *seat;
-                self.engine.set_seat(*seat);
-            }
-            if let Some(ri) = convert::to_riichienv(ev)? {
-                self.engine.feed(ri);
-            }
-        }
-
-        let (action, meta) = match self.engine.decide()? {
-            Some(d) => {
-                let meta = build_show_meta(&d.candidates);
-                (bot_action_to_mjai(d.action, self.actor_id), meta)
-            }
-            None => (MjaiEvent::None, None),
-        };
-        Ok(BotResponse { action, meta })
-    }
-
-    async fn reset(&mut self) -> Result<()> {
-        self.engine.reset();
-        Ok(())
-    }
-}
-
-/// Built-in bot that proxies each decision to the remote inference API
-/// (`POST /v3/react`, see `native_bot/API.md`) instead of running the embedded
-/// model.
-///
-/// It still keeps a local [`Engine`] for two reasons:
-/// - **Gating** — the API's rate limits are low, and calling on every opponent
-///   discard "just in case" roughly triples request count. So we run the local
-///   model's cheap legal-action check first and only hit the network when our
-///   seat genuinely has a move to make.
-/// - **Fallback** — if the server is unreachable, rate-limited, or the key is
-///   invalid, we play the local model's action so a live game never stalls.
-///
-/// The remote service is stateless: every call re-uploads the current kyoku's
-/// mjai stream (from our seat's censored perspective). We accumulate that
-/// stream in [`ApiNativeBot::stream`] and shape it for the API in
-/// [`build_api_events`].
-pub struct ApiNativeBot {
-    engine: Engine,
-    client: ApiClient,
-    /// Model id to request; empty ⇒ let the server pick its game default.
-    model: String,
-    seat: u8,
-    num_players: u8,
-    /// Current-kyoku mjai stream (Akagi schema). Reset on each `start_kyoku`
-    /// but keeps the leading `start_game` the API requires as `events[0]`.
-    stream: Vec<MjaiEvent>,
-    /// Toast channel — used to alert the user when the online API becomes
-    /// unavailable (and again when it recovers).
-    notify_tx: NotifyBus,
-    /// Whether the last API request succeeded. Toasts fire only on a change of
-    /// this flag, so a persistently-down server doesn't spam a toast per turn.
-    healthy: bool,
-}
-
-impl ApiNativeBot {
-    /// Build the API-backed bot for a game of `num_players` seated at
-    /// `actor_id`, using the server URL / key / model from `api`. The local
-    /// model is loaded too (gating + fallback).
+    /// `actor_id`, loading the bundled default weights for that mode. The cloud
+    /// session starts unset; [`NativeBot::apply_api_config`] establishes it.
     pub fn new(
         actor_id: u8,
         num_players: u8,
-        api: &NativeApiConfig,
+        config: Arc<RwLock<AppConfig>>,
         notify_tx: NotifyBus,
     ) -> Result<Self> {
         let engine = native_bot::defaults::engine(num_players, actor_id)?;
-        let client = ApiClient::new(&api.base_url, &api.key)?;
         Ok(Self {
             engine,
-            client,
-            model: api.model_for(num_players).trim().to_string(),
             seat: actor_id,
             num_players,
+            config,
             stream: Vec::new(),
             notify_tx,
-            healthy: true,
+            api: None,
+            breaker: Breaker::new(),
         })
+    }
+
+    /// Reconcile the live [`NativeApiConfig`] with our session.
+    ///
+    /// Rebuilds the client when the server URL or key changed, updates the model
+    /// id, and drops the session entirely when the API is switched off. Any
+    /// change resets the circuit breaker: the user editing these settings *is*
+    /// the retry signal, so a corrected key is tried on this very decision
+    /// rather than after the current backoff window.
+    fn apply_api_config(&mut self, cfg: &NativeApiConfig, announce: Announce) {
+        if !cfg.is_active() {
+            if self.api.take().is_some() {
+                self.breaker.reset();
+                self.notify(
+                    Notification::info("Cloud inference off")
+                        .body("The built-in bot is using the embedded local model.")
+                        .id(NATIVE_API_HEALTH_ID),
+                    announce,
+                );
+            }
+            return;
+        }
+
+        let base_url = cfg.base_url.trim();
+        let key = cfg.key.trim();
+        let model = cfg.model_for(self.num_players).trim().to_string();
+        let unchanged = self
+            .api
+            .as_ref()
+            .is_some_and(|s| s.base_url == base_url && s.key == key && s.model == model);
+        if unchanged {
+            return;
+        }
+
+        let was_off = self.api.is_none();
+        match ApiClient::new(base_url, key) {
+            Ok(client) => {
+                self.api = Some(ApiSession {
+                    client,
+                    base_url: base_url.to_string(),
+                    key: key.to_string(),
+                    model: model.clone(),
+                });
+                self.breaker.reset();
+                let body = if model.is_empty() {
+                    "Using the server's default model.".to_string()
+                } else {
+                    format!("Using model {model}.")
+                };
+                let title = if was_off {
+                    "Cloud inference on"
+                } else {
+                    "Cloud inference updated"
+                };
+                self.notify(
+                    Notification::info(title)
+                        .body(body)
+                        .id(NATIVE_API_HEALTH_ID),
+                    announce,
+                );
+            }
+            Err(e) => {
+                // Building the HTTP client failed — retrying won't help, so drop
+                // to the local model rather than opening a breaker window.
+                let msg = format!("{e:#}");
+                warn!("native API: client setup failed ({msg}); using the local model");
+                self.api = None;
+                self.notify(
+                    Notification::warn("Cloud inference unavailable")
+                        .body(msg)
+                        .id(NATIVE_API_HEALTH_ID),
+                    announce,
+                );
+            }
+        }
+    }
+
+    fn notify(&self, note: Notification, announce: Announce) {
+        if announce == Announce::ToUser {
+            let _ = self.notify_tx.send(note);
+        }
     }
 
     /// Record the outcome of an API request and, **only on a health change**,
@@ -179,10 +300,10 @@ impl ApiNativeBot {
     /// (the bot silently falls back to the local model), and a success when it
     /// recovers. `ok` = the HTTP request itself succeeded (server reachable).
     fn record_health(&mut self, ok: bool, err: Option<&str>) {
-        if ok == self.healthy {
+        if ok == self.breaker.healthy {
             return; // no transition
         }
-        self.healthy = ok;
+        self.breaker.healthy = ok;
         let note = if ok {
             Notification::success("Online inference restored")
                 .body("The built-in bot is using the online API again.")
@@ -225,26 +346,23 @@ impl ApiNativeBot {
         }
     }
 
-    /// The `model` argument for a react call: `None` when unset so the server
-    /// falls back to its game default.
-    fn model_arg(&self) -> Option<&str> {
-        if self.model.is_empty() {
-            None
-        } else {
-            Some(self.model.as_str())
-        }
-    }
-
     /// Query the server for the move at the current decision point. Falls back
     /// to `local` (the local model's decision) on any error or a `null`
     /// reaction so a live game never stalls.
     async fn remote_decision(&mut self, local: &Decision) -> (MjaiEvent, Option<Value>) {
         let events = build_api_events(&self.stream, self.seat, self.num_players);
-        let result = self.client.react(self.model_arg(), self.seat, events).await;
+        let result = match self.api.as_ref() {
+            Some(s) => {
+                let model = s.model.clone();
+                s.client.react(model_arg(&model), self.seat, events).await
+            }
+            None => return local_reply(local, self.seat),
+        };
         // A successful HTTP round-trip (even a `null` reaction) means the server
         // is reachable; only a transport/HTTP error counts as "API unavailable".
         match result {
             Ok(resp) => {
+                self.breaker.record_success();
                 self.record_health(true, None);
                 match resp.reaction {
                     Some(reaction) => match self.resolve_reaction(reaction, &resp.candidates).await
@@ -265,7 +383,12 @@ impl ApiNativeBot {
             }
             Err(e) => {
                 let msg = format!("{e:#}");
-                warn!("native API react failed ({msg}); falling back to local model");
+                let backoff = self.breaker.record_failure();
+                warn!(
+                    "native API react failed ({msg}); using the local model, \
+                     skipping the API for {}s",
+                    backoff.as_secs()
+                );
                 self.record_health(false, Some(&msg));
                 local_reply(local, self.seat)
             }
@@ -313,8 +436,15 @@ impl ApiNativeBot {
     async fn reach_discard(&mut self) -> Option<String> {
         let mut events = build_api_events(&self.stream, self.seat, self.num_players);
         events.push(serde_json::json!({ "type": "reach", "actor": self.seat }));
-        match self.client.react(self.model_arg(), self.seat, events).await {
+        let result = {
+            let s = self.api.as_ref()?;
+            let model = s.model.clone();
+            s.client.react(model_arg(&model), self.seat, events).await
+        };
+        match result {
             Ok(resp) => {
+                self.breaker.record_success();
+                self.record_health(true, None);
                 if let Some(reaction) = resp.reaction {
                     if let Ok(MjaiEvent::Dahai { pai, .. }) =
                         serde_json::from_value::<MjaiEvent>(reaction)
@@ -325,17 +455,30 @@ impl ApiNativeBot {
                 self.engine.reach_discard()
             }
             Err(e) => {
-                warn!("native API reach-discard follow-up failed ({e:#}); using local");
+                let msg = format!("{e:#}");
+                // The declare call succeeded but the follow-up didn't: the server
+                // is flaky. Trip the breaker so the *next* decision doesn't pay
+                // another timeout, and play the local model's riichi discard.
+                self.breaker.record_failure();
+                warn!("native API reach-discard follow-up failed ({msg}); using local");
+                self.record_health(false, Some(&msg));
                 self.engine.reach_discard()
             }
         }
     }
 }
 
+/// The `model` argument for a react call: `None` when unset so the server
+/// falls back to its game default.
+fn model_arg(model: &str) -> Option<&str> {
+    (!model.is_empty()).then_some(model)
+}
+
 #[async_trait]
-impl BotRunner for ApiNativeBot {
+impl BotRunner for NativeBot {
     async fn react(&mut self, events: &[MjaiEvent]) -> Result<BotResponse> {
         for ev in events {
+            // Keep our seat current if a start_game tags a (possibly new) seat.
             if let MjaiEvent::StartGame { id: Some(seat), .. } = ev {
                 self.seat = *seat;
                 self.engine.set_seat(*seat);
@@ -358,13 +501,24 @@ impl BotRunner for ApiNativeBot {
             }
         };
 
-        let (action, meta) = self.remote_decision(&local).await;
+        // Re-read `bot.api` on every decision: the user may have enabled cloud
+        // inference, pasted a corrected key, or switched models since the last
+        // move, and they expect it to take effect now — not next game.
+        let cfg = self.config.read().await.bot.api.clone();
+        self.apply_api_config(&cfg, Announce::ToUser);
+
+        let (action, meta) = if self.api.is_some() && self.breaker.allows() {
+            self.remote_decision(&local).await
+        } else {
+            local_reply(&local, self.seat)
+        };
         Ok(BotResponse { action, meta })
     }
 
     async fn reset(&mut self) -> Result<()> {
         self.engine.reset();
         self.stream.clear();
+        self.breaker.reset();
         Ok(())
     }
 }
@@ -702,6 +856,49 @@ fn bot_action_to_mjai(a: BotAction, actor: u8) -> MjaiEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bot::test_http::{mock_http, UNREACHABLE_BASE_URL};
+
+    /// A config handle whose `bot.api` is off (fully offline local model).
+    fn cfg_off() -> Arc<RwLock<AppConfig>> {
+        Arc::new(RwLock::new(AppConfig::default()))
+    }
+
+    /// A config handle with cloud inference pointed at `base_url`.
+    fn cfg_api(base_url: &str) -> Arc<RwLock<AppConfig>> {
+        let mut c = AppConfig::default();
+        c.bot.api = api_on(base_url, &"k".repeat(32));
+        Arc::new(RwLock::new(c))
+    }
+
+    fn api_on(base_url: &str, key: &str) -> NativeApiConfig {
+        NativeApiConfig {
+            enabled: true,
+            base_url: base_url.to_string(),
+            key: key.to_string(),
+            model_4p: String::new(),
+            model_3p: String::new(),
+        }
+    }
+
+    /// Build the runner the way `build()` does (seeding the session silently).
+    async fn bot_with(config: Arc<RwLock<AppConfig>>, notify: NotifyBus) -> NativeBot {
+        let initial = config.read().await.bot.api.clone();
+        let mut bot = NativeBot::new(0, 4, config, notify).unwrap();
+        bot.apply_api_config(&initial, Announce::Silently);
+        bot
+    }
+
+    /// The opening batch up to our first draw, as the manager would deliver it.
+    fn opening() -> Vec<MjaiEvent> {
+        vec![
+            start_game_4p(0),
+            start_kyoku_4p(),
+            MjaiEvent::Tsumo {
+                actor: 0,
+                pai: "5p".into(),
+            },
+        ]
+    }
 
     fn start_game_4p(seat: u8) -> MjaiEvent {
         MjaiEvent::StartGame {
@@ -713,9 +910,13 @@ mod tests {
         }
     }
 
+    /// A deliberately shapeless hand (~4 shanten): on our draw the model has
+    /// only plain discards to choose from, never riichi. Tests that assert "the
+    /// local model played" would otherwise have to accept a `reach` too, which
+    /// hides whichever path actually produced the move.
     fn start_kyoku_4p() -> MjaiEvent {
         let hand: Vec<String> = [
-            "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p",
+            "1m", "1m", "3m", "5m", "7m", "9m", "2p", "4p", "6p", "8p", "1s", "3s", "5s",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -735,19 +936,9 @@ mod tests {
 
     #[tokio::test]
     async fn native_bot_returns_legal_discard_on_own_tsumo() {
-        let mut bot = NativeBot::new(0, 4).unwrap();
+        let mut bot = bot_with(cfg_off(), crate::event_bus::notify_bus()).await;
         // Feed the opening up to our first draw in one batch (as the manager would).
-        let resp = bot
-            .react(&[
-                start_game_4p(0),
-                start_kyoku_4p(),
-                MjaiEvent::Tsumo {
-                    actor: 0,
-                    pai: "5p".into(),
-                },
-            ])
-            .await
-            .unwrap();
+        let resp = bot.react(&opening()).await.unwrap();
         // On our own tsumo we must act — a discard (or riichi/kan/hora), never None.
         assert!(
             !matches!(resp.action, MjaiEvent::None),
@@ -764,7 +955,7 @@ mod tests {
 
     #[tokio::test]
     async fn native_bot_passes_when_not_its_turn() {
-        let mut bot = NativeBot::new(0, 4).unwrap();
+        let mut bot = bot_with(cfg_off(), crate::event_bus::notify_bus()).await;
         // Opponent (seat 1) draws and discards; we (seat 0) usually can't act.
         let resp = bot
             .react(&[
@@ -792,6 +983,286 @@ mod tests {
             "must not discard on someone else's turn: {:?}",
             resp.action
         );
+    }
+
+    /// The API path must never stall a live game: an unreachable server falls
+    /// back to the embedded model's move and warns the user once.
+    #[tokio::test]
+    async fn unreachable_server_falls_back_to_the_local_model() {
+        use crate::schema::NotifyLevel;
+        let notify = crate::event_bus::notify_bus();
+        let mut rx = notify.subscribe();
+        let mut bot = bot_with(cfg_api(UNREACHABLE_BASE_URL), notify).await;
+
+        let resp = bot.react(&opening()).await.unwrap();
+        assert!(
+            matches!(resp.action, MjaiEvent::Dahai { actor: 0, .. }),
+            "expected the local model's discard, got {:?}",
+            resp.action
+        );
+        let n = rx.try_recv().expect("degrade toast");
+        assert_eq!(n.level, NotifyLevel::Warn);
+        assert_eq!(n.id.as_deref(), Some(NATIVE_API_HEALTH_ID));
+
+        // And the breaker is now open, so the next decision skips the network.
+        assert!(
+            !bot.breaker.allows(),
+            "a failed call must open the circuit breaker"
+        );
+    }
+
+    /// A `null` reaction means the server saw no legal action while our local
+    /// gate did — a stream mismatch. Play the local move rather than pass a turn.
+    #[tokio::test]
+    async fn null_reaction_falls_back_to_the_local_model() {
+        let (base, served) = mock_http(vec![("200 OK", r#"{"reaction":null}"#.into())]);
+        let mut bot = bot_with(cfg_api(&base), crate::event_bus::notify_bus()).await;
+
+        let resp = bot.react(&opening()).await.unwrap();
+        assert!(
+            matches!(resp.action, MjaiEvent::Dahai { actor: 0, .. }),
+            "expected the local model's discard, got {:?}",
+            resp.action
+        );
+        assert_eq!(served.join().unwrap().len(), 1, "the API was consulted");
+        // A reachable server, even with a null reaction, is healthy.
+        assert!(bot.breaker.allows());
+    }
+
+    /// The reach two-step: the server returns a bare `reach`, we re-query with
+    /// the reach appended and adopt the discard it names. mjai `reach` must
+    /// carry the discard or autoplay stalls.
+    #[tokio::test]
+    async fn reach_two_step_resolves_the_discard_from_the_follow_up_call() {
+        let (base, served) = mock_http(vec![
+            (
+                "200 OK",
+                r#"{"reaction":{"type":"reach","actor":0}}"#.into(),
+            ),
+            (
+                "200 OK",
+                r#"{"reaction":{"type":"dahai","actor":0,"pai":"1p","tsumogiri":false}}"#.into(),
+            ),
+        ]);
+        let mut bot = bot_with(cfg_api(&base), crate::event_bus::notify_bus()).await;
+
+        let resp = bot.react(&opening()).await.unwrap();
+        assert_eq!(
+            resp.action,
+            MjaiEvent::Reach {
+                actor: 0,
+                pai: Some("1p".into()),
+            }
+        );
+
+        let reqs = served.join().unwrap();
+        assert_eq!(reqs.len(), 2, "declare + discard");
+        // The follow-up appends the reach we are resolving; the first call can't
+        // have carried one (the kyoku had only start_game/start_kyoku/tsumo).
+        assert!(
+            !reqs[0].contains(r#""reach""#),
+            "the declare call must not carry a reach: {}",
+            reqs[0]
+        );
+        assert!(
+            reqs[1].contains(r#""reach""#),
+            "follow-up must append the reach: {}",
+            reqs[1]
+        );
+    }
+
+    /// If the follow-up call dies, we must still name a discard (from the local
+    /// model) rather than emit a bare reach that would stall autoplay.
+    ///
+    /// The mock is scripted with a single response: it serves the `reach` and
+    /// then drops its listener, so the follow-up call finds nothing there.
+    #[tokio::test]
+    async fn reach_falls_back_to_the_local_discard_when_the_follow_up_fails() {
+        let (base, served) = mock_http(vec![(
+            "200 OK",
+            r#"{"reaction":{"type":"reach","actor":0}}"#.into(),
+        )]);
+        let mut bot = bot_with(cfg_api(&base), crate::event_bus::notify_bus()).await;
+
+        let resp = bot.react(&opening()).await.unwrap();
+        match resp.action {
+            MjaiEvent::Reach { actor, pai } => {
+                assert_eq!(actor, 0);
+                let pai = pai.expect("a reach must name its discard");
+                assert!(!pai.is_empty(), "a reach must name its discard");
+            }
+            // The local model may find no riichi-legal discard at all, in which
+            // case the whole reaction is declined and we play the local move.
+            MjaiEvent::Dahai { actor: 0, .. } => {}
+            other => panic!("unexpected: {other:?}"),
+        }
+        assert_eq!(
+            served.join().unwrap().len(),
+            1,
+            "only the declare was served"
+        );
+        // A dead follow-up trips the breaker, so the next decision stays local.
+        assert!(!bot.breaker.allows());
+    }
+
+    // ---------- circuit breaker ----------
+
+    #[test]
+    fn breaker_backs_off_exponentially_and_caps() {
+        let mut b = Breaker::new();
+        assert!(b.allows());
+        assert_eq!(b.record_failure(), BREAKER_BASE);
+        assert!(!b.allows(), "open right after a failure");
+        assert_eq!(b.record_failure(), BREAKER_BASE * 2);
+        assert_eq!(b.record_failure(), BREAKER_BASE * 4);
+        for _ in 0..10 {
+            b.record_failure();
+        }
+        assert_eq!(b.record_failure(), BREAKER_MAX, "backoff is capped");
+
+        b.record_success();
+        assert!(b.allows(), "a success closes the breaker");
+        assert_eq!(b.consecutive_failures, 0);
+    }
+
+    /// Regression: with no breaker, every decision of an outage paid a full
+    /// request timeout (8s at the time, twice for a reach) and the bot missed
+    /// every turn of the game. Only the first decision may pay it.
+    #[test]
+    fn breaker_suppresses_further_calls_until_the_window_expires() {
+        let mut b = Breaker::new();
+        b.record_failure();
+        assert!(!b.allows());
+        // The user fixing the settings is an explicit retry signal.
+        b.reset();
+        assert!(b.allows());
+        assert!(b.healthy);
+    }
+
+    // ---------- live reconfiguration mid-game ----------
+
+    /// Enabling cloud inference during a hanchan must apply to the very next
+    /// decision — the config is re-read per decision, not snapshotted at
+    /// `start_game`.
+    #[tokio::test]
+    async fn enabling_the_api_mid_game_applies_to_the_next_decision() {
+        let (base, served) = mock_http(vec![(
+            "200 OK",
+            r#"{"reaction":{"type":"dahai","actor":0,"pai":"1m","tsumogiri":false},
+                "candidates":[{"action":"dahai:1m","prob":0.9}]}"#
+                .into(),
+        )]);
+        let config = cfg_off();
+        let notify = crate::event_bus::notify_bus();
+        let mut rx = notify.subscribe();
+        let mut bot = bot_with(config.clone(), notify).await;
+
+        // Decision 1: API off ⇒ local model, no request.
+        let first = bot.react(&opening()).await.unwrap();
+        assert!(
+            matches!(first.action, MjaiEvent::Dahai { actor: 0, .. }),
+            "expected a local discard, got {:?}",
+            first.action
+        );
+        assert!(bot.api.is_none());
+
+        // The user enables cloud inference mid-kyoku.
+        config.write().await.bot.api = api_on(&base, &"k".repeat(32));
+
+        // Decision 2 (our next draw): the API is consulted and its move played.
+        // Our own discard echoes back through the bus, as it does in a real game.
+        let second = bot
+            .react(&[
+                first.action.clone(),
+                MjaiEvent::Tsumo {
+                    actor: 0,
+                    pai: "3s".into(),
+                },
+            ])
+            .await
+            .unwrap();
+        assert_eq!(
+            second.action,
+            MjaiEvent::Dahai {
+                actor: 0,
+                pai: "1m".into(),
+                tsumogiri: false,
+            },
+            "the server's move must be played"
+        );
+        assert_eq!(served.join().unwrap().len(), 1, "exactly one API call");
+
+        // ...and the user is told, on the same channel the status LED listens to.
+        let n = rx.try_recv().expect("a toast confirming the switch");
+        assert_eq!(n.id.as_deref(), Some(NATIVE_API_HEALTH_ID));
+        assert_eq!(n.level, crate::schema::NotifyLevel::Info);
+        assert!(n.title.contains("Cloud inference on"), "got {}", n.title);
+    }
+
+    /// Turning it back off mid-game returns to the local model immediately and
+    /// clears the "online API" indicator.
+    #[tokio::test]
+    async fn disabling_the_api_mid_game_returns_to_the_local_model() {
+        let config = cfg_api(UNREACHABLE_BASE_URL);
+        let notify = crate::event_bus::notify_bus();
+        let mut rx = notify.subscribe();
+        let mut bot = bot_with(config.clone(), notify).await;
+        assert!(bot.api.is_some(), "seeded from the config");
+
+        config.write().await.bot.api.enabled = false;
+        let resp = bot.react(&opening()).await.unwrap();
+
+        assert!(bot.api.is_none(), "session dropped");
+        assert!(
+            matches!(resp.action, MjaiEvent::Dahai { actor: 0, .. }),
+            "local model plays"
+        );
+        let n = rx.try_recv().expect("an off toast");
+        assert_eq!(n.id.as_deref(), Some(NATIVE_API_HEALTH_ID));
+        // `info` (not warn) so the frontend clears the degraded indicator.
+        assert_eq!(n.level, crate::schema::NotifyLevel::Info);
+    }
+
+    /// Correcting a mistyped key must rebuild the client *and* clear the open
+    /// breaker, so the corrected key is tried on the next decision rather than
+    /// after the backoff window.
+    #[tokio::test]
+    async fn changing_the_key_rebuilds_the_client_and_clears_the_breaker() {
+        let notify = crate::event_bus::notify_bus();
+        let mut bot = bot_with(cfg_api(UNREACHABLE_BASE_URL), notify).await;
+
+        bot.breaker.record_failure();
+        assert!(!bot.breaker.allows());
+
+        let fixed = api_on(UNREACHABLE_BASE_URL, &"z".repeat(32));
+        bot.apply_api_config(&fixed, Announce::ToUser);
+
+        assert!(
+            bot.breaker.allows(),
+            "a settings change is an explicit retry signal"
+        );
+        assert_eq!(bot.api.as_ref().unwrap().key, "z".repeat(32));
+    }
+
+    /// Switching the model id keeps the same server but re-requests under the new
+    /// model; an unchanged config must not churn the client or toast.
+    #[tokio::test]
+    async fn model_switch_updates_the_session_and_no_op_config_is_quiet() {
+        let notify = crate::event_bus::notify_bus();
+        let mut rx = notify.subscribe();
+        let mut bot = bot_with(cfg_api(UNREACHABLE_BASE_URL), notify).await;
+
+        let same = api_on(UNREACHABLE_BASE_URL, &"k".repeat(32));
+        bot.apply_api_config(&same, Announce::ToUser);
+        assert!(rx.try_recv().is_err(), "an unchanged config must be silent");
+
+        let mut switched = same.clone();
+        switched.model_4p = "4p-strong".into();
+        bot.apply_api_config(&switched, Announce::ToUser);
+        assert_eq!(bot.api.as_ref().unwrap().model, "4p-strong");
+        let n = rx.try_recv().expect("a toast naming the new model");
+        assert!(n.title.contains("updated"), "got {}", n.title);
+        assert!(n.body.unwrap_or_default().contains("4p-strong"));
     }
 
     // ---------- API-backed native bot: request shaping ----------
@@ -1057,41 +1528,30 @@ mod tests {
         assert_eq!(items[1]["value"], "45%");
     }
 
-    #[test]
-    fn build_constructs_local_and_api_runners_offline() {
+    /// `build` constructs without any network I/O, in either mode and either
+    /// player count — a bogus URL is fine, nothing connects at build time. The
+    /// seeded session must not toast (a game starting with the API on is not news).
+    #[tokio::test]
+    async fn build_constructs_without_network_io_and_seeds_quietly() {
         let notify = crate::event_bus::notify_bus();
-        // Local path (API inactive).
-        let off = NativeApiConfig::default();
-        assert!(!off.is_active());
-        assert!(build(0, 4, &off, notify.clone()).is_ok());
+        let mut rx = notify.subscribe();
 
-        // API path constructs without any network I/O (client + local fallback
-        // model only). A bogus URL is fine — nothing connects at build time.
-        let on = NativeApiConfig {
-            enabled: true,
-            base_url: "http://127.0.0.1:9".into(),
-            key: "k".repeat(32),
-            model_4p: "4p-ot2".into(),
-            model_3p: String::new(),
-        };
-        assert!(on.is_active());
-        assert!(build(0, 4, &on, notify.clone()).is_ok());
-        assert!(build(0, 3, &on, notify).is_ok());
+        assert!(build(0, 4, cfg_off(), notify.clone()).await.is_ok());
+
+        let on = cfg_api(UNREACHABLE_BASE_URL);
+        assert!(on.read().await.bot.api.is_active());
+        assert!(build(0, 4, on.clone(), notify.clone()).await.is_ok());
+        assert!(build(0, 3, on, notify).await.is_ok());
+
+        assert!(rx.try_recv().is_err(), "seeding the session must be silent");
     }
 
-    #[test]
-    fn api_health_toasts_only_on_transition() {
+    #[tokio::test]
+    async fn api_health_toasts_only_on_transition() {
         use crate::schema::NotifyLevel;
         let notify = crate::event_bus::notify_bus();
         let mut rx = notify.subscribe();
-        let api = NativeApiConfig {
-            enabled: true,
-            base_url: "http://127.0.0.1:9".into(),
-            key: "k".repeat(32),
-            model_4p: String::new(),
-            model_3p: String::new(),
-        };
-        let mut bot = ApiNativeBot::new(0, 4, &api, notify.clone()).unwrap();
+        let mut bot = bot_with(cfg_api(UNREACHABLE_BASE_URL), notify).await;
 
         // healthy → degraded: one warn toast naming the error.
         bot.record_health(false, Some("boom"));

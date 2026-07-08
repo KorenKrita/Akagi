@@ -3,11 +3,14 @@ use serde::{Deserialize, Serialize};
 /// Optional cloud-inference settings for the built-in (native) bot.
 ///
 /// When [`NativeApiConfig::is_active`] is true, the built-in bot proxies each
-/// decision to a remote inference server (`POST /v3/react`, see
-/// `native_bot/API.md`) instead of running the embedded local model. The local
-/// model stays loaded as a fallback: if the server is unreachable, rate-limited,
-/// or the key is invalid, the bot silently plays the local model's move so a
-/// live game never stalls.
+/// decision to a remote inference server (`POST /v3/react`) instead of running
+/// the embedded local model. The local model stays loaded as a fallback: if the
+/// server is unreachable, rate-limited, or the key is invalid, the bot silently
+/// plays the local model's move so a live game never stalls.
+///
+/// Read fresh at every decision by `crate::bot::native::NativeBot`, so toggling
+/// the API, correcting the key, or switching models takes effect on the next
+/// move of the game in progress.
 ///
 /// Everything defaults empty / disabled so a fresh install uses the fully
 /// offline local model until the user opts in and pastes a key.

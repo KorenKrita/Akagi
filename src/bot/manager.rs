@@ -270,19 +270,19 @@ impl BotManager {
 
         // Built-in native bots (pure Rust, no Python) bypass the registry /
         // venv path entirely: no `bot.py`, no `uv sync`, weights are embedded.
-        // The runner is either the offline local model or, when the user opted
-        // into cloud inference (`bot.api`), the API-backed one (which still
-        // falls back to the local model). Read the config fresh so a toggle via
-        // Settings takes effect on the next game.
+        // The runner holds the shared config and re-reads `bot.api` at every
+        // decision, so cloud inference can be toggled, re-keyed, or pointed at a
+        // different model mid-game — not just between games.
         if crate::bot::native::is_native(&bot_name) {
-            let api = self.config.read().await.bot.api.clone();
-            let api_backed = api.is_active();
+            let api_backed = self.config.read().await.bot.api.is_active();
             match crate::bot::native::build(
                 actor_id,
                 self.game_num_players,
-                &api,
+                self.config.clone(),
                 self.notify_tx.clone(),
-            ) {
+            )
+            .await
+            {
                 Ok(runner) => {
                     info!(
                         bot = %bot_name,

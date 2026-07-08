@@ -1,5 +1,5 @@
-//! HTTP client for the remote inference API (`/v3/*`, see
-//! `native_bot/API.md`).
+//! HTTP client for the remote inference API (`/v3/*`), as published by the
+//! inference server's own API documentation.
 //!
 //! The service is **stateless**: every [`ApiClient::react`] call uploads the
 //! current kyoku's mjai event stream (from the bot's seat perspective, ending
@@ -8,8 +8,8 @@
 //! lives in [`crate::bot::native`], the caller.
 //!
 //! Two consumers:
-//! - the built-in bot ([`crate::bot::native::ApiNativeBot`]) calls
-//!   [`ApiClient::react`] at each decision point;
+//! - the built-in bot ([`crate::bot::native::NativeBot`]) calls
+//!   [`ApiClient::react`] at each decision point, while cloud inference is on;
 //! - the IPC layer ([`crate::ipc::commands`]) calls [`redeem`],
 //!   [`ApiClient::key_status`], [`ApiClient::models`] and [`health`] so the
 //!   frontend can redeem codes and inspect a key.
@@ -20,10 +20,19 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-/// Per-request timeout. A `react` call sits on a live game's critical path, so
-/// keep it tight enough that a hung server falls back to the local model
-/// promptly rather than making the bot miss its turn.
+/// Timeout for the management endpoints (key status, models, redeem, health).
+/// These run from the UI, never on a game's critical path, so they can afford
+/// to wait out a slow server.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Timeout for [`ApiClient::react`], which sits on a live game's critical path.
+/// Majsoul's turn timer is ~5s plus a shared time bank, and a reach costs two
+/// react calls (declare, then discard), so the whole two-step has to fit inside
+/// one turn. Keep this tight: a hung server falls back to the local model
+/// promptly instead of making the bot miss its turn. Repeated failures are then
+/// suppressed by the caller's circuit breaker, so only the first turn of an
+/// outage pays this cost.
+pub const REACT_TIMEOUT: Duration = Duration::from_millis(2_000);
 
 /// Response from `POST /v3/react`.
 #[derive(Debug, Clone, Deserialize)]
@@ -125,9 +134,13 @@ struct RedeemRequest<'a> {
     renew_key: Option<&'a str>,
 }
 
-/// Authenticated client bound to one server + key. Cheap to build (the inner
-/// `reqwest::Client` owns a shared connection pool); the built-in bot holds one
-/// for the lifetime of a game.
+/// Authenticated client bound to one server + key.
+///
+/// Each `ApiClient` builds its own `reqwest::Client`, and with it a fresh
+/// connection pool — so **hold one and reuse it** rather than constructing one
+/// per request, or every call pays a new TCP + TLS handshake. The built-in bot
+/// keeps one alive across a game and only rebuilds it when the server URL or
+/// key changes.
 pub struct ApiClient {
     base: String,
     key: String,
@@ -147,6 +160,9 @@ impl ApiClient {
 
     /// `POST /v3/react` — the move for the final event of `events`. `model`
     /// `None`/empty lets the server pick its game default.
+    ///
+    /// Bounded by [`REACT_TIMEOUT`] rather than the client-wide
+    /// [`REQUEST_TIMEOUT`]: this one blocks the bot's turn.
     pub async fn react(
         &self,
         model: Option<&str>,
@@ -162,6 +178,7 @@ impl ApiClient {
         let resp = self
             .http
             .post(&url)
+            .timeout(REACT_TIMEOUT)
             .bearer_auth(&self.key)
             .json(&body)
             .send()
@@ -383,5 +400,112 @@ mod tests {
         assert_eq!(w.models.len(), 2);
         assert_eq!(w.models[0].id, "4p-ot2");
         assert_eq!(w.models[1].game, "3p");
+    }
+
+    // ---- end-to-end against a local mock server ----
+
+    use crate::bot::test_http::mock_http;
+
+    /// Value of `name` in a raw HTTP request head, case-insensitively.
+    fn header<'a>(req: &'a str, name: &str) -> Option<&'a str> {
+        req.lines().find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.trim().eq_ignore_ascii_case(name).then(|| v.trim())
+        })
+    }
+
+    /// The bearer key must travel in the `Authorization` header — never in the
+    /// URL or query string, where proxies and server access logs would capture it.
+    #[tokio::test]
+    async fn react_authenticates_with_a_bearer_header() {
+        let (base, served) = mock_http(vec![(
+            "200 OK",
+            r#"{"reaction":{"type":"none"},"candidates":[{"action":"none","prob":1.0}],"model":"4p-x"}"#
+                .into(),
+        )]);
+        let client = ApiClient::new(&base, "SECRETKEY").unwrap();
+        let resp = client
+            .react(
+                Some("4p-x"),
+                2,
+                vec![serde_json::json!({"type": "start_game"})],
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.model.as_deref(), Some("4p-x"));
+
+        let reqs = served.join().unwrap();
+        let r = &reqs[0];
+        assert!(r.starts_with("POST /v3/react "), "wrong request line: {r}");
+        assert_eq!(header(r, "authorization"), Some("Bearer SECRETKEY"));
+        assert!(
+            !r.lines().next().unwrap().contains("SECRETKEY"),
+            "key must not appear in the request line: {r}"
+        );
+        assert!(r.contains(r#""player_id":2"#), "{r}");
+        assert!(r.contains(r#""model":"4p-x""#), "{r}");
+    }
+
+    #[tokio::test]
+    async fn key_status_and_models_authenticate_with_a_bearer_header() {
+        let (base, served) = mock_http(vec![
+            (
+                "200 OK",
+                r#"{"plan":"basic","expires_at":"2026-08-04","usage_today":1,"rpd":6000,"rpm":10.0,"topk":3}"#.into(),
+            ),
+            (
+                "200 OK",
+                r#"{"models":[{"id":"4p-x","game":"4p","desc":"d"}]}"#.into(),
+            ),
+        ]);
+        let client = ApiClient::new(&base, "SECRETKEY").unwrap();
+        assert_eq!(client.key_status().await.unwrap().plan, "basic");
+        assert_eq!(client.models().await.unwrap()[0].id, "4p-x");
+
+        let reqs = served.join().unwrap();
+        assert!(reqs[0].starts_with("GET /v3/key "), "{}", reqs[0]);
+        assert_eq!(header(&reqs[0], "authorization"), Some("Bearer SECRETKEY"));
+        assert!(reqs[1].starts_with("GET /v3/models "), "{}", reqs[1]);
+        assert_eq!(header(&reqs[1], "authorization"), Some("Bearer SECRETKEY"));
+    }
+
+    /// `redeem` and `health` are the unauthenticated endpoints — a buyer calls
+    /// them before they hold a key. Sending one would leak it needlessly.
+    #[tokio::test]
+    async fn redeem_and_health_send_no_authorization_header() {
+        let (base, served) = mock_http(vec![
+            (
+                "200 OK",
+                r#"{"key":"K","key_last4":"cdef","plan":"basic","expires_at":"2026-08-04","extended":false}"#.into(),
+            ),
+            ("200 OK", r#"{"status":"ok","models":["4p-x"]}"#.into()),
+        ]);
+        let r = redeem(&base, " CODE ", Some(" "), None).await.unwrap();
+        assert_eq!(r.key.as_deref(), Some("K"));
+        assert_eq!(health(&base).await.unwrap().status, "ok");
+
+        let reqs = served.join().unwrap();
+        assert!(reqs[0].starts_with("POST /v3/redeem "), "{}", reqs[0]);
+        assert!(header(&reqs[0], "authorization").is_none());
+        // Blank optionals are dropped, and the code is trimmed.
+        assert!(reqs[0].contains(r#""code":"CODE""#), "{}", reqs[0]);
+        assert!(!reqs[0].contains("email"), "{}", reqs[0]);
+        assert!(reqs[1].starts_with("GET /healthz "), "{}", reqs[1]);
+        assert!(header(&reqs[1], "authorization").is_none());
+    }
+
+    /// A non-2xx surfaces the server's `error` message and the `Retry-After` hint.
+    #[tokio::test]
+    async fn http_error_carries_the_server_message() {
+        let (base, served) = mock_http(vec![(
+            "429 Too Many Requests",
+            r#"{"error":"rate limited"}"#.into(),
+        )]);
+        let client = ApiClient::new(&base, "K").unwrap();
+        let err = client.key_status().await.unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("429"), "{msg}");
+        assert!(msg.contains("rate limited"), "{msg}");
+        let _ = served.join();
     }
 }
