@@ -1,5 +1,5 @@
 //! Self-serve purchase client for the inference API's PayPal endpoints
-//! (`/paypal/*`, see `native_bot/API.md` §13).
+//! (`/paypal/*`), as published by the inference server's own API documentation.
 //!
 //! Every purchase is a three-step handshake: **create → approve → collect**.
 //! [`create_order`] / [`create_subscription`] start one and return an
@@ -195,9 +195,7 @@ fn build_http() -> Result<reqwest::Client> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::thread::JoinHandle;
+    use crate::bot::test_http::mock_http;
 
     // ---- serde shapes (fake data throughout — no real PayPal traffic) ----
 
@@ -273,53 +271,7 @@ mod tests {
         );
     }
 
-    // ---- end-to-end against a local mock server ----
-
-    /// Minimal HTTP mock: serves one canned JSON response per accepted
-    /// connection, captures each raw request, then returns them all.
-    fn mock_http(responses: Vec<(&'static str, String)>) -> (String, JoinHandle<Vec<String>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = std::thread::spawn(move || {
-            let mut seen = Vec::new();
-            for (status_line, body) in responses {
-                let (mut sock, _) = listener.accept().unwrap();
-                let mut buf = Vec::new();
-                let mut tmp = [0u8; 1024];
-                loop {
-                    let n = sock.read(&mut tmp).unwrap();
-                    assert!(n > 0, "client hung up mid-request");
-                    buf.extend_from_slice(&tmp[..n]);
-                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let head = String::from_utf8_lossy(&buf[..pos]).to_string();
-                        let want: usize = head
-                            .lines()
-                            .find_map(|l| {
-                                let (k, v) = l.split_once(':')?;
-                                k.eq_ignore_ascii_case("content-length")
-                                    .then(|| v.trim().parse().ok())?
-                            })
-                            .unwrap_or(0);
-                        while buf.len() - (pos + 4) < want {
-                            let n = sock.read(&mut tmp).unwrap();
-                            assert!(n > 0, "client hung up mid-body");
-                            buf.extend_from_slice(&tmp[..n]);
-                        }
-                        break;
-                    }
-                }
-                seen.push(String::from_utf8_lossy(&buf).into_owned());
-                let resp = format!(
-                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n\
-                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len(),
-                );
-                sock.write_all(resp.as_bytes()).unwrap();
-            }
-            seen
-        });
-        (format!("http://{addr}"), handle)
-    }
+    // ---- end-to-end against a local mock server (see `crate::bot::test_http`) ----
 
     #[tokio::test]
     async fn create_then_poll_order_roundtrip() {

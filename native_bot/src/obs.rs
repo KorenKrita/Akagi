@@ -42,22 +42,28 @@
 
 use crate::tiles::{is_aka, next_dora_tile34, tile_dim, tile_index, AKA_TILE34};
 
+/// Planes that describe the deciding player only, before the per-player groups:
+/// hand thresholds (4) + aka + drawn tile + waits + dora indicators + dora tiles.
+const SELF_PLANES: usize = 4 + 1 + 1 + 1 + 1 + 1; // = 9
+/// Table-wide planes that follow the per-player groups: last discard, round wind,
+/// seat wind, honba, riichi sticks, turn progress, self tenpai, self is-dealer,
+/// kyoku index, self riichi-declared.
+const GLOBAL_PLANES: usize = 10;
+/// Per-player groups before the globals: discards, melds, riichi, riichi tile, score.
+const PER_PLAYER_GROUPS: usize = 5;
+
 /// Number of feature channels for the given player count.
 pub fn channels(num_players: u8) -> usize {
     let n = num_players as usize;
-    // fixed self/global planes + per-player groups
-    let fixed = 4 + 1 + 1 + 1 + 1 + 1  // self hand(4)+aka+drawn+waits+dora_ind+dora_tile
-        + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1; // last_discard, round_wind, seat_wind,
-                                             // honba, sticks, turn, tenpai, dealer, kyoku, ...
-                                             // NOTE: recount below to keep in sync with `encode`.
-    let per_player_groups = 5; // discards, melds, riichi, riichi_tile, score
     let kita_groups = if num_players == 3 { 1 } else { 0 };
-    // `fixed` above is 4+5 self planes + 9 globals + 1 (self riichi-declared) = 19.
-    // Written explicitly to avoid drift:
-    let _ = fixed;
-    let self_planes = 4 + 1 + 1 + 1 + 1 + 1; // = 9
-    let global_planes = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1; // = 10 (incl. self riichi-declared)
-    self_planes + global_planes + (per_player_groups + kita_groups) * n
+    SELF_PLANES + GLOBAL_PLANES + (PER_PLAYER_GROUPS + kita_groups) * n
+}
+
+/// Channel index of the "last discard" one-hot plane — the first of the global
+/// planes, i.e. straight after the per-player groups. `encode` `debug_assert`s
+/// its cursor against this, so the two can't drift apart.
+pub fn last_discard_channel(num_players: u8) -> usize {
+    SELF_PLANES + PER_PLAYER_GROUPS * num_players as usize
 }
 
 /// Per-player, self-relative view fed to the encoder.
@@ -251,6 +257,11 @@ impl EncInput {
         ch += n.saturating_sub(self.seats.len());
 
         // --- last discard (one-hot) ---
+        debug_assert_eq!(
+            ch,
+            last_discard_channel(np),
+            "last-discard plane moved; update `last_discard_channel`"
+        );
         if let Some(tid) = self.last_discard {
             if let Some(idx) = tile_index(tid, np) {
                 set!(ch, idx, 1.0);
@@ -355,7 +366,8 @@ mod tests {
         // Hand contains 1m (tile34 0); the >=1 plane (channel 0) must mark it.
         let inp = sample(4);
         let buf = inp.encode();
-        assert_eq!(buf[0 * 34 + 0], 1.0, "1m present in >=1 hand plane");
+        // Channel 0 (hand >= 1), tile34 0 (1m).
+        assert_eq!(buf[0], 1.0, "1m present in >=1 hand plane");
         // aka plane is channel 4: 5m/5p/5s red present -> positions 4,13,22
         let aka_ch = 4;
         assert_eq!(buf[aka_ch * 34 + 4], 1.0);

@@ -59,7 +59,7 @@ export function Statusbar() {
     bot.state === 'error'
       ? bot.error
       : bot.state === 'loading'
-        ? `${bot.bot} · ${bot.stage}`
+        ? `${bot.bot} · ${t(`status.stage_${bot.stage}`)}`
         : bot.state === 'ready' || bot.state === 'stopped'
           ? bot.bot
           : undefined

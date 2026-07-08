@@ -1368,7 +1368,7 @@ pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::H
         .map_err(|e| format!("{e:#}"))
 }
 
-// ---------- Self-serve key purchase (PayPal, see native_bot/API.md §13) ----------
+// ---------- Self-serve key purchase (PayPal, `/paypal/*`) ----------
 //
 // Thin passthroughs to `crate::bot::purchase`. The purchase state machine
 // (create → open approve_url → poll → redeem/store key) lives in the

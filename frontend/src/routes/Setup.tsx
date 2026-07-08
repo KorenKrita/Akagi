@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -18,6 +18,7 @@ import { InstallBlockingOverlay } from '@/components/InstallBlockingOverlay'
 import { NativeApiFields } from '@/components/NativeApiFields'
 import { invoke } from '@/lib/tauri'
 import { withInstallBlock } from '@/lib/install'
+import { mergeExternal } from '@/lib/merge'
 import { useTauriBridge } from '@/hooks/useTauriBridge'
 import { useConfigStore } from '@/stores/configStore'
 import { ManifestField } from '@/components/ManifestField'
@@ -69,14 +70,29 @@ export function Setup() {
   // MUST live above the early-return below — React forbids skipping a
   // hook on first render and then calling it on subsequent renders.
   const [botSettingsDraft, setBotSettingsDraft] = useState<Record<string, BotSettings>>({})
+  // Stored-config snapshot the wizard draft was last synced against — the
+  // merge base for folding external config changes into the open draft.
+  const syncedStoredRef = useRef<AppConfig | null>(stored)
 
   // True when the user is re-running setup from Settings (not first run).
   const isRerun = params.get('rerun') === '1' || stored?.general.first_run_completed === true
 
   useEffect(() => {
-    // Sync the editable draft from the store when it (re)loads.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (stored) setDraft(stored)
+    if (!stored) return
+    const prev = syncedStoredRef.current
+    syncedStoredRef.current = stored
+    if (!prev) {
+      // Seed the editable draft once the config loads.
+      setDraft(stored)
+      return
+    }
+    // The stored config changed mid-wizard (e.g. the purchase store persisted
+    // a delivered API key while the buyer was on another step). Three-way
+    // merge instead of re-seeding: only fields the user hasn't modified
+    // relative to the previous stored snapshot adopt the new stored value —
+    // recursively, so nested sections like `bot.api` merge per field — and
+    // every not-yet-saved wizard choice (platform, capture mode, …) survives.
+    setDraft((cur) => (cur ? mergeExternal(cur, prev, stored) : stored))
   }, [stored])
 
   useEffect(() => {

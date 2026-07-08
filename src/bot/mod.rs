@@ -18,6 +18,8 @@ pub mod runner;
 pub mod runtime;
 pub mod supervisor;
 pub mod sync_guard;
+#[cfg(test)]
+pub mod test_http;
 pub mod types;
 
 pub use install::{install_from_github_release, GithubInstallSpec};

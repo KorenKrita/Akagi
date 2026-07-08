@@ -302,14 +302,39 @@ Configure it on the **Bots** tab, under **Cloud inference (built-in bot)**:
 
 Buttons let you **Check key** (plan, expiry, today's usage vs. daily quota, rate
 limit), **Redeem code** (turn a prepaid code into a key — mint a new one, or add
-time to your current key), and **Health check** the server. To stay within the
-server's rate limit, the bot queries only at genuine decision points — it
-decides locally whether a call is even possible — never on every opponent
-discard.
+time to your current key), **Buy key** (see below), and **Health check** the
+server. To stay within the server's rate limit, the bot queries only at genuine
+decision points — it decides locally whether a call is even possible — never on
+every opponent discard.
+
+Changes apply **immediately after saving, even mid-game**: the bot re-reads these
+settings at every decision, so you can enable cloud inference during a hanchan,
+correct a mistyped key, or switch models without restarting the game. If the
+server stops responding, the bot falls back to the local model and skips the API
+for a short, growing backoff window rather than timing out on every turn; the
+status bar's **Online API** indicator turns red, and turns green again on
+recovery.
 
 The settings persist under `[bot.api]` in `config.toml` (`enabled`, `base_url`,
-`key`, `model_4p`, `model_3p`). A server URL + API key are distributed through
-the [Discord server](https://discord.gg/Z2wjXUK8bN).
+`key`, `model_4p`, `model_3p`).
+
+> **Your API key is stored in plaintext** in `config.toml`, and Akagi sends it as
+> a bearer token to the configured **Server URL**. Treat that file as a secret:
+> don't commit it, and scrub the `key` before sharing it (e.g. in a bug report).
+
+#### Getting a key
+
+Three ways, all from the **Cloud inference** card:
+
+- **Buy key** — an in-app purchase. Pick a plan (one-time top-ups, or a monthly
+  subscription), and Akagi opens PayPal in your browser. Prices are set by the
+  server; the app only sends the product id. Once payment clears, the key is
+  delivered back into the app and saved automatically — you can close the dialog
+  while you pay, and a status chip leads you back. If delivery ever fails, the
+  key is also emailed to the address you gave at checkout.
+- **Redeem code** — turn a prepaid code into a key, or add time to the key you
+  already hold.
+- Ask in the [Discord server](https://discord.gg/Z2wjXUK8bN).
 
 ### Install a bot
 

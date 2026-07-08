@@ -31,10 +31,15 @@ and fast — millions of samples in seconds.
 Notes:
 - One file = one game; malformed logs are skipped (guarded by `catch_unwind`).
 - Tenhou **sanma** logs use a 4-seat layout with a dummy 4th player and spell
-  nukidora as `nukidora`; the extractor truncates the extra seat and renames it
-  to `kita` so `GameState3P` accepts it.
+  nukidora as `nukidora`. Both are handled by `mjai_compat::parse_line`: the
+  rename runs *before* serde (riichienv's `MjaiEvent` has a `#[serde(other)]`
+  catch-all, so `nukidora` would otherwise deserialize to `Other` and be
+  dropped), the 4-seat arrays are truncated after.
 - Discards dominate (~77–81%), with `pass` synthesized for every seat that
-  could have called a discard but didn't.
+  could have called a discard but didn't. Sanma additionally spends ~6% of its
+  samples on kita.
+- Shards land in `native_bot/out/` (gitignored) — tens of GB. Only the trained
+  `weights/*.safetensors` are committed.
 
 ## 2. Train (Python, GPU)
 
@@ -53,12 +58,13 @@ BatchNorm is **folded into the preceding convolutions** so the exported model is
 pure Conv1d + Linear — the candle side needs no BatchNorm op. A parity check
 asserts the fold preserves the argmax decisions.
 
-Reference numbers (light/fast config, ~6M/4M samples, RTX 4070 Ti):
+Reference numbers for exactly the commands above (40k games → 6.0M/4.0M samples,
+10 epochs, RTX 4070 Ti) — these are what the committed weights were trained with:
 
-| | val top-1 | weights |
-|---|---|---|
-| 4p | ~75% | 2.6 MB |
-| 3p | ~78% | 2.2 MB |
+| | val top-1 | params | weights | train time |
+|---|---|---|---|---|
+| 4p | 75.9% | 660,050 | 2.6 MB | ~5 min |
+| 3p | 77.8% | 539,324 | 2.2 MB | ~3 min |
 
 ## 3. Verify parity (Rust ⇄ Python)
 

@@ -47,22 +47,42 @@ bridge to them.
   and the table's `num_players`. The manager picks `active_4p` or
   `active_3p` from `BotConfig` based on `num_players`; an empty slot for
   the matching mode means analysis-only for that game (no runner spawned).
-- `native` — the built-in, in-process bots (no Python, no subprocess).
-  Two reserved names select them: `akagi-native` (4p) / `akagi-native3p`
-  (3p). `NativeBot` runs the embedded pure-Rust `native_bot` candle model.
-  `ApiNativeBot` instead proxies each decision to the remote inference
-  API (see `api`), keeping `NativeBot`'s local model as a legal-action
-  gate (skip the API when we can't act) and an error/timeout fallback.
-  `native::build(actor_id, num_players, &api)` picks one via
-  `BotConfig.api.is_active()`; `BotManager::spawn_runner` calls it for the
-  reserved names, bypassing the registry / venv path entirely.
+- `native` — the built-in, in-process bot (no Python, no subprocess).
+  Two reserved names select it: `akagi-native` (4p) / `akagi-native3p`
+  (3p). `NativeBot` always loads the embedded pure-Rust `native_bot` candle
+  model, and re-reads `BotConfig.api` from the shared `AppConfig` at **every
+  decision**: when `is_active()`, the decision is proxied to the remote
+  inference API (see `api`) with the local model kept as a legal-action gate
+  (skip the API when we can't act) and an error/timeout fallback. Re-reading
+  per decision is what lets the user enable cloud inference, fix a mistyped
+  key, or switch models mid-game — a change resets the `Breaker` so the new
+  settings are tried on the very next move. `Breaker` is an exponential-backoff
+  circuit breaker (5s → 120s): after a failed call the API is skipped for the
+  window, so a dead server costs one slow turn per window instead of a request
+  timeout on every decision. `native::build(actor_id, num_players, config,
+  notify_tx)` seeds the session silently; `BotManager::spawn_runner` calls it
+  for the reserved names, bypassing the registry / venv path entirely.
 - `api` — `ApiClient` + free `redeem`/`health`: a `reqwest` wrapper over
   the remote inference server (`/v3/react`, `/v3/key`, `/v3/models`,
-  `/v3/redeem`, `/healthz`). Consumed by `ApiNativeBot` and by the
+  `/v3/redeem`, `/healthz`). Auth is a bearer header. `react` carries its own
+  short `REACT_TIMEOUT` because it blocks the bot's turn; everything else uses
+  the client-wide `REQUEST_TIMEOUT`. Building an `ApiClient` builds a fresh
+  connection pool, so hold one and reuse it. Consumed by `NativeBot` and by the
   `native_api_*` IPC commands (redeem a code, check a key, list models).
+- `purchase` — the unauthenticated PayPal handshake used by the in-app "Buy
+  key" flow: `create_order` / `create_subscription` return an `approve_url`
+  plus a `claim_secret`, and `order_result` / `subscription_result` poll with
+  that secret until the server hands back a redeem code (one-time) or a key
+  (subscription). Prices are server-owned — only the product id crosses the
+  wire, and no client secret is embedded in the binary. Stateless like `api`;
+  the polling state machine lives in the frontend's purchase store, driven
+  through the `native_api_*` IPC commands.
 - `supervisor` — `run_bot_manager`: constructs the `BotManager` and drives
   its run loop off the `MjaiBus`. Tolerates a missing Python runtime — the
   built-in `native` bots need none.
+- `test_http` (test-only) — a tiny scripted HTTP mock shared by the `api`,
+  `purchase` and `native` tests, so they can assert on the raw request
+  (path, `Authorization` header, body) and script the response.
 
 ## Adding a new bot
 

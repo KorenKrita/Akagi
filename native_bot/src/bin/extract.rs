@@ -57,10 +57,6 @@ fn read_gz(path: &Path) -> Result<String> {
 }
 
 fn main() -> Result<()> {
-    // We guard each game with catch_unwind; silence the default panic printer so
-    // rare pathological logs don't spam stderr (they're just skipped).
-    std::panic::set_hook(Box::new(|_| {}));
-
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
         eprintln!(
@@ -110,64 +106,79 @@ fn main() -> Result<()> {
 
     let total = AtomicUsize::new(0);
 
-    let shard_counts: Vec<usize> = chunks
+    let shard = |ci: usize, chunk: &[PathBuf]| -> Result<usize> {
+        let create = |ext: &str| -> Result<BufWriter<File>> {
+            let path = out_dir.join(format!("{ci}.{ext}"));
+            let f = File::create(&path).with_context(|| format!("create {path:?}"))?;
+            Ok(BufWriter::new(f))
+        };
+        let mut obs_w = create("obs")?;
+        let mut act_w = create("act")?;
+        let mut msk_w = create("msk")?;
+        let mut local = 0usize;
+
+        for path in chunk {
+            if total.load(Ordering::Relaxed) >= max_samples {
+                break;
+            }
+            let content = match read_gz(path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            // Buffer the game's samples; only commit if replay didn't panic,
+            // so a pathological log never writes a torn record.
+            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let mut g_obs: Vec<u8> = Vec::new();
+                let mut g_act: Vec<u8> = Vec::new();
+                let mut g_msk: Vec<u8> = Vec::new();
+                let mut g_n = 0usize;
+                {
+                    let mut emit = |obs: &[f32], act: u16, mask: &[u8]| {
+                        g_obs.extend(obs.iter().map(|&v| quantize(v)));
+                        g_act.extend_from_slice(&act.to_le_bytes());
+                        g_msk.extend_from_slice(mask);
+                        g_n += 1;
+                    };
+                    replay_game(&content, num_players, &mut emit);
+                }
+                (g_obs, g_act, g_msk, g_n)
+            }));
+
+            if let Ok((g_obs, g_act, g_msk, g_n)) = outcome {
+                // Sanity: lengths must match declared geometry.
+                debug_assert_eq!(g_obs.len(), g_n * obs_len);
+                debug_assert_eq!(g_msk.len(), g_n * a);
+                // A write failure (full disk) would silently truncate a shard and
+                // desync it from the sample counts in meta.json — fail loudly.
+                obs_w.write_all(&g_obs).context("write obs shard")?;
+                act_w.write_all(&g_act).context("write act shard")?;
+                msk_w.write_all(&g_msk).context("write mask shard")?;
+                local += g_n;
+                total.fetch_add(g_n, Ordering::Relaxed);
+            }
+        }
+
+        obs_w.flush().context("flush obs shard")?;
+        act_w.flush().context("flush act shard")?;
+        msk_w.flush().context("flush mask shard")?;
+        Ok(local)
+    };
+
+    // Each game is guarded by `catch_unwind`; silence the default panic printer
+    // for the duration of the parallel replay so rare pathological logs don't
+    // spam stderr (they're skipped). Scoped: the hook is restored immediately
+    // after, and every non-replay failure inside is a `Result`, not a panic — so
+    // a read-only out_dir reports an error instead of exiting silently.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let shard_counts: Result<Vec<usize>> = chunks
         .par_iter()
         .enumerate()
-        .map(|(ci, chunk)| -> usize {
-            let mut obs_w =
-                BufWriter::new(File::create(out_dir.join(format!("{ci}.obs"))).unwrap());
-            let mut act_w =
-                BufWriter::new(File::create(out_dir.join(format!("{ci}.act"))).unwrap());
-            let mut msk_w =
-                BufWriter::new(File::create(out_dir.join(format!("{ci}.msk"))).unwrap());
-            let mut local = 0usize;
-
-            for path in *chunk {
-                if total.load(Ordering::Relaxed) >= max_samples {
-                    break;
-                }
-                let content = match read_gz(path) {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                };
-
-                // Buffer the game's samples; only commit if replay didn't panic,
-                // so a pathological log never writes a torn record.
-                let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    let mut g_obs: Vec<u8> = Vec::new();
-                    let mut g_act: Vec<u8> = Vec::new();
-                    let mut g_msk: Vec<u8> = Vec::new();
-                    let mut g_n = 0usize;
-                    {
-                        let mut emit = |obs: &[f32], act: u16, mask: &[u8]| {
-                            g_obs.extend(obs.iter().map(|&v| quantize(v)));
-                            g_act.extend_from_slice(&act.to_le_bytes());
-                            g_msk.extend_from_slice(mask);
-                            g_n += 1;
-                        };
-                        replay_game(&content, num_players, &mut emit);
-                    }
-                    (g_obs, g_act, g_msk, g_n)
-                }));
-
-                if let Ok((g_obs, g_act, g_msk, g_n)) = outcome {
-                    // Sanity: lengths must match declared geometry.
-                    debug_assert_eq!(g_obs.len(), g_n * obs_len);
-                    debug_assert_eq!(g_msk.len(), g_n * a);
-                    let _ = obs_w.write_all(&g_obs);
-                    let _ = act_w.write_all(&g_act);
-                    let _ = msk_w.write_all(&g_msk);
-                    local += g_n;
-                    total.fetch_add(g_n, Ordering::Relaxed);
-                }
-            }
-
-            let _ = obs_w.flush();
-            let _ = act_w.flush();
-            let _ = msk_w.flush();
-            local
-        })
+        .map(|(ci, chunk)| shard(ci, chunk))
         .collect();
+    std::panic::set_hook(prev_hook);
+    let shard_counts = shard_counts?;
 
     let total_samples: usize = shard_counts.iter().sum();
     let meta = serde_json::json!({

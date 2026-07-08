@@ -131,57 +131,53 @@ impl CaptureBackend for ChromiumBackend {
         let shutdown_fut = shutdown.wait();
         tokio::pin!(shutdown_fut);
 
-        let result = tokio::select! {
-            biased;
-            _ = &mut shutdown_fut => {
-                info!("chromium backend: shutdown requested");
-                Ok(())
-            }
-            r = &mut cdp_fut => {
-                match &r {
-                    Ok(()) => info!("chromium backend: CDP loop exited cleanly"),
-                    Err(e) => warn!("chromium backend: CDP loop error: {e:#}"),
+        // Race shutdown, the CDP loop, and the spawned process's exit. The
+        // shutdown and CDP arms are terminal. The child-exit arm may not be:
+        // after a launcher handoff (see below) we merely disable that arm via
+        // its `if !child_exited` precondition and loop, so shutdown and CDP
+        // keep racing — one set of arms instead of a duplicated inner select.
+        let mut child_exited = false;
+        let result = loop {
+            tokio::select! {
+                biased;
+                _ = &mut shutdown_fut => {
+                    info!("chromium backend: shutdown requested");
+                    break Ok(());
                 }
-                r
-            }
-            status = child.wait() => {
-                // A clean exit of the process we spawned is not necessarily
-                // the browser dying: Edge (and Chrome in some setups) may
-                // relaunch itself with the same arguments and exit the
-                // original process with code 0 — a launcher handoff. The
-                // relaunched browser keeps serving our CDP endpoint, so probe
-                // it before declaring the browser dead.
-                let handoff = matches!(&status, Ok(s) if s.success())
-                    && match launch::endpoint_port(&cdp_endpoint) {
-                        Some(port) => launch::devtools_http_alive(port).await,
-                        None => false,
-                    };
-                if handoff {
-                    info!(
-                        "chromium backend: spawned process exited but the CDP \
-                         endpoint is still alive (launcher handoff); continuing"
-                    );
-                    tokio::select! {
-                        biased;
-                        _ = &mut shutdown_fut => {
-                            info!("chromium backend: shutdown requested");
-                            Ok(())
-                        }
-                        r = &mut cdp_fut => {
-                            match &r {
-                                Ok(()) => info!("chromium backend: CDP loop exited cleanly"),
-                                Err(e) => warn!("chromium backend: CDP loop error: {e:#}"),
-                            }
-                            r
-                        }
+                r = &mut cdp_fut => {
+                    match &r {
+                        Ok(()) => info!("chromium backend: CDP loop exited cleanly"),
+                        Err(e) => warn!("chromium backend: CDP loop error: {e:#}"),
                     }
-                } else {
-                    match status {
-                        Ok(s) => {
-                            warn!("chromium backend: browser exited (status {s})");
-                            Err(anyhow::anyhow!("browser exited unexpectedly: {s}"))
-                        }
-                        Err(e) => Err(anyhow::anyhow!("child wait error: {e}")),
+                    break r;
+                }
+                status = child.wait(), if !child_exited => {
+                    child_exited = true;
+                    // A clean exit of the process we spawned is not necessarily
+                    // the browser dying: Edge (and Chrome in some setups) may
+                    // relaunch itself with the same arguments and exit the
+                    // original process with code 0 — a launcher handoff. The
+                    // relaunched browser keeps serving our CDP endpoint, so probe
+                    // it before declaring the browser dead.
+                    let handoff = matches!(&status, Ok(s) if s.success())
+                        && match launch::endpoint_port(&cdp_endpoint) {
+                            Some(port) => launch::devtools_http_alive(port).await,
+                            None => false,
+                        };
+                    if handoff {
+                        info!(
+                            "chromium backend: spawned process exited but the CDP \
+                             endpoint is still alive (launcher handoff); continuing"
+                        );
+                        // Loop again with the child arm disabled.
+                    } else {
+                        break match status {
+                            Ok(s) => {
+                                warn!("chromium backend: browser exited (status {s})");
+                                Err(anyhow::anyhow!("browser exited unexpectedly: {s}"))
+                            }
+                            Err(e) => Err(anyhow::anyhow!("child wait error: {e}")),
+                        };
                     }
                 }
             }

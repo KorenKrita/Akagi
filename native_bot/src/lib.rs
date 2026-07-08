@@ -7,17 +7,18 @@
 //!   reusing riichienv-core's canonical action ids.
 //! - [`adapt`] — build an `EncInput` from a riichienv-core observation (shared
 //!   by extraction and inference, guaranteeing feature parity).
+//! - [`mjai_compat`] — event fixups applied before an mjai stream reaches a
+//!   riichienv-core state (shared by extraction and inference).
 //! - [`replay`] — drive an mjai game log through the engine, emitting
 //!   `(obs, action, mask)` training samples (extractor side).
 //! - [`model`] / [`engine`] — candle CNN inference (behind the `infer` feature).
 
 pub mod action_codec;
 pub mod adapt;
+pub mod mjai_compat;
 pub mod obs;
-pub mod tiles;
-
-#[cfg(feature = "extract")]
 pub mod replay;
+pub mod tiles;
 
 #[cfg(feature = "infer")]
 pub mod defaults;

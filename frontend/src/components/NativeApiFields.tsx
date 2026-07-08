@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CheckCircle2,
@@ -58,6 +58,7 @@ export function NativeApiFields({
   const [showKey, setShowKey] = useState(false)
   const [checking, setChecking] = useState(false)
   const [enabling, setEnabling] = useState(false)
+  const [checkingHealth, setCheckingHealth] = useState(false)
   const [loadingModels, setLoadingModels] = useState(false)
   const [status, setStatus] = useState<KeyStatus | null>(null)
   const [models, setModels] = useState<ModelInfo[] | null>(null)
@@ -68,6 +69,15 @@ export function NativeApiFields({
 
   const set = (patch: Partial<NativeApiConfig>) => onChange({ ...value, ...patch })
   const hasUrlKey = value.base_url.trim() !== '' && value.key.trim() !== ''
+
+  // Latest `value` as of the last committed render. Async handlers (the model
+  // auto-fill in `toggleEnabled`) resolve against this instead of the snapshot
+  // captured when the request started, so a slow request never clobbers what
+  // the user typed while it was in flight.
+  const valueRef = useRef(value)
+  useEffect(() => {
+    valueRef.current = value
+  }, [value])
 
   const queryModels = async (v: NativeApiConfig): Promise<ModelInfo[]> => {
     const list = await invoke<ModelInfo[]>('native_api_models', {
@@ -94,10 +104,14 @@ export function NativeApiFields({
       const list = await queryModels(next)
       const first4p = list.find((m) => m.game === '4p')?.id
       const first3p = list.find((m) => m.game === '3p')?.id
-      const filled = { ...next }
+      // Merge the auto-filled models into the CURRENT value, not the pre-toggle
+      // snapshot: the user may have typed into any field during the 1–2s fetch.
+      // Fill only still-empty model slots so a model the user just chose wins.
+      const cur = valueRef.current
+      const filled = { ...cur }
       if (!filled.model_4p && first4p) filled.model_4p = first4p
       if (!filled.model_3p && first3p) filled.model_3p = first3p
-      if (filled.model_4p !== next.model_4p || filled.model_3p !== next.model_3p) {
+      if (filled.model_4p !== cur.model_4p || filled.model_3p !== cur.model_3p) {
         onChange(filled)
       }
     } catch (e) {
@@ -168,6 +182,7 @@ export function NativeApiFields({
       setErr(t('bots.api.need_url'))
       return
     }
+    setCheckingHealth(true)
     setErr(null)
     try {
       const h = await invoke<{ status: string; models: string[] }>('native_api_health', {
@@ -178,12 +193,15 @@ export function NativeApiFields({
       })
     } catch (e) {
       setErr(String(e))
+    } finally {
+      setCheckingHealth(false)
     }
   }
 
   return (
     <div className="grid gap-4">
       <p className="text-sm text-muted-foreground">{t('bots.api.desc')}</p>
+      <p className="text-xs text-muted-foreground -mt-2">{t('bots.api.apply_immediately')}</p>
 
       <div className="flex items-center justify-between gap-4">
         <div className="flex flex-col">
@@ -307,8 +325,14 @@ export function NativeApiFields({
           <RefreshCw className={`h-4 w-4 ${loadingModels ? 'animate-spin' : ''}`} />
           {t('bots.api.fetch_models')}
         </Button>
-        <Button variant="outline" size="sm" onClick={health} className="gap-1.5">
-          <Activity className="h-4 w-4" />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={health}
+          disabled={checkingHealth}
+          className="gap-1.5"
+        >
+          <Activity className={`h-4 w-4 ${checkingHealth ? 'animate-spin' : ''}`} />
           {t('bots.api.health')}
         </Button>
         <Button variant="outline" size="sm" onClick={() => setRedeemOpen(true)} className="gap-1.5">

@@ -1,8 +1,8 @@
-// Purchasable API-key products, per native_bot/API.md §13.5: there is no
-// list-products endpoint — product ids are operator-defined constants shipped
-// with the app, and the prices here are DISPLAY-ONLY (the server owns the
-// real amount and re-verifies what PayPal captured; only the id crosses the
-// wire). Update this table when the operator's catalog changes.
+// Purchasable API-key products. Per the inference server's API documentation,
+// there is no list-products endpoint — product ids are operator-defined
+// constants shipped with the app, and the prices here are DISPLAY-ONLY (the
+// server owns the real amount and re-verifies what PayPal captured; only the
+// id crosses the wire). Update this table when the operator's catalog changes.
 
 export type PurchaseKind = 'onetime' | 'subscription'
 
