@@ -10,7 +10,12 @@ use native_bot::engine::{BotAction, Engine};
 use riichienv_core::replay::MjaiEvent;
 
 fn weights(name: &str) -> Vec<u8> {
-    fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("weights").join(name)).expect("weights")
+    fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("weights")
+            .join(name),
+    )
+    .expect("weights")
 }
 
 fn ev(line: &str) -> MjaiEvent {
@@ -29,7 +34,10 @@ fn decides_a_legal_discard_after_tsumo() {
     eng.feed(ev(&start_kyoku));
     eng.feed(ev(r#"{"type":"tsumo","actor":0,"pai":"5p"}"#));
 
-    let decision = eng.decide().unwrap().expect("we should have a decision on our tsumo");
+    let decision = eng
+        .decide()
+        .unwrap()
+        .expect("we should have a decision on our tsumo");
     // Our turn after a draw: the only free choices are discard / riichi / kan /
     // hora / kyushu. It must never be a claim/pass here.
     assert!(
@@ -46,7 +54,10 @@ fn decides_a_legal_discard_after_tsumo() {
         decision.action
     );
     assert_eq!(decision.logits.len(), 82);
-    assert!(decision.logits.iter().all(|v| v.is_finite()), "logits finite");
+    assert!(
+        decision.logits.iter().all(|v| v.is_finite()),
+        "logits finite"
+    );
 }
 
 #[test]
@@ -70,7 +81,9 @@ fn plays_several_turns_without_panic() {
             )));
         }
         for seat in 1..4u8 {
-            eng.feed(ev(&format!(r#"{{"type":"tsumo","actor":{seat},"pai":"9s"}}"#)));
+            eng.feed(ev(&format!(
+                r#"{{"type":"tsumo","actor":{seat},"pai":"9s"}}"#
+            )));
             eng.feed(ev(&format!(
                 r#"{{"type":"dahai","actor":{seat},"pai":"9s","tsumogiri":true}}"#
             )));

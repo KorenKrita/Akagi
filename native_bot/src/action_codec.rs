@@ -130,7 +130,10 @@ mod tests {
             Some(37)
         );
         assert_eq!(
-            action_index(&Action::new(ActionType::Pon, Some(0), vec![1, 2], Some(0)), 4),
+            action_index(
+                &Action::new(ActionType::Pon, Some(0), vec![1, 2], Some(0)),
+                4
+            ),
             Some(41)
         );
         assert_eq!(
