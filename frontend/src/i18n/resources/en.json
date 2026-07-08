@@ -467,6 +467,7 @@
     "api": {
       "title": "Cloud inference (built-in bot)",
       "desc": "Optionally route the built-in bot's moves to a remote inference server for a stronger model. The offline local model stays as an automatic fallback if the server is unreachable.",
+      "apply_immediately": "Changes take effect immediately after saving, even during a game.",
       "enable": "Use cloud inference API",
       "enable_hint": "When on, the built-in bot asks the server for each move; it falls back to the local model on any error.",
       "base_url": "Server URL",
@@ -615,6 +616,8 @@
     "capture_error": "Capture error",
     "bot_idle": "Bot: Idle",
     "bot_loading": "Bot: Loading",
+    "stage_syncing_deps": "Syncing dependencies…",
+    "stage_spawning": "Starting…",
     "bot_ready": "Bot: Ready",
     "bot_error": "Bot: Error",
     "bot_stopped": "Bot: Stopped"

@@ -14,7 +14,7 @@ import type {
   SubscriptionResult,
 } from '@/types'
 
-// Drives the self-serve key purchase handshake (native_bot/API.md §13):
+// Drives the self-serve key purchase handshake (see the inference server's API documentation):
 // create → open approve_url in the browser → poll *-result every few seconds
 // → one-time: auto-redeem the code into a key / subscription: key directly.
 //

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useBlocker } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive, Download, Cloud } from 'lucide-react'
@@ -41,6 +41,7 @@ import type { AppConfig, BotInfo, BotSettings, NativeApiConfig } from '@/types'
 import { ManifestField } from '@/components/ManifestField'
 import { NativeApiFields } from '@/components/NativeApiFields'
 import { persistApiConfig } from '@/lib/nativeApi'
+import { mergeExternal } from '@/lib/merge'
 
 // Reserved names of the built-in, pure-Rust bots (see `src/bot/native.rs`).
 // They have no directory, no manifest, and nothing to install/configure/delete.
@@ -606,17 +607,34 @@ function NativeApiSettings() {
 
   const [draft, setDraft] = useState<NativeApiConfig | null>(null)
   const [saving, setSaving] = useState(false)
+  // Stored `bot.api` snapshot the draft was last synced against — the merge
+  // base for folding external config changes into the open draft.
+  const syncedApiRef = useRef<NativeApiConfig | null>(null)
 
   useEffect(() => {
-    // Seed the editable draft once the config loads.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (api && !draft) setDraft({ ...api })
-  }, [api, draft])
+    if (!api) return
+    const prev = syncedApiRef.current
+    syncedApiRef.current = api
+    if (!prev) {
+      // Seed the editable draft once the config loads.
+      setDraft({ ...api })
+      return
+    }
+    // The stored config changed while the draft is open (e.g. a purchased key
+    // was delivered and persisted while the purchase dialog was unmounted).
+    // Three-way merge: fields the user hasn't touched (draft still equal to
+    // the previous stored snapshot) adopt the new stored value; fields the
+    // user edited keep their draft value. `dirty` below recomputes from the
+    // merged result, so Save can never silently revert a delivered key.
+    setDraft((cur) => (cur ? mergeExternal(cur, prev, api) : { ...api }))
+  }, [api])
 
   // Same unsaved-changes guard as the Settings page: block in-app navigation
   // while the draft differs from the stored config, and warn on window close.
-  // (A minted key never trips this — `onKeyMinted` persists it immediately,
-  // so stored and draft move together.)
+  // (A minted or purchased key never trips this: `onKeyMinted` persists it
+  // immediately, and external persists — e.g. the purchase store's fallback —
+  // are merged into the untouched draft fields above, so stored and draft
+  // only diverge where the user really has unsaved edits.)
   const dirty = !!api && !!draft && JSON.stringify(draft) !== JSON.stringify(api)
 
   const blocker = useBlocker(
