@@ -62,16 +62,16 @@ exact channel layout.
 See [`train/README.md`](train/README.md) for the end-to-end extract → train →
 export flow.
 
-> **The bundled weights are stale.** The "last discard" feature plane used to be
-> fed the *discarder's seat* instead of the discarded tile (riichienv-core
-> 0.4.8's `Observation::last_discard` mislabels the `(pid, tile)` tuple; see the
-> module docs in `src/adapt.rs`). `adapt.rs` now reads the tile from the game
-> state, so the plane finally carries what its name says — but `weights/*.safetensors`
-> were trained against the broken plane. They still load and play (the geometry
-> is unchanged), and the model can read the claimable tile from the discard
-> planes, but **re-extract and re-train to get the benefit of the fix**. The
-> parity fixtures check candle-vs-PyTorch numerics, not feature semantics, so
-> they pass either way.
+> **Weights are layout-specific — and the layout changed.** The "last discard"
+> feature plane used to be fed the *discarder's seat* instead of the discarded
+> tile (riichienv-core 0.4.8's `Observation::last_discard` mislabels the
+> `(pid, tile)` tuple; see the module docs in `src/adapt.rs`). `adapt.rs` now
+> reads the tile from the game state, and the bundled `weights/*.safetensors`
+> were retrained against the corrected encoder. Do **not** pair the current
+> `adapt.rs` with weights predating the fix: they load fine (the geometry is
+> unchanged) but silently disagree on ~2% of call decisions, and the parity
+> fixtures won't catch it — they check candle-vs-PyTorch numerics, not feature
+> semantics.
 
 **To change the observation features**: edit `src/obs.rs` (`channels()` and
 `EncInput::encode`, keeping the `debug_assert_eq!(ch, c)` cursor honest) and the
