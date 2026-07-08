@@ -606,7 +606,7 @@
   },
   "status": {
     "connected": "已連線",
-    "api_active": "線上 API：即時",
+    "api_active": "線上 API：已連線",
     "api_degraded": "線上 API：離線",
     "api_active_hint": "內建 Bot 正在使用線上推論 API。",
     "api_degraded_hint": "無法連線到線上推論 API —— 內建 Bot 已改用本機模型。",

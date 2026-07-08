@@ -606,7 +606,7 @@
   },
   "status": {
     "connected": "已连接",
-    "api_active": "在线 API：实时",
+    "api_active": "在线 API：已连接",
     "api_degraded": "在线 API：离线",
     "api_active_hint": "内建 Bot 正在使用在线推理 API。",
     "api_degraded_hint": "无法连接到在线推理 API —— 内建 Bot 已改用本地模型。",
