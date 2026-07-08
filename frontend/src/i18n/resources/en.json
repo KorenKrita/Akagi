@@ -606,7 +606,7 @@
   },
   "status": {
     "connected": "Connected",
-    "api_active": "Online API: Live",
+    "api_active": "Online API: Connected",
     "api_degraded": "Online API: Offline",
     "api_active_hint": "The built-in bot is using the online inference API.",
     "api_degraded_hint": "The online inference API is unreachable — the built-in bot is using the local model instead.",

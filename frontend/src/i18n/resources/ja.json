@@ -606,7 +606,7 @@
   },
   "status": {
     "connected": "接続済み",
-    "api_active": "オンラインAPI: ライブ",
+    "api_active": "オンラインAPI: 接続済み",
     "api_degraded": "オンラインAPI: オフライン",
     "api_active_hint": "内蔵ボットはオンライン推論APIを使用しています。",
     "api_degraded_hint": "オンライン推論APIに接続できません。内蔵ボットはローカルモデルを使用しています。",
