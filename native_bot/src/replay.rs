@@ -18,7 +18,7 @@ use riichienv_core::state_3p::GameState3P;
 
 use crate::action_codec::{action_index, pass_index};
 use crate::adapt::{obs_and_legal_3p, obs_and_legal_4p};
-use crate::mjai_compat::sanitize_3p;
+use crate::mjai_compat::parse_line;
 
 /// Sink for emitted samples: `(encoded obs [C*T] f32, action id, legal mask)`.
 pub type Emit<'a> = dyn FnMut(&[f32], u16, &[u8]) + 'a;
@@ -191,10 +191,6 @@ pub fn replay_game(content: &str, num_players: u8, emit: &mut Emit) -> usize {
     let np = eng.num_players();
     let pass_idx = pass_index(np) as u16;
 
-    // Tenhou sanma logs spell nukidora (kita) as `nukidora`; riichienv expects
-    // `kita`. Rename so the engine applies it (harmless for 4p logs).
-    let content = content.replace("\"type\":\"nukidora\"", "\"type\":\"kita\"");
-
     // Responders snapshotted at the last discard, pending a pass/claim decision.
     let mut window: Vec<(u8, Vec<f32>, Vec<u8>)> = Vec::new();
     let mut count = 0usize;
@@ -203,20 +199,12 @@ pub fn replay_game(content: &str, num_players: u8, emit: &mut Emit) -> usize {
     let mut prev_was_hora = false;
 
     for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() {
+        // Applies the sanma nukidora→kita rename (which must happen before serde
+        // sees the line) and the 4-seat array truncation; skips blank, malformed,
+        // and unmodelled lines.
+        let Some(ev) = parse_line(line, np) else {
             continue;
-        }
-        let mut ev: MjaiEvent = match serde_json::from_str(line) {
-            Ok(e) => e,
-            Err(_) => continue,
         };
-        if matches!(ev, MjaiEvent::Other) {
-            continue;
-        }
-        if np == 3 {
-            sanitize_3p(&mut ev);
-        }
 
         let is_hora = matches!(ev, MjaiEvent::Hora { .. });
 

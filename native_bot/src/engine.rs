@@ -21,7 +21,7 @@ use riichienv_core::state_3p::GameState3P;
 
 use crate::action_codec::{pick_by_logits, rank_by_logits};
 use crate::adapt::{obs_and_legal_3p, obs_and_legal_4p};
-use crate::mjai_compat::sanitize_3p;
+use crate::mjai_compat::{parse_line, sanitize_3p};
 use crate::model::Model;
 
 /// How many ranked candidates the engine surfaces for the HUD's multi-row
@@ -155,12 +155,17 @@ impl Engine {
         self.num_players
     }
 
-    /// Drive one mjai event through the engine.
+    /// Drive one already-parsed mjai event through the engine.
     ///
     /// Sanma events are sanitized first: Tenhou sanma logs carry 4-element
     /// `scores`/`tehais` arrays that a 3-seat `GameState3P` would index out of
-    /// bounds on. The extractor already does this; doing it here too means a log
-    /// that replays cleanly can also be fed to the live engine without panicking.
+    /// bounds on. Akagi's live bridge builds its events itself and never trips
+    /// this, but the extractor's logs do.
+    ///
+    /// This can only fix what survives parsing. Raw JSONL needs
+    /// [`Engine::feed_line`] (or [`crate::mjai_compat::parse_line`]): a sanma
+    /// log's `nukidora` has to be renamed to `kita` *before* serde sees it, or
+    /// it deserializes into `MjaiEvent::Other` and the event is lost.
     pub fn feed(&mut self, ev: MjaiEvent) {
         match &mut self.backend {
             Backend::Four { state, .. } => state.apply_mjai_event(ev),
@@ -169,6 +174,20 @@ impl Engine {
                 sanitize_3p(&mut ev);
                 state.apply_mjai_event(ev)
             }
+        }
+    }
+
+    /// Drive one raw mjai JSONL line through the engine, applying both
+    /// compatibility fixups. Returns `false` for a line the engine doesn't model
+    /// (blank, malformed, or an event type riichienv has no variant for), which
+    /// callers replaying a log simply skip.
+    pub fn feed_line(&mut self, line: &str) -> bool {
+        match parse_line(line, self.num_players) {
+            Some(ev) => {
+                self.feed(ev);
+                true
+            }
+            None => false,
         }
     }
 
@@ -577,6 +596,32 @@ mod tests {
             "fixture invalid: no pon offered on the 9s discard ({:?})",
             d.candidates.iter().map(|(a, _)| a).collect::<Vec<_>>()
         );
+    }
+
+    /// Regression: `feed_line` must apply the pre-parse `nukidora`→`kita` rename.
+    /// Parsed straight through serde, a Tenhou sanma nukidora becomes
+    /// `MjaiEvent::Other` and is dropped — the engine's kita counts would drift
+    /// silently away from the real table.
+    #[test]
+    fn feed_line_applies_the_nukidora_rename() {
+        let h = r#"["1m","9m","1p","2p","3p","4p","5p","6p","7p","8p","9p","N","N"]"#;
+        let mut eng = crate::defaults::engine(3, 0).expect("bundled 3p weights");
+        assert!(eng.feed_line(r#"{"type":"start_game","names":["a","b","c",""]}"#));
+        assert!(eng.feed_line(&format!(
+            r#"{{"type":"start_kyoku","bakaze":"E","dora_marker":"1s","kyoku":1,"honba":0,
+                 "kyotaku":0,"oya":0,"scores":[35000,35000,35000,0],
+                 "tehais":[{h},{h},{h},{h}]}}"#
+        )));
+        assert!(eng.feed_line(r#"{"type":"tsumo","actor":0,"pai":"9p"}"#));
+        assert!(
+            eng.feed_line(r#"{"type":"nukidora","actor":0}"#),
+            "a nukidora must reach the engine, not be skipped as an unknown type"
+        );
+
+        // Unmodelled / blank / malformed lines are skipped, not applied.
+        assert!(!eng.feed_line(""));
+        assert!(!eng.feed_line("{oops"));
+        assert!(!eng.feed_line(r#"{"type":"some_future_event"}"#));
     }
 
     /// A sanma engine must survive a Tenhou-style 4-seat `start_kyoku` (the
