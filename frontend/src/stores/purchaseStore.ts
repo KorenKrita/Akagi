@@ -9,6 +9,7 @@ import type { Product } from '@/lib/products'
 import type {
   CreatedOrder,
   CreatedSubscription,
+  KeyStatus,
   OrderResult,
   RedeemResponse,
   SubscriptionResult,
@@ -16,7 +17,20 @@ import type {
 
 // Drives the self-serve key purchase handshake (see the inference server's API documentation):
 // create → open approve_url in the browser → poll *-result every few seconds
-// → one-time: auto-redeem the code into a key / subscription: key directly.
+// → the key.
+//
+// How the key arrives depends on the purchase:
+//  - subscription           → the poll carries it directly.
+//  - one-time, new key      → `create-order` is sent `redeem: true`, so the
+//                             SERVER redeems the prepaid code and the poll
+//                             carries the key. The buyer's backup email then
+//                             holds the key too, not a one-time code the app
+//                             already spent (which reads like a credential and
+//                             is not one).
+//  - one-time, renewal      → `redeem: false`, because stacking time onto an
+//                             existing key needs the raw code: only
+//                             `/v3/redeem` accepts a `renew_key` target. This
+//                             is the one path that still redeems client-side.
 //
 // This lives in a store (not dialog state) so a purchase survives the dialog
 // — or the whole Settings page — unmounting while the buyer is off approving
@@ -40,7 +54,7 @@ export type PurchasePhase =
   | 'idle'
   | 'creating' // create-order / create-subscription in flight
   | 'approving' // buyer is on PayPal; polling *-result
-  | 'redeeming' // one-time only: code arrived, /v3/redeem in flight
+  | 'redeeming' // client-side redeem in flight: code arrived, /v3/redeem running
   | 'redeem_failed' // /v3/redeem failed — code is safe and shown for retry
   | 'done' // key minted / key extended
   | 'delivered' // retrieval window passed — code/key was emailed
@@ -188,14 +202,48 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
     }
   }
 
+  /** `redeem: true` orders resolve server-side, so the poll has no expiry to
+   *  report (unlike `/v3/redeem`, which returns `expires_at`). Ask the server
+   *  for it after the fact. Strictly cosmetic: the key is already delivered
+   *  and saved by the time this runs, so a failure costs only the date line. */
+  const fillExpiry = async (gen: number, key: string) => {
+    try {
+      const st = await invoke<KeyStatus>('native_api_key_status', {
+        baseUrl: get().baseUrl,
+        key,
+      })
+      if (gen !== generation) return
+      if (st.expires_at) set({ until: st.expires_at })
+    } catch {
+      /* the key is in hand; the "valid until" line is optional */
+    }
+  }
+
   const handleOrderResult = (gen: number, r: OrderResult) => {
     switch (r.status) {
       case 'pending':
         return schedulePoll(gen)
-      case 'ready':
-        set({ code: r.code ?? null, plan: r.plan ?? get().plan })
-        if (!r.code) return fail('claim', 'server returned ready without a code')
-        return void redeemCode(gen)
+      case 'ready': {
+        set({ plan: r.plan ?? get().plan })
+        // A key means the server already redeemed the code (`redeem: true`).
+        // Take it and stop: that code is spent, and handing it to /v3/redeem
+        // would fail as already-used. Checked before `code` so a server that
+        // ever returned both can't make us burn a key we already hold.
+        if (r.key) {
+          const key = r.key
+          deliverKey(key, r.plan ?? get().plan, null)
+          void fillExpiry(gen, key)
+          return
+        }
+        // Otherwise the classic flow: a renewal (we asked for the code so we
+        // can aim /v3/redeem at `renewKey`), or an older server that ignored
+        // the `redeem` flag — both redeem client-side from here.
+        if (r.code) {
+          set({ code: r.code })
+          return void redeemCode(gen)
+        }
+        return fail('claim', 'server returned ready without a key or code')
+      }
       case 'delivered':
         clearTimer()
         return set({ phase: 'delivered' })
@@ -282,12 +330,13 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
       pollDelay = POLL_MS
       startedAt = Date.now()
       activeIds = null
+      const renewKey = opts.product.kind === 'onetime' ? (opts.renewKey?.trim() || null) : null
       set({
         ...initial,
         phase: 'creating',
         product: opts.product,
         baseUrl: opts.baseUrl,
-        renewKey: opts.product.kind === 'onetime' ? (opts.renewKey?.trim() || null) : null,
+        renewKey,
       })
       void (async () => {
         try {
@@ -295,6 +344,10 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
             const o = await invoke<CreatedOrder>('native_api_create_order', {
               baseUrl: opts.baseUrl,
               product: opts.product.id,
+              // Let the server redeem, unless we need the code itself to aim
+              // /v3/redeem at an existing key. Server-side redeem is what puts
+              // the KEY in the buyer's backup email instead of a spent code.
+              redeem: renewKey === null,
             })
             if (gen !== generation) return
             activeIds = { orderId: o.order_id, claim: o.claim_secret }

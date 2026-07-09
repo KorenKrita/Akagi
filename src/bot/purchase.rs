@@ -6,8 +6,21 @@
 //! `approve_url` (opened in the buyer's browser) plus a one-time
 //! `claim_secret`. While the buyer approves on PayPal, the app polls
 //! [`order_result`] / [`subscription_result`] with `{id, claim}` until the
-//! status flips from `pending` to `ready` — which carries the redeem code
-//! (one-time purchase) or the API key itself (subscription).
+//! status flips from `pending` to `ready` — which carries either an API key
+//! or a redeem code, depending on the purchase (see below).
+//!
+//! A subscription always resolves straight to a key. A one-time order can go
+//! either way, selected by [`create_order`]'s `redeem` flag:
+//!
+//! - `redeem: true` — the server redeems the prepaid code into a key itself,
+//!   so [`OrderResult::key`] is set and the buyer's email holds the **key**.
+//!   This is what the app wants by default: a buyer who is emailed a one-time
+//!   *code* that the app already spent behind their back reasonably mistakes
+//!   that code for their credential.
+//! - `redeem: false` — the classic flow: [`OrderResult::code`] is set and the
+//!   caller exchanges it via `POST /v3/redeem`. Required to stack the bought
+//!   time onto a key the buyer already holds, because only `/v3/redeem` takes
+//!   a `renew_key` target — the server-side redeem always mints a fresh key.
 //!
 //! All of these endpoints are **unauthenticated** (the buyer is acquiring a
 //! key, so they don't hold one yet) but per-IP rate limited. Amounts are
@@ -52,16 +65,24 @@ pub struct CreatedSubscription {
 
 /// One poll of `POST /paypal/order-result`.
 ///
-/// `status`: `pending` (keep polling) / `ready` (`code`, `plan`, `days` set)
-/// / `delivered` (retrieval window passed — the code was emailed) /
-/// `refunded`.
+/// `status`: `pending` (keep polling) / `ready` (`plan`, `days` and exactly
+/// one of `key` / `code` set) / `delivered` (retrieval window passed — the
+/// credential was emailed) / `refunded`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderResult {
     pub status: String,
-    /// The prepaid redeem code, present only on `ready`. Feed it to
-    /// `POST /v3/redeem` to turn it into an API key.
+    /// The prepaid redeem code, present on `ready` for an order created with
+    /// `redeem: false`. Feed it to `POST /v3/redeem` to turn it into a key.
     #[serde(default)]
     pub code: Option<String>,
+    /// The API key itself, present on `ready` for an order created with
+    /// `redeem: true` — the server already spent the code, so there is no
+    /// redeem step and the code must never be re-redeemed. Branch on
+    /// whichever of `key` / `code` is present rather than on the flag you
+    /// sent, so an older server that ignores `redeem` still degrades to the
+    /// classic flow.
+    #[serde(default)]
+    pub key: Option<String>,
     #[serde(default)]
     pub plan: Option<String>,
     #[serde(default)]
@@ -85,7 +106,16 @@ pub struct SubscriptionResult {
 }
 
 #[derive(Serialize)]
-struct CreateRequest<'a> {
+struct CreateOrderRequest<'a> {
+    product: &'a str,
+    /// Redeem the code into a key server-side. Serialized as a real JSON
+    /// bool on purpose — the server rejects `1` / `"true"` with a `400`.
+    redeem: bool,
+}
+
+/// Subscriptions always hand back a key, so there is no `redeem` knob here.
+#[derive(Serialize)]
+struct CreateSubscriptionRequest<'a> {
     product: &'a str,
 }
 
@@ -105,13 +135,19 @@ struct SubscriptionResultRequest<'a> {
 /// `product` (an operator-defined id, e.g. `pro-30`). **Not idempotent**:
 /// each call opens a new PayPal order, so call once per purchase and reuse
 /// the returned ids.
-pub async fn create_order(base_url: &str, product: &str) -> Result<CreatedOrder> {
+///
+/// `redeem` decides what the later [`order_result`] poll — and the buyer's
+/// email — carries: `true` for the API key itself, `false` for a redeem code
+/// the caller must exchange. Pass `false` only when the code is needed as a
+/// code, i.e. to renew an existing key through `/v3/redeem`'s `renew_key`.
+pub async fn create_order(base_url: &str, product: &str, redeem: bool) -> Result<CreatedOrder> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/create-order");
     let resp = build_http()?
         .post(&url)
-        .json(&CreateRequest {
+        .json(&CreateOrderRequest {
             product: product.trim(),
+            redeem,
         })
         .send()
         .await
@@ -122,7 +158,10 @@ pub async fn create_order(base_url: &str, product: &str) -> Result<CreatedOrder>
         .context("parse /paypal/create-order response")
 }
 
-/// `POST /paypal/order-result` (no auth) — poll a one-time purchase.
+/// `POST /paypal/order-result` (no auth) — poll a one-time purchase. On
+/// `ready` the response carries the API key (`redeem: true` order) or the
+/// redeem code (`redeem: false`); see [`OrderResult`].
+///
 /// Idempotent and safe to repeat every few seconds until a terminal status.
 /// A wrong `claim` is a `404` and counts toward the per-IP failure guard, so
 /// never retry with guessed secrets.
@@ -149,7 +188,7 @@ pub async fn create_subscription(base_url: &str, product: &str) -> Result<Create
     let url = format!("{base}/paypal/create-subscription");
     let resp = build_http()?
         .post(&url)
-        .json(&CreateRequest {
+        .json(&CreateSubscriptionRequest {
             product: product.trim(),
         })
         .send()
@@ -215,6 +254,7 @@ mod tests {
         let r: OrderResult = serde_json::from_str(r#"{"status":"pending"}"#).unwrap();
         assert_eq!(r.status, "pending");
         assert!(r.code.is_none());
+        assert!(r.key.is_none());
         assert!(r.plan.is_none());
         assert!(r.days.is_none());
     }
@@ -225,6 +265,23 @@ mod tests {
         let r: OrderResult = serde_json::from_str(raw).unwrap();
         assert_eq!(r.status, "ready");
         assert_eq!(r.code.as_deref(), Some("ab12cd34ef56gh78"));
+        assert_eq!(r.plan.as_deref(), Some("pro"));
+        assert_eq!(r.days, Some(30));
+        // The classic flow never pre-redeems; the caller must exchange it.
+        assert!(r.key.is_none());
+    }
+
+    /// A `redeem: true` order resolves server-side: `ready` carries the key
+    /// instead of the code. The caller must not look for `code` there — the
+    /// code is already spent, and re-redeeming it would fail.
+    #[test]
+    fn order_result_ready_carries_key_when_server_redeemed() {
+        let raw = r#"{"status":"ready","key":"k0000000000000000000000000000003",
+                      "plan":"pro","days":30}"#;
+        let r: OrderResult = serde_json::from_str(raw).unwrap();
+        assert_eq!(r.status, "ready");
+        assert_eq!(r.key.as_deref(), Some("k0000000000000000000000000000003"));
+        assert!(r.code.is_none());
         assert_eq!(r.plan.as_deref(), Some("pro"));
         assert_eq!(r.days, Some(30));
     }
@@ -252,8 +309,23 @@ mod tests {
 
     #[test]
     fn request_bodies_have_expected_shape() {
-        let v = serde_json::to_value(CreateRequest { product: "pro-30" }).unwrap();
-        assert_eq!(v, serde_json::json!({"product": "pro-30"}));
+        let v = serde_json::to_value(CreateOrderRequest {
+            product: "pro-30",
+            redeem: true,
+        })
+        .unwrap();
+        assert_eq!(v, serde_json::json!({"product": "pro-30", "redeem": true}));
+        // `redeem` must be a JSON bool — the server rejects `1` / `"true"`.
+        assert!(v["redeem"].is_boolean());
+
+        // Subscriptions always yield a key; they take no `redeem` knob, and
+        // sending one would be a malformed body.
+        let v = serde_json::to_value(CreateSubscriptionRequest {
+            product: "pro-monthly",
+        })
+        .unwrap();
+        assert_eq!(v, serde_json::json!({"product": "pro-monthly"}));
+
         let v = serde_json::to_value(OrderResultRequest {
             order_id: "OID",
             claim: "SECRET",
@@ -273,6 +345,8 @@ mod tests {
 
     // ---- end-to-end against a local mock server (see `crate::bot::test_http`) ----
 
+    /// `redeem: false` — the classic flow a renewal needs: `ready` hands back
+    /// a code the caller exchanges itself (with a `renew_key` target).
     #[tokio::test]
     async fn create_then_poll_order_roundtrip() {
         let (base, served) = mock_http(vec![
@@ -287,7 +361,9 @@ mod tests {
             ),
         ]);
 
-        let created = create_order(&format!("{base}/"), "pro-30").await.unwrap();
+        let created = create_order(&format!("{base}/"), "pro-30", false)
+            .await
+            .unwrap();
         assert_eq!(created.order_id, "OID1");
         assert_eq!(created.claim_secret, "S1");
 
@@ -301,13 +377,70 @@ mod tests {
             .unwrap();
         assert_eq!(ready.status, "ready");
         assert_eq!(ready.code.as_deref(), Some("code1234code5678"));
+        assert!(ready.key.is_none());
 
         let reqs = served.join().unwrap();
         assert!(reqs[0].starts_with("POST /paypal/create-order HTTP/1.1"));
-        assert!(reqs[0].contains(r#"{"product":"pro-30"}"#));
+        assert!(reqs[0].contains(r#"{"product":"pro-30","redeem":false}"#));
         assert!(reqs[1].starts_with("POST /paypal/order-result HTTP/1.1"));
         assert!(reqs[1].contains(r#""order_id":"OID1""#));
         assert!(reqs[1].contains(r#""claim":"S1""#));
+    }
+
+    /// Regression: `redeem: true` must reach the wire as a real JSON bool
+    /// (the server 400s on `1` / `"true"`), and the resulting `ready` poll
+    /// must surface the API key directly — no `/v3/redeem` step, so the
+    /// buyer's emailed credential is the key they actually use.
+    #[tokio::test]
+    async fn redeem_true_order_roundtrip_returns_key_directly() {
+        let (base, served) = mock_http(vec![
+            (
+                "200 OK",
+                r#"{"order_id":"OID2","approve_url":"https://paypal.example/approve","claim_secret":"S3"}"#.into(),
+            ),
+            (
+                "200 OK",
+                r#"{"status":"ready","key":"k0000000000000000000000000000004","plan":"pro","days":30}"#.into(),
+            ),
+        ]);
+
+        let created = create_order(&base, "pro-30", true).await.unwrap();
+        assert_eq!(created.order_id, "OID2");
+
+        let ready = order_result(&base, &created.order_id, &created.claim_secret)
+            .await
+            .unwrap();
+        assert_eq!(ready.status, "ready");
+        assert_eq!(
+            ready.key.as_deref(),
+            Some("k0000000000000000000000000000004")
+        );
+        assert!(ready.code.is_none(), "a redeemed order exposes no code");
+
+        let reqs = served.join().unwrap();
+        assert!(reqs[0].starts_with("POST /paypal/create-order HTTP/1.1"));
+        assert!(reqs[0].contains(r#"{"product":"pro-30","redeem":true}"#));
+        assert!(
+            !reqs[0].contains(r#""redeem":"true""#) && !reqs[0].contains(r#""redeem":1"#),
+            "redeem must be a JSON bool, got: {}",
+            reqs[0]
+        );
+    }
+
+    /// `create-subscription` must never carry `redeem` — subscriptions always
+    /// mint a key, and an unexpected field risks a `400 bad request`.
+    #[tokio::test]
+    async fn create_subscription_omits_the_redeem_flag() {
+        let (base, served) = mock_http(vec![(
+            "200 OK",
+            r#"{"subscription_id":"I-2","approve_url":"https://paypal.example/sub","claim_secret":"S4"}"#.into(),
+        )]);
+
+        create_subscription(&base, "pro-monthly").await.unwrap();
+
+        let reqs = served.join().unwrap();
+        assert!(reqs[0].contains(r#"{"product":"pro-monthly"}"#));
+        assert!(!reqs[0].contains("redeem"), "got: {}", reqs[0]);
     }
 
     #[tokio::test]
@@ -349,7 +482,7 @@ mod tests {
             "400 Bad Request",
             r#"{"error":"unknown product"}"#.into(),
         )]);
-        let err = create_order(&base, "nope-99").await.unwrap_err();
+        let err = create_order(&base, "nope-99", true).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("create order failed"), "got: {msg}");
         assert!(msg.contains("HTTP 400"), "got: {msg}");
