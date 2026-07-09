@@ -44,7 +44,10 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 
 pub struct BotManager {
-    runtime: PythonRuntime,
+    /// Python runtime for `mjai_bot/*` subprocess bots. `None` when no
+    /// python3+uv runtime was found — the built-in native bot still works;
+    /// only Python subprocess bots require it (enforced per-spawn).
+    runtime: Option<PythonRuntime>,
     /// Resolved root for `mjai_bot/`. Re-scanned on every `spawn_runner`
     /// so freshly installed bots (e.g. via the Setup wizard or the
     /// Install-from-GitHub button) are picked up without restarting
@@ -62,6 +65,9 @@ pub struct BotManager {
     /// (the `active_4p` / `active_3p` value read from `config` at
     /// `start_game`). Empty until the first `start_game`.
     active_name: String,
+    /// Player count of the in-progress game (from `start_game.num_players`).
+    /// Used to construct the built-in native bot for the right mode.
+    game_num_players: u8,
     runner: Option<Box<dyn BotRunner>>,
     /// Events seen since the last `react()` call.
     pending: Vec<MjaiEvent>,
@@ -83,7 +89,7 @@ pub struct BotManager {
 impl BotManager {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        runtime: PythonRuntime,
+        runtime: Option<PythonRuntime>,
         bot_dir: PathBuf,
         config: Arc<RwLock<AppConfig>>,
         out_tx: BotResponseBus,
@@ -97,6 +103,7 @@ impl BotManager {
             bot_dir,
             config,
             active_name: String::new(),
+            game_num_players: 4,
             runner: None,
             pending: Vec::new(),
             actor_id: None,
@@ -154,6 +161,7 @@ impl BotManager {
         } = &event
         {
             self.actor_id = Some(*seat);
+            self.game_num_players = *num_players;
             // Pick the active bot for this game's player count, reading the
             // *current* config so a runtime model switch takes effect on the
             // next game (the manager outlives many games — a snapshot taken
@@ -260,6 +268,44 @@ impl BotManager {
             .actor_id
             .context("spawn_runner called without actor_id")?;
 
+        // Built-in native bots (pure Rust, no Python) bypass the registry /
+        // venv path entirely: no `bot.py`, no `uv sync`, weights are embedded.
+        // The runner holds the shared config and re-reads `bot.api` at every
+        // decision, so cloud inference can be toggled, re-keyed, or pointed at a
+        // different model mid-game — not just between games.
+        if crate::bot::native::is_native(&bot_name) {
+            let api_backed = self.config.read().await.bot.api.is_active();
+            match crate::bot::native::build(
+                actor_id,
+                self.game_num_players,
+                self.config.clone(),
+                self.notify_tx.clone(),
+            )
+            .await
+            {
+                Ok(runner) => {
+                    info!(
+                        bot = %bot_name,
+                        actor_id,
+                        num_players = self.game_num_players,
+                        api_backed,
+                        "native bot runner constructed"
+                    );
+                    self.emit_status(BotStatus::Ready {
+                        bot: bot_name.clone(),
+                        actor_id,
+                    });
+                    self.runner = Some(runner);
+                    return Ok(());
+                }
+                Err(e) => {
+                    let msg = format!("native bot init failed: {e:#}");
+                    self.fail_load(&bot_name, &msg, "Built-in bot failed to load");
+                    bail!(msg);
+                }
+            }
+        }
+
         // Rescan on each spawn so bots installed after the supervisor
         // started (Setup wizard, Install-from-GitHub) are visible. A
         // snapshot taken at supervisor-start time misses them and the
@@ -323,6 +369,22 @@ impl BotManager {
             return Ok(());
         }
 
+        // From here on we spawn a Python subprocess bot, which requires the
+        // runtime. A missing runtime fails just this spawn (analysis-only for
+        // this bot); the built-in native bot was already handled above and
+        // never reaches here.
+        let runtime = match self.runtime.clone() {
+            Some(rt) => rt,
+            None => {
+                let msg = format!(
+                    "bot {bot_name} needs a python3+uv runtime, but none was found. \
+                     Use the built-in bot, or install a Python runtime."
+                );
+                self.fail_load(&bot_name, &msg, "No Python runtime");
+                bail!(msg);
+            }
+        };
+
         let load_id = format!("bot-loading-{bot_name}");
 
         // Phase 1: dep sync. ensure_synced is a no-op when stamp matches,
@@ -358,7 +420,7 @@ impl BotManager {
             }
         };
 
-        let sync_result = self.runtime.ensure_synced(&entry.dir).await;
+        let sync_result = runtime.ensure_synced(&entry.dir).await;
         drop(sync_guard);
         if let Err(e) = sync_result {
             let msg = format!("uv sync failed: {e:#}");
@@ -380,7 +442,7 @@ impl BotManager {
             stage: LoadStage::Spawning,
         });
 
-        let mut cmd = self.runtime.command_for(&entry.dir, &["bot.py"]);
+        let mut cmd = runtime.command_for(&entry.dir, &["bot.py"]);
         cmd.arg(actor_id.to_string());
 
         // If the bot ships a manifest, resolve user values + manifest
@@ -411,7 +473,7 @@ impl BotManager {
         }
         let bot = match SubprocessBot::spawn_with_command(
             cmd,
-            self.runtime.clone(),
+            runtime.clone(),
             &entry.dir,
             actor_id,
             self.notify_tx.clone(),
@@ -615,7 +677,7 @@ mod tests {
         let status_rx = status.subscribe();
         let notify_rx = notify.subscribe();
         let mut mgr = BotManager::new(
-            dummy_runtime(),
+            Some(dummy_runtime()),
             empty_bot_dir(),
             cfg_with("mock"),
             bus,
@@ -819,7 +881,7 @@ mod tests {
         let mut status_rx = status.subscribe();
         let mut notify_rx = notify.subscribe();
         let mut mgr = BotManager::new(
-            dummy_runtime(),
+            Some(dummy_runtime()),
             empty_bot_dir(),
             cfg_with("mock"),
             bus,
@@ -860,7 +922,7 @@ mod tests {
         let mut status_rx = status.subscribe();
         let mut notify_rx = notify.subscribe();
         let mut mgr = BotManager::new(
-            dummy_runtime(),
+            Some(dummy_runtime()),
             empty_bot_dir(),
             cfg_with("ghost"),
             bus,
@@ -913,7 +975,7 @@ mod tests {
 
         let config = cfg_with("old-bot");
         let mut mgr = BotManager::new(
-            dummy_runtime(),
+            Some(dummy_runtime()),
             empty_bot_dir(),
             config.clone(),
             bus,
@@ -957,7 +1019,7 @@ mod tests {
         let status = bot_status_bus();
         let notify = notify_bus();
         let mut mgr = BotManager::new(
-            dummy_runtime(),
+            Some(dummy_runtime()),
             empty_bot_dir(),
             cfg_with("mock"),
             bus,
@@ -992,7 +1054,7 @@ mod tests {
         let status = bot_status_bus();
         let notify = notify_bus();
         let mut mgr = BotManager::new(
-            dummy_runtime(),
+            Some(dummy_runtime()),
             bot_dir.clone(),
             cfg_with("latebot"),
             bus,
@@ -1064,7 +1126,7 @@ mod tests {
         let mut status_rx = status.subscribe();
         let mut notify_rx = notify.subscribe();
         let mut mgr = BotManager::new(
-            dummy_runtime(),
+            Some(dummy_runtime()),
             bot_dir,
             cfg_with("mybot"),
             bus,
@@ -1109,6 +1171,48 @@ mod tests {
         assert!(n.title.contains("reinstalling"), "got title: {}", n.title);
     }
 
+    /// Regression: the built-in native bot must spawn even when no python3+uv
+    /// runtime is available (it needs none). Pre-fix the supervisor bailed on a
+    /// missing runtime, so enabling the *default* native bot produced no
+    /// reaction on machines without an Akagi Python runtime.
+    #[tokio::test]
+    async fn native_bot_spawns_without_python_runtime() {
+        let bus = bot_response_bus();
+        let status = bot_status_bus();
+        let notify = notify_bus();
+        let mut status_rx = status.subscribe();
+        let mut mgr = BotManager::new(
+            None, // no python runtime available
+            empty_bot_dir(),
+            cfg_with(crate::bot::native::NATIVE_4P),
+            bus,
+            status,
+            notify,
+            dummy_inspector(),
+            fresh_syncs(),
+        );
+
+        mgr.handle(MjaiEvent::StartGame {
+            names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            kyoku_first: None,
+            aka_flag: None,
+            id: Some(0),
+            num_players: 4,
+        })
+        .await
+        .expect("native bot must spawn without a Python runtime");
+
+        assert!(
+            mgr.runner.is_some(),
+            "native runner should be constructed even with runtime=None"
+        );
+        let s = status_rx.try_recv().expect("status emitted");
+        assert!(
+            matches!(s, BotStatus::Ready { ref bot, .. } if bot == crate::bot::native::NATIVE_4P),
+            "expected Ready for the native bot, got {s:?}"
+        );
+    }
+
     #[tokio::test]
     async fn run_returns_ok_when_bus_closes() {
         // Subscribe outside the task so the task holds only the Receiver.
@@ -1120,7 +1224,7 @@ mod tests {
         let status = bot_status_bus();
         let notify = notify_bus();
         let mut mgr = BotManager::new(
-            dummy_runtime(),
+            Some(dummy_runtime()),
             empty_bot_dir(),
             cfg_with("mock"),
             bot_bus,

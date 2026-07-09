@@ -61,11 +61,11 @@ bar = "default_value"
 
 ## Existing sections
 
-- `general` (`general.rs`) — language; `first_run_completed` flag controls whether the setup wizard is shown on app start.
+- `general` (`general.rs`) — `first_run_completed` flag controls whether the setup wizard is shown on app start. (UI language lives in the webview's `localStorage`, managed by i18next — not in this config.)
 - `logging` (`logging.rs`) — log root dir, console default level (overridden by `RUST_LOG`), `all_level` severity filter for `all.log` (`EnvFilter` syntax).
 - `platform` (`platform.rs`) — game platform whose traffic to bridge. `kind` selects which `Bridge` impl runs in the capture pipeline. Currently only `Majsoul`.
 - `proxy` (`proxy.rs`) — MITM proxy enable flag, listen addr, CA cert dir. Authoritative when `capture.mode = "mitm"`.
-- `bot` (`bot.rs`) — AI bot enable flag, active bot subdir name, `mjai_bot/` root, and whether to run `uv sync` automatically before spawning.
+- `bot` (`bot.rs`) — AI bot enable flag, active bot subdir name (per player count), `mjai_bot/` root, and whether to run `uv sync` automatically before spawning. Also nests `[bot.api]` (`NativeApiConfig`): the built-in bot's optional cloud-inference settings — `enabled`, `base_url`, `key`, `model_4p`, `model_3p`. `is_active()` gates the remote path on all three of enabled + URL + key, and the bot re-reads this section at every decision, so edits apply mid-game. A missing `[bot.api]` in an older `config.toml` deserialises to "disabled".
 - `capture` (`capture.rs`) — selects the capture transport: `mitm` (uses `[proxy]`) or `chromium` (uses `[capture.chromium]`). Chromium mode launches a controlled browser and intercepts WebSocket frames via CDP — no proxy/CA setup needed.
 
 ## Notes

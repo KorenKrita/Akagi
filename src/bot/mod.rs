@@ -7,14 +7,19 @@
 //!
 //! See `README.md` in this directory for the contributor-facing how-to.
 
+pub mod api;
 pub mod install;
 pub mod manager;
 pub mod manifest;
+pub mod native;
+pub mod purchase;
 pub mod registry;
 pub mod runner;
 pub mod runtime;
 pub mod supervisor;
 pub mod sync_guard;
+#[cfg(test)]
+pub mod test_http;
 pub mod types;
 
 pub use install::{install_from_github_release, GithubInstallSpec};

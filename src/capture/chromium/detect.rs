@@ -182,6 +182,9 @@ fn detect_into(found: &mut Vec<DetectedBrowser>) {
 }
 
 #[cfg(target_os = "windows")]
+use crate::util::NoConsoleWindow;
+
+#[cfg(target_os = "windows")]
 fn reg_query_app_paths(exe: &str) -> Option<PathBuf> {
     let key = format!(
         "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\{}",
@@ -189,6 +192,7 @@ fn reg_query_app_paths(exe: &str) -> Option<PathBuf> {
     );
     let out = std::process::Command::new("reg")
         .args(["query", &key, "/ve"])
+        .no_console_window()
         .output()
         .ok()?;
     if !out.status.success() {

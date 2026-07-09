@@ -111,14 +111,102 @@ export type AutoplayConfig = {
   majsoul: MajsoulAutoplayConfig
 }
 
+/** Optional cloud-inference settings for the built-in native bot.
+ *  Mirrors `crate::config::NativeApiConfig`. */
+export type NativeApiConfig = {
+  enabled: boolean
+  base_url: string
+  key: string
+  model_4p: string
+  model_3p: string
+}
+
 export type AppConfig = {
-  general: { language: string; first_run_completed: boolean }
+  general: { first_run_completed: boolean }
   logging: { dir: string; level: string; all_level: string }
   platform: { kind: PlatformKind }
   proxy: { enabled: boolean; addr: string; ca_dir: string }
-  bot: { enabled: boolean; active_4p: string; active_3p: string; auto_sync: boolean; dir: string }
+  bot: {
+    enabled: boolean
+    active_4p: string
+    active_3p: string
+    auto_sync: boolean
+    dir: string
+    api: NativeApiConfig
+  }
   capture: CaptureConfig
   autoplay: AutoplayConfig
+}
+
+// ---------- Built-in bot cloud inference (native API) ----------
+// Mirror the response shapes from `crate::bot::api`.
+
+/** `GET /v3/key` — a key's plan, expiry and live limits. */
+export type KeyStatus = {
+  plan: string
+  expires_at: string
+  usage_today: number
+  rpd: number
+  rpm: number
+  topk: number
+}
+
+/** One model a key's plan may use (`GET /v3/models`). */
+export type ModelInfo = { id: string; game: string; desc: string }
+
+/** `POST /v3/redeem` result. `key` is present only when a new key is minted. */
+export type RedeemResponse = {
+  key?: string | null
+  key_last4: string
+  plan: string
+  expires_at: string
+  extended: boolean
+}
+
+/** `GET /healthz` — liveness + per-model queue depth. */
+export type ApiHealth = {
+  status: string
+  models: string[]
+  queue_depth: Record<string, number>
+}
+
+// ---------- Self-serve key purchase (PayPal) ----------
+// Mirror the response shapes from `crate::bot::purchase`.
+
+/** `POST /paypal/create-order` — a pending one-time purchase. */
+export type CreatedOrder = {
+  order_id: string
+  approve_url: string
+  claim_secret: string
+}
+
+/** `POST /paypal/create-subscription` — a pending subscription. */
+export type CreatedSubscription = {
+  subscription_id: string
+  approve_url: string
+  claim_secret: string
+}
+
+/**
+ * One poll of `POST /paypal/order-result`. On `status: ready` exactly one of
+ * `key` / `code` is set: `key` when the order was created with `redeem: true`
+ * (the server already spent the code), `code` otherwise. Branch on whichever
+ * is present — never re-redeem a code that came back alongside a key.
+ */
+export type OrderResult = {
+  status: string
+  code?: string | null
+  key?: string | null
+  plan?: string | null
+  days?: number | null
+}
+
+/** One poll of `POST /paypal/subscription-result`. `key` only on `ready`. */
+export type SubscriptionResult = {
+  status: string
+  key?: string | null
+  plan?: string | null
+  next_billing?: string | null
 }
 
 export type FieldKind = 'string' | 'bool' | 'int' | 'float' | 'enum'

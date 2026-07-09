@@ -93,8 +93,9 @@ pub struct AppState {
     pub history_platform: SharedPlatform,
 
     /// Bundled-or-system Python + uv. `None` on dev boxes lacking both —
-    /// install/sync commands surface a friendly error instead of panicking;
-    /// the bot manager refuses to start when bot mode is enabled.
+    /// install/sync commands surface a friendly error instead of panicking.
+    /// The bot manager still starts: the built-in native bot needs no Python,
+    /// and only a `mjai_bot/*` subprocess bot fails to spawn without a runtime.
     pub runtime: Option<PythonRuntime>,
     /// Names of bots whose `uv sync` is currently in flight. Both the
     /// `sync_bot_deps` command and `BotManager::spawn_runner` acquire-or-bail

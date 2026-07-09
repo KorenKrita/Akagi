@@ -68,8 +68,9 @@
 Akagi watches your Mahjong Soul / Tenhou game over a local proxy or a
 built-in browser, mirrors the game state, and shows **shanten**, **waits**,
 **agari rate**, **tenpai rate**, **per-opponent deal-in risk**, and a
-**recommended discard** in a draggable HUD. Drop in an mjai-protocol bot
-like Mortal and the HUD also shows the bot's recommendation each turn.
+**recommended discard** in a draggable HUD. A built-in AI model ships inside
+the app — nothing to install — and its suggestion appears each turn; point
+it at the cloud inference API when you want a stronger, hosted model.
 
 ## Screenshots
 
@@ -89,7 +90,6 @@ https://github.com/user-attachments/assets/d5bc6ff6-6560-4365-ae55-660c9a522790
 - [Features](#features)
 - [Supported Platforms](#supported-platforms)
 - [Quick Start](#quick-start)
-- [Configuration](#configuration)
 - [Bots](#bots)
 - [Game History](#game-history)
 - [Logs &amp; Diagnostics](#logs--diagnostics)
@@ -100,6 +100,7 @@ https://github.com/user-attachments/assets/d5bc6ff6-6560-4365-ae55-660c9a522790
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
 - [Project Layout](#project-layout)
+- [mjai Bots (plugin interface)](#mjai-bots-plugin-interface)
 - [Build From Source](#build-from-source)
 - [Testing](#testing)
 - [Releases &amp; CI](#releases--ci)
@@ -113,40 +114,39 @@ https://github.com/user-attachments/assets/d5bc6ff6-6560-4365-ae55-660c9a522790
 
 - **Live HUD** — shanten, waits, agari rate, tenpai rate, per-opponent
   deal-in risk, suggested attack/defence discard. Draggable, resizable
-  tile grid persisted to local storage.
+  UI layout.
 - **Two capture modes**
   - **MITM proxy** (default) — system-wide; needs a one-time CA trust.
   - **Chromium** — Akagi launches a controlled Chromium-family browser
     and intercepts WebSocket frames via the Chrome DevTools Protocol.
     Zero proxy/CA setup; just play in the launched window.
-- **Pluggable mjai bots** — install Mortal in one click from the Setup
-  wizard, or drop any `bot.py` under `mjai_bot/<name>/`. Per-mode
-  routing: `bot.active_4p` and `bot.active_3p` swap automatically based
-  on the table's player count.
+- **Two bot backends**
+  - **Built-in bot** (default) — a pure-Rust neural net embedded in the
+    binary. No Python, no download, no setup; it just plays, in both
+    4-player and 3-player.
+  - **Cloud inference** (optional) — hand each decision to a
+    **hosted, stronger model**. The built-in model stays loaded as an
+    automatic fallback, so an unreachable server never stalls a live
+    game. Keys are bought or redeemed from inside the app.
+
+  Per-mode routing throughout: `bot.active_4p` and `bot.active_3p` swap
+  automatically based on the table's player count.
 - **Game history** — every completed match is auto-recorded. The
   History tab shows a rank pie chart, a cumulative PT line chart with
   selectable scoring rules (Mahjong Soul tiers / Tenhou ranks /
   Custom uma), and detailed stats (win rate, deal-in rate, riichi rate,
   fuuro rate, ryukyoku rate, average winning / deal-in points, average
   winning turn, yakuman / nagashi-mangan counts).
-- **Logs viewer** — **Diagnostic** tab for the application log with
-  live tail and per-module filtering; **Inspector** tab for raw
-  WebSocket frames → mjai events → bot reactions, with frame counts
-  and meta inspection.
-- **First-run Setup wizard** — language → platform → capture mode →
-  CA trust / Chromium pick → bot install → done.
+- **Simple first-run setup** — language → platform → capture mode →
+  CA trust / Chromium pick → bot settings → done.
 - **Internationalization** — English, 日本語, 繁體中文, 简体中文.
-  Live switch from Setup or the Sidebar. Full coverage across the UI.
-- **Sanma (3-player)** — full pipeline: bridge, tracker, snapshot,
-  analysis, per-mode bot routing, history stats, 3p uma tables.
-- **In-app updates** — checks the GitHub releases endpoint on launch
-  (cached for 6 hours) and on demand from *Settings → Updates*. A
-  bounded toast plus a red dot next to the sidebar version surface a
-  new release; the dialog offers *Update now* (downloads the matching
-  zip, SHA-256-verifies it, swaps the binary in place via
-  `self_replace`, then restarts), *Skip this version*, *Later*, or
-  *Open release page*. Read-only installs (e.g. AppImage) fall back to
-  the release page automatically.
+  Live switch from Setup or Settings.
+- **Sanma (3-player)** — fully supported: AI analysis, per-mode bot
+  routing, history stats, 3p uma tables.
+- **In-app updates** — checks for new releases on launch and on demand
+  from *Settings → Updates*; one click downloads the update, applies it
+  in place, and restarts. Read-only installs (e.g. AppImage) fall back
+  to the release page.
 
 ## Supported Platforms
 
@@ -166,10 +166,10 @@ https://github.com/user-attachments/assets/d5bc6ff6-6560-4365-ae55-660c9a522790
 Akagi ships as a portable zip — one self-contained folder per platform.
 Download the file for your OS from
 [Releases](https://github.com/shinkuan/Akagi/releases), unzip anywhere
-you have write permission (e.g. `~/Apps/`, Desktop), and run the binary.
-Configuration, logs, history, the CA cert, and bots all live next to
-the binary, so moving / backing up / uninstalling is just moving /
-copying / deleting the folder.
+you have write permission (e.g. `~/Apps/`, Desktop), and run `akagi`
+inside. Configuration, logs, history, the CA cert, and bots are all
+created right next to it, so moving / backing up / uninstalling is just
+moving / copying / deleting the folder.
 
 | OS | File | Notes |
 |---|---|---|
@@ -177,22 +177,15 @@ copying / deleting the folder.
 | macOS | `akagi-<version>-macos-arm64.zip` | Apple Silicon. Unsigned: run `xattr -cr <unzipped folder>` once, or right-click → *Open* the first time. |
 | Linux | `akagi-<version>-linux-x64.zip` | Built on `ubuntu-22.04` (glibc 2.35+). Requires WebKit2GTK 4.1 (`apt install libwebkit2gtk-4.1-0` / `dnf install webkit2gtk4.1` / `pacman -S webkit2gtk-4.1`). |
 
-Each zip bundles `python-build-standalone` 3.12 + `uv` next to the
-binary, so bots run out of the box without any system Python install.
-
 On first launch the **Setup wizard** walks you through language,
-platform, capture mode, optional bot install (Mortal), and CA trust
-(only if you choose MITM mode).
+platform, capture mode, bot settings, and CA trust (only if you choose
+MITM mode). There is no bot to install — the built-in one is already there.
 
 ### B. Chromium mode (no CA trust needed)
 
-The simplest path. After Setup:
-
-1. Settings → **Capture** → set Mode to **Chromium**.
-2. Click **Detect** to auto-find Chrome / Edge / Brave / Chromium, or
-   set `capture.chromium.executable` manually.
-3. Akagi launches the browser with an isolated profile under
-   `<config_root>/chrome-profile`. Log in to Mahjong Soul and play.
+The simplest path. After Setup, Akagi finds Chrome / Edge / Brave /
+Chromium automatically and launches it with its own separate profile;
+log in to Mahjong Soul and play.
 
 Frames are intercepted via the Chrome DevTools Protocol — no system
 proxy, no certificate.
@@ -201,8 +194,8 @@ proxy, no certificate.
 
 System-wide proxy with a self-signed root CA at `./ca/`:
 
-1. Trust `./ca/akagi-ca.crt` (or `.cer` / `.pem` / `.der`) in your
-   OS / browser certificate store.
+1. Trust the certificate `./ca/akagi-ca.crt` (or `.cer` / `.pem` /
+   `.der`).
 2. Route the game client through `127.0.0.1:23410`.
    Health probe: `GET /ping` → `pong`.
 3. On Windows, [Proxifier](https://www.proxifier.com/) is the usual
@@ -210,127 +203,43 @@ System-wide proxy with a self-signed root CA at `./ca/`:
 
 ---
 
-## Configuration
-
-Configuration lives in `config.toml` next to the binary (or wherever
-you point `--config`). Edits saved through the Settings UI hot-reload
-the affected subsystem — capture / proxy / bot active slots restart
-without an app relaunch.
-
-```toml
-[general]
-language = "en"
-
-[logging]
-dir       = "./logs"
-level     = "info"
-all_level = "warn"
-
-[platform]
-kind = "Majsoul"
-
-[proxy]
-enabled = true
-addr    = "127.0.0.1:23410"
-ca_dir  = "./ca"
-
-[capture]
-mode = "mitm"               # or "chromium"
-
-[capture.chromium]
-executable    = ""          # blank = auto-detect
-user_data_dir = ""          # blank = <config_root>/chrome-profile
-start_url     = "https://game.maj-soul.com/1/"
-cft_channel   = "stable"
-force_cft     = false
-extra_args    = []
-
-[bot]
-enabled   = true
-active_4p = "mortal"        # used in 4-player (yonma) games
-active_3p = "mortal3p"      # used in 3-player (sanma); empty = none
-auto_sync = true
-dir       = "./mjai_bot"
-```
-
-<details>
-<summary>Where the config file lives (resolution order)</summary>
-
-1. `--config <path>` CLI flag.
-2. `<exe_dir>/configs/config.toml`.
-3. `./configs.toml` in the current working directory.
-4. If none of the above exist, defaults are auto-written to
-   `<exe_dir>/configs/config.toml` on first launch.
-
-Pre-3p configs that still use a single `active = "..."` key are
-auto-migrated into `active_4p` on load.
-</details>
-
----
-
 ## Bots
 
-### Install a bot
+### Built-in bot (no install)
 
-The Setup wizard or the **Bots** tab can install bots straight from a
-GitHub release:
+Akagi ships a **built-in, pure-Rust bot**. It's the default for both modes
+(`bot.active_4p = "akagi-native"`, `bot.active_3p = "akagi-native3p"`) and
+appears at the top of the **Bots** tab, always "ready".
 
-- Repo: `shinkuan/Akagi-MjaiBot-Mortal`
-- Asset (4P): `release4p.zip`
-- Asset (3P): `release3p.zip`
+It's a small neural net trained by behavior cloning (weights are embedded
+in the binary), so its strength is **modest by design** — a sensible default,
+not a top-tier engine.
 
-The IPC command `install_bot_from_github(repo, asset_glob?, name?)`
-fetches the latest release zip, extracts it under `mjai_bot/<name>/`,
-validates `bot.py`, and runs `uv sync` once. Subsequent launches are
-fast — the sync is gated by a stamp at
-`mjai_bot/<name>/.akagi/synced.stamp`.
+### Cloud inference (built-in bot)
 
-You can also install from a **local ZIP** — useful for offline installs
-or a locally-built bot. On the **Bots** tab, click **Install from ZIP**,
-**Browse…** to pick a `.zip` (or paste its path), and install. This runs
-the exact same extract / validate / `uv sync` pipeline as the GitHub
-install; your source `.zip` is left untouched.
+The built-in bot can optionally hand its decisions to a **remote inference
+server** instead of running its embedded model — a stronger, hosted model
+reached over the network. The embedded local model stays loaded as an automatic
+**fallback**: if the server is unreachable, rate-limited, or the key is invalid,
+the bot plays the local model's move so a live game never stalls.
 
-> [!IMPORTANT]
-> Because of GitHub's file-size limit, the Mortal weights bundled in
-> the release zip are a small, weak **placeholder model** — useful to
-> verify the install works, **not recommended for real play**.
-> **Stronger Mortal model weights** and an **online API-server model**
-> (a hosted, even stronger model — point your bot at the server and
-> an API key; no local NN needed) are both distributed through the
-> [Discord server](https://discord.gg/Z2wjXUK8bN). Ask there for
-> access; both 4P and 3P versions are available.
+#### Getting a cloud-inference key
+
+Three ways:
+
+- **Buy key** — an in-app purchase.
+- **Redeem code** — turn a prepaid code into a key, or add time to the key you
+  already hold.
+- Ask in the [Discord server](https://discord.gg/Z2wjXUK8bN).
 
 ### Per-mode bots
 
 `bot.active_4p` and `bot.active_3p` are independent. Akagi picks the
 right one when the game starts, based on the table's player count.
-Leave a slot empty to play that mode with **analysis only** (no bot
-suggestion).
 
-### Write your own
-
-A bot is a standalone subprocess that talks JSONL over stdin/stdout — Akagi
-feeds it the game as mjai events and it replies with an action plus optional
-HUD data. The full developer guide lives in
-**[`mjai_bot/README.md`](./mjai_bot/README.md)**: the I/O protocol, the mjai
-event stream, the reaction and `meta` HUD format, toast notifications, and
-`manifest.toml` settings. [`mjai_bot/example/`](./mjai_bot/example/) is a
-working rule-based bot you can copy.
-
-For local development, drop your bot folder under `mjai_bot/<name>/` and click
-**Install environment** on its row in the **Bots** tab to build its venv — no
-need to repackage and reinstall on every change. The activation toggle stays
-disabled until the environment is ready.
-
-### AGPL boundary
-
-Bots run as a **separate OS subprocess** spawned by Akagi. Communication
-is strictly JSONL over stdin / stdout — no in-process linking, no
-shared address space, no FFI. This is an intentional license boundary:
-an AGPL-licensed bot (e.g. Mortal, which links libriichi) stays inside
-its own process, so dropping it under `mjai_bot/<name>/` does **not**
-make Akagi a derived work of the bot.
+Beyond these two backends, Akagi can also run **external mjai bots** as
+subprocesses. That's an extension point for developers rather than a step
+anyone needs — see [mjai Bots (plugin interface)](#mjai-bots-plugin-interface).
 
 ---
 
@@ -439,15 +348,6 @@ Useful when debugging a bot or a bridge issue.
   "couldn't terminate the browser already using profile …" — close it
   manually and click Restart. Running two Akagi instances against the
   same profile is unsupported.
-- **Bot stuck in `Loading{SyncingDeps}`.** First-run `uv sync` is
-  slow — watch the Diagnostic tab for `bot=<name>` lines. If it never
-  finishes, delete `mjai_bot/<name>/.akagi/synced.stamp` and retry.
-- **Activation toggle greyed out / a dropped-in bot won't enable.** Its
-  Python environment isn't built yet. On the **Bots** tab, click the
-  **Install environment** button on that bot's row (it appears whenever the
-  env isn't ready) to run `uv sync`; the toggle enables once it finishes.
-  Editing the bot's `pyproject.toml` marks the env stale and brings the
-  button back.
 - **Bot crashed mid-game.** The Inspector tab shows the last frame the
   bot saw before dying; attach it to the bug report.
 - **Wrong bot picked for a 3-player game.** Check `bot.active_3p` in
@@ -470,15 +370,15 @@ Done in alpha.8:
 - [x] i18n: en / ja / zh-TW / zh-CN, with Setup-wizard language picker
 - [x] Bot install from a GitHub release or a local ZIP file
 - [x] Chromium capture mode (no CA trust needed)
+- [x] **Custom themes** (frontend theming hooks)
 - [x] **AutoPlay** (Mahjong Soul first; the bot drives the table
-      autonomously, like the original Akagi's Windows AutoPlay)
+      autonomously)
 
 Planned:
 
 - [ ] **Amatsuki** platform support
-- [ ] **Custom themes** (frontend theming hooks)
 - [ ] **Refine Frontend** — tile layout, animations, accessibility
-- [ ] **Tenhou autoplay** (currently observe-only)
+- [ ] **Tenhou autoplay**
 
 Detailed bug tracking lives in
 [GitHub Issues](https://github.com/shinkuan/Akagi/issues).
@@ -506,16 +406,18 @@ truth for channel types.
   game_state::tracker   bot::manager     ipc forwarder
        │                  │                  │
        ▼ PostBus          ▼ BotResponseBus   ▼ app.emit
-  analysis::runner   subprocess (uv)    Tauri webview
-       │
-       ▼ AnalysisBus
+  analysis::runner   built-in NN (in-proc) Tauri webview
+       │             | cloud API
+       ▼ AnalysisBus  | mjai subprocess
        └──► ipc forwarder ──► app.emit
 ```
 
 [`src/lib.rs`](./src/lib.rs) wires the buses on boot. The frontend
-talks to the backend over six push events (`mjai-event`, `bot-response`,
-`bot-status`, `proxy-status`, `notify`, `history-recorded`) and a set
-of pull commands documented in [`src/ipc/README.md`](./src/ipc/README.md).
+talks to the backend over push events (`mjai-event`, `bot-response`,
+`bot-status`, …) and a set of pull commands, both documented in
+[`src/ipc/README.md`](./src/ipc/README.md). With AutoPlay on, the
+`autoplay` manager consumes the bot's decisions and clicks the table
+through the Chromium capture backend (CDP).
 
 ## Tech Stack
 
@@ -526,6 +428,8 @@ of pull commands documented in [`src/ipc/README.md`](./src/ipc/README.md).
 | MITM | [`hudsucker`](https://crates.io/crates/hudsucker) 0.24 (`rcgen-ca`, `rustls-client`) |
 | CDP capture | [`chromiumoxide`](https://crates.io/crates/chromiumoxide) 0.9 |
 | Mahjong engine | [`riichienv-core`](https://github.com/smly/RiichiEnv) 0.4 |
+| Built-in bot | [`candle`](https://github.com/huggingface/candle) 0.9 (pure-Rust NN inference; weights embedded) |
+| Cloud inference | [`reqwest`](https://crates.io/crates/reqwest) 0.13 (rustls) |
 | Protobuf | `prost` 0.14 + `prost-reflect` 0.16 |
 | Frontend | [React](https://react.dev) 19, TypeScript, [Vite](https://vitejs.dev) 8 |
 | Styling | [Tailwind CSS](https://tailwindcss.com) v4, [shadcn/ui](https://ui.shadcn.com) (Radix Nova preset) |
@@ -533,7 +437,7 @@ of pull commands documented in [`src/ipc/README.md`](./src/ipc/README.md).
 | Charts | [Recharts](https://recharts.org) |
 | Tile rendering | [`<mah-gen>`](https://github.com/eric200203/mahgen) Web Component |
 | i18n | [react-i18next](https://react.i18next.com) |
-| Bot runtime | `python-build-standalone` 3.12 + [`uv`](https://github.com/astral-sh/uv) (bundled per platform) |
+| mjai bot runtime | `python-build-standalone` 3.12 + [`uv`](https://github.com/astral-sh/uv) (bundled per platform; plugin bots only — the built-in bot needs none of it) |
 
 ## Project Layout
 
@@ -541,28 +445,33 @@ of pull commands documented in [`src/ipc/README.md`](./src/ipc/README.md).
 .
 ├── src/
 │   ├── analysis/      Shanten / waits / agari-rate / risk / discard search
-│   ├── bot/           Registry, Python runtime, JSONL subprocess runner
+│   ├── autoplay/      Bot decisions → table clicks via CDP (AutoPlay)
+│   ├── bot/           Bot manager: built-in bot, cloud API client, mjai subprocess runner
 │   ├── bridge/        Per-platform protocol → MjaiEvent
 │   │   ├── majsoul/   Mahjong Soul (liqi protobuf)
+│   │   ├── riichi_city/  Riichi City (MITM only)
 │   │   └── tenhou/    Tenhou (JSON tag stream, observe-only)
 │   ├── capture/       Capture backends abstraction (mitm | chromium)
 │   ├── config/        AppConfig (TOML) sections + resolution
 │   ├── event_bus.rs   Broadcast channels between subsystems
 │   ├── game_state/    riichienv-driven mirror, snapshot, mahgen view
+│   ├── github/        GitHub Releases client (bot install, self-update)
 │   ├── history/       Game replay storage + index
 │   ├── inspector/     Frame / event / bot-reaction broadcaster
 │   ├── ipc/           Tauri commands, app state, capture supervisor
 │   ├── logger/        Per-session log dir + per-target file appenders
 │   ├── proxy/         MITM HTTP/HTTPS/WS via hudsucker; CA at ./ca
 │   ├── schema/        MjaiEvent enum + IPC payload types
+│   ├── updater/       In-app self-update (check + apply)
 │   └── lib.rs         Boot / wiring
+├── native_bot/        Built-in bot crate: obs/action codec, candle CNN, embedded weights
 ├── mjai_bot/
 │   └── example/       Rule-based shanten optimizer (ships in tree)
 ├── frontend/          React + Vite + Tailwind + shadcn UI
 │   └── src/
 │       ├── routes/    Overview / GameDashboard / Bots / History / Logs / Settings / Setup / InspectorView / DiagnosticView
 │       ├── tiles/     Dashboard tiles (header, hands, opponents, analysis, …)
-│       ├── stores/    Zustand slices (game, analysis, bot, proxy, notify, layout, config)
+│       ├── stores/    Zustand stores, one per domain (game, bot, config, theme, …)
 │       └── i18n/      en / ja / zh-TW / zh-CN
 ├── tests/             Integration tests
 ├── capabilities/      Tauri permissions
@@ -572,6 +481,51 @@ of pull commands documented in [`src/ipc/README.md`](./src/ipc/README.md).
 ```
 
 Per-module developer guides live in each `src/*/README.md`.
+
+## mjai Bots (plugin interface)
+
+> Optional, and aimed at developers. The [built-in bot](#built-in-bot-no-install)
+> is the default and needs none of this — you only come here to run a *different*
+> engine under Akagi.
+
+Besides its own bot, Akagi can drive any engine that speaks the **mjai**
+protocol. Such a bot is a standalone subprocess talking JSONL over stdin/stdout:
+Akagi feeds it the game as mjai events, and it replies with an action plus
+optional HUD data.
+
+### Write one
+
+The full guide lives in **[`mjai_bot/README.md`](./mjai_bot/README.md)**: the
+I/O protocol, the mjai event stream, the reaction and `meta` HUD format, toast
+notifications, and `manifest.toml` settings.
+[`mjai_bot/example/`](./mjai_bot/example/) is a working rule-based bot you can
+copy.
+
+For local development, drop your bot folder under `mjai_bot/<name>/` and click
+**Install environment** on its row in the **Bots** tab to build its venv — no
+need to repackage and reinstall on every change. The activation toggle stays
+disabled until the environment is ready.
+
+### Install one
+
+The **Bots** tab installs a bot from a GitHub release or a local ZIP.
+
+The IPC command `install_bot_from_github(repo, asset_glob?, name?)` fetches the
+latest release zip, extracts it under `mjai_bot/<name>/`, validates `bot.py`,
+and runs `uv sync` once. Subsequent launches are fast — the sync is gated by a
+stamp at `mjai_bot/<name>/.akagi/synced.stamp`.
+
+**Install from ZIP** is the offline equivalent: click **Browse…** to pick a
+`.zip` (or paste its path). It runs the exact same extract / validate /
+`uv sync` pipeline; your source `.zip` is left untouched.
+
+### AGPL boundary
+
+Bots run as a **separate OS subprocess** spawned by Akagi. Communication is
+strictly JSONL over stdin / stdout — no in-process linking, no shared address
+space, no FFI. This is an intentional license boundary: an AGPL-licensed bot
+(e.g. Mortal, which links libriichi) stays inside its own process, so dropping
+it under `mjai_bot/<name>/` does **not** make Akagi a derived work of the bot.
 
 ## Build From Source
 

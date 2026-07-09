@@ -188,12 +188,31 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
     Ok(())
 }
 
+/// Synthetic `BotInfo` entries for the built-in native bots. They have no
+/// directory, no `pyproject.toml`, and are always "ready" (weights are embedded
+/// in the binary — nothing to install).
+fn native_bot_infos() -> Vec<BotInfo> {
+    [crate::bot::native::NATIVE_4P, crate::bot::native::NATIVE_3P]
+        .into_iter()
+        .map(|name| BotInfo {
+            name: name.to_string(),
+            dir: String::new(),
+            has_pyproject: false,
+            env_ready: true,
+            manifest: None,
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn list_bots(state: State<'_, AppState>) -> CmdResult<Vec<BotInfo>> {
     let dir = state.config.read().await.bot.dir.clone();
     let resolved = resolve_dir(Path::new(&dir));
     let registry = BotRegistry::scan(&resolved).map_err(|e| format!("scan bots: {e:#}"))?;
-    Ok(registry.entries().iter().map(entry_to_info).collect())
+    // Built-in native bots first, then discovered `mjai_bot/*` bots.
+    let mut bots = native_bot_infos();
+    bots.extend(registry.entries().iter().map(entry_to_info));
+    Ok(bots)
 }
 
 /// Read the merged settings (manifest + on-disk values) for one bot.
@@ -265,7 +284,9 @@ pub async fn set_active_bot(
     name: String,
     state: State<'_, AppState>,
 ) -> CmdResult<()> {
-    if !name.is_empty() {
+    // Built-in native bots are always available (no venv); skip the registry
+    // + environment checks that only apply to Python `mjai_bot/*` bots.
+    if !name.is_empty() && !crate::bot::native::is_native(&name) {
         let dir = state.config.read().await.bot.dir.clone();
         let resolved = resolve_dir(Path::new(&dir));
         let registry = BotRegistry::scan(&resolved).map_err(|e| format!("scan bots: {e:#}"))?;
@@ -642,28 +663,28 @@ fn open_path(path: &Path) -> CmdResult<()> {
 }
 
 /// Opens an `http(s)://` URL in the user's default browser. Used by the
-/// first-run wizard for the GitHub / Discord links — Tauri 2's webview
-/// won't reliably honour `target="_blank"` without the opener plugin, so
-/// we route the click through the OS's native handler ourselves.
-/// Validates the scheme to keep this from being abused as a generic
-/// process spawn.
+/// first-run wizard's GitHub / Discord links and the purchase flow's PayPal
+/// approve page — Tauri 2's webview won't reliably honour `target="_blank"`
+/// without the opener plugin, so we route the click through the OS's native
+/// handler ourselves. Validates the scheme to keep this from being abused as
+/// a generic process spawn.
+///
+/// Goes through the `opener` crate (ShellExecuteW on Windows, `open` on
+/// macOS, xdg-open on Linux) rather than spawning `explorer <url>`:
+/// explorer.exe silently opens the Documents folder instead of the browser
+/// when the URL carries a query string (e.g. PayPal's `?token=...`).
 #[tauri::command]
 pub async fn open_external_url(url: String) -> CmdResult<()> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(format!("refused non-http(s) url: {url}"));
     }
-    #[cfg(target_os = "linux")]
-    let cmd = "xdg-open";
-    #[cfg(target_os = "macos")]
-    let cmd = "open";
-    #[cfg(target_os = "windows")]
-    let cmd = "explorer";
-
-    std::process::Command::new(cmd)
-        .arg(&url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("open url {url}: {e}"))
+    // `opener::open` can block briefly (it may wait on the launcher), so keep
+    // it off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || {
+        opener::open(&url).map_err(|e| format!("open url {url}: {e}"))
+    })
+    .await
+    .map_err(|e| format!("open url task: {e}"))?
 }
 
 /// Strict matcher for session directory names — `YYYYMMDD-HHMMSS`. Used
@@ -1293,6 +1314,125 @@ pub async fn apply_update(
     crate::updater::apply::download_and_apply(&app, &info).await
 }
 
+// ---------- Built-in bot cloud inference (native API) ----------
+//
+// Thin passthroughs to `crate::bot::api`. They take the server URL / key as
+// explicit args (rather than reading them from config) so the frontend can
+// verify a key before saving it, and redeem a code before any key exists.
+
+/// Redeem a prepaid code (`POST /v3/redeem`, no auth). By default mints a new
+/// key; pass `renew_key` to stack time onto a key you already hold.
+#[tauri::command]
+pub async fn native_api_redeem(
+    base_url: String,
+    code: String,
+    email: Option<String>,
+    renew_key: Option<String>,
+) -> CmdResult<crate::bot::api::RedeemResponse> {
+    crate::bot::api::redeem(&base_url, &code, email.as_deref(), renew_key.as_deref())
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Fetch a key's plan / expiry / live limits (`GET /v3/key`).
+#[tauri::command]
+pub async fn native_api_key_status(
+    base_url: String,
+    key: String,
+) -> CmdResult<crate::bot::api::KeyStatus> {
+    crate::bot::api::ApiClient::new(&base_url, &key)
+        .map_err(|e| format!("{e:#}"))?
+        .key_status()
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// List the models a key's plan may use (`GET /v3/models`).
+#[tauri::command]
+pub async fn native_api_models(
+    base_url: String,
+    key: String,
+) -> CmdResult<Vec<crate::bot::api::ModelInfo>> {
+    crate::bot::api::ApiClient::new(&base_url, &key)
+        .map_err(|e| format!("{e:#}"))?
+        .models()
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Liveness + per-model queue depth (`GET /healthz`, no auth).
+#[tauri::command]
+pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::Health> {
+    crate::bot::api::health(&base_url)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+// ---------- Self-serve key purchase (PayPal, `/paypal/*`) ----------
+//
+// Thin passthroughs to `crate::bot::purchase`. The purchase state machine
+// (create → open approve_url → poll → redeem/store key) lives in the
+// frontend's purchase store; these commands are stateless like the rest of
+// the native-API family and all run without auth — the buyer is acquiring
+// a key, so they don't hold one yet.
+
+/// Start a one-time purchase (`POST /paypal/create-order`, no auth). Not
+/// idempotent — each call opens a fresh PayPal order.
+///
+/// `redeem: true` has the server turn the prepaid code into an API key
+/// itself, so the poll and the buyer's email both carry the key. Pass `false`
+/// only to renew an existing key, which needs the raw code for
+/// `/v3/redeem`'s `renew_key`.
+#[tauri::command]
+pub async fn native_api_create_order(
+    base_url: String,
+    product: String,
+    redeem: bool,
+) -> CmdResult<crate::bot::purchase::CreatedOrder> {
+    crate::bot::purchase::create_order(&base_url, &product, redeem)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Poll a one-time purchase (`POST /paypal/order-result`, no auth).
+/// Idempotent; returns `pending` until paid, then `ready` with the API key
+/// (`redeem: true` order) or the redeem code (`redeem: false`).
+#[tauri::command]
+pub async fn native_api_order_result(
+    base_url: String,
+    order_id: String,
+    claim: String,
+) -> CmdResult<crate::bot::purchase::OrderResult> {
+    crate::bot::purchase::order_result(&base_url, &order_id, &claim)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Start a subscription (`POST /paypal/create-subscription`, no auth). Not
+/// idempotent — each call opens a fresh PayPal subscription.
+#[tauri::command]
+pub async fn native_api_create_subscription(
+    base_url: String,
+    product: String,
+) -> CmdResult<crate::bot::purchase::CreatedSubscription> {
+    crate::bot::purchase::create_subscription(&base_url, &product)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Poll a subscription (`POST /paypal/subscription-result`, no auth). On
+/// `ready` the response carries the API key directly (no redeem step).
+#[tauri::command]
+pub async fn native_api_subscription_result(
+    base_url: String,
+    subscription_id: String,
+    claim: String,
+) -> CmdResult<crate::bot::purchase::SubscriptionResult> {
+    crate::bot::purchase::subscription_result(&base_url, &subscription_id, &claim)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 fn persist_config(config: &AppConfig, path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1347,6 +1487,14 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::delete_game_history_entry,
             $crate::ipc::commands::check_for_update,
             $crate::ipc::commands::apply_update,
+            $crate::ipc::commands::native_api_redeem,
+            $crate::ipc::commands::native_api_key_status,
+            $crate::ipc::commands::native_api_models,
+            $crate::ipc::commands::native_api_health,
+            $crate::ipc::commands::native_api_create_order,
+            $crate::ipc::commands::native_api_order_result,
+            $crate::ipc::commands::native_api_create_subscription,
+            $crate::ipc::commands::native_api_subscription_result,
         ]
     };
 }
@@ -1355,6 +1503,26 @@ macro_rules! ipc_handlers {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Only `http(s)://` may reach the OS opener — anything else could be
+    /// abused as a generic process/file launcher. (That a query-string URL
+    /// reaches the *browser* — not explorer.exe's Documents fallback — is
+    /// the manual half of this regression: opener uses ShellExecuteW.)
+    #[tokio::test]
+    async fn open_external_url_refuses_non_http_schemes() {
+        for url in [
+            "file:///C:/Windows",
+            "ftp://host/x",
+            "javascript:alert(1)",
+            "C:\\Users",
+            "httpss://not-http",
+        ] {
+            assert!(
+                open_external_url(url.to_string()).await.is_err(),
+                "{url} must be refused"
+            );
+        }
+    }
 
     #[test]
     fn persist_config_round_trips() {
@@ -1374,10 +1542,10 @@ mod tests {
         assert_eq!(back.proxy.addr, "127.0.0.1:9999");
     }
 
-    /// Regression: the first-run wizard ships a fresh-install Akagi with
-    /// `bot.enabled = false` (defaults), then calls `update_config` to
-    /// flip it to `true`. Before the fix the bot manager was never
-    /// spawned in this process — the user had to relaunch the app.
+    /// Regression: when a user has `bot.enabled = false` and then flips it to
+    /// `true` (e.g. via the wizard or Settings), `update_config` must spawn the
+    /// bot manager in-process. Before the fix the manager was never spawned on
+    /// that flip — the user had to relaunch the app.
     /// `claim_bot_manager_spawn` is the gate that makes
     /// `update_config` spawn the manager exactly once on that flip.
     #[test]

@@ -1,20 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GeneralConfig {
-    pub language: String,
     /// Set to `true` once the first-run setup wizard has finished.
     /// Existing pre-wizard configs default to `true` via migration so
     /// upgraded users don't see the wizard.
     pub first_run_completed: bool,
-}
-
-impl Default for GeneralConfig {
-    fn default() -> Self {
-        Self {
-            language: "en".to_string(),
-            first_run_completed: false,
-        }
-    }
 }
