@@ -65,8 +65,9 @@
 Akagi 透過本機 Proxy 或內建瀏覽器監看你在雀魂 / 天鳳的對局，
 鏡射遊戲狀態，並在可拖曳的 HUD 中顯示 **向聽**、**待牌**、
 **和牌率**、**聽牌率**、**對各家放銃風險**，以及
-**推薦切牌**。若放入符合 mjai 協定的 bot（例如 Mortal），
-HUD 在每巡也會顯示該 bot 的建議。
+**推薦切牌**。執行檔本身就內建一個 **bot** —— 不需要安裝任何東西 ——
+它的建議會在每巡顯示；若想要更強的託管模型，可以把它指向
+**雲端推論 API**。
 
 ## 截圖
 
@@ -95,6 +96,7 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 - [架構](#架構)
 - [技術堆疊](#技術堆疊)
 - [專案結構](#專案結構)
+- [mjai Bot 外掛介面](#mjai-bot-外掛介面)
 - [從原始碼建置](#從原始碼建置)
 - [測試](#測試)
 - [Releases 與 CI](#releases-與-ci)
@@ -114,9 +116,15 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
   - **Chromium** — 由 Akagi 啟動受控的 Chromium 系列瀏覽器，
     透過 Chrome DevTools Protocol 攔截 WebSocket 訊框。
     無需設定 proxy 或安裝憑證；直接在啟動的視窗中遊玩即可。
-- **可插拔的 mjai bot** — 在設定一鍵安裝 Mortal，或將
-  任意 `bot.py` 放入 `mjai_bot/<name>/`。可依模式切換：
-  `bot.active_4p` 與 `bot.active_3p` 會依牌桌人數自動套用。
+- **兩種 bot 後端**
+  - **內建 bot**（預設） — 嵌在執行檔內的純 Rust 神經網路。
+    不需要 Python、不需要下載、不需要設定；四麻與三麻都能直接開打。
+  - **雲端推論**（選用） — 把每一次決策交給透過 HTTP 存取、
+    更強的託管模型。內建模型仍保持載入作為自動後備，因此伺服器
+    連不上時也不會讓對局卡住。金鑰可直接在應用程式內購買或兌換。
+
+  兩者皆可依模式切換：`bot.active_4p` 與 `bot.active_3p`
+  會依牌桌人數自動套用。
 - **對局歷史** — 每場結束的對局會自動記錄。歷史頁籤顯示
   名次圓餅圖、可選計分規則的累積 PT 折線圖（雀魂段位 /
   天鳳段位 / 自訂 uma），以及細部統計（和牌率、放銃率、
@@ -126,7 +134,8 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
   可依模組過濾；**Inspector** 頁籤顯示原始 WebSocket 訊框
   → mjai 事件 → bot 反應，附訊框數量與 meta 檢視。
 - **首次啟動設定** — 語言 → 平台 → 抓包模式 →
-  CA 信任 / Chromium 選擇 → bot 安裝 → 完成。
+  CA 信任 / Chromium 選擇 → bot 設定 → 完成。
+  沒有東西要安裝：內建 bot 本來就在。
 - **多語系** — English、日本語、繁體中文、简体中文。
   可在設定精靈或側邊欄即時切換，覆蓋整個 UI。
 - **三麻** — 完整流程：bridge、tracker、snapshot、
@@ -160,12 +169,13 @@ Akagi 以 portable zip 發佈 — 每個平台一個自帶所需檔案的資料�
 | macOS | `akagi-<version>-macos-arm64.zip` | Apple Silicon。未簽章,解壓後執行一次 `xattr -cr <解壓後資料夾>`,或第一次右鍵 → *Open*。 |
 | Linux | `akagi-<version>-linux-x64.zip` | 在 `ubuntu-22.04` 上建置(glibc 2.35+)。需要 WebKit2GTK 4.1(`apt install libwebkit2gtk-4.1-0` / `dnf install webkit2gtk4.1` / `pacman -S webkit2gtk-4.1`)。 |
 
-每個 zip 都將 `python-build-standalone` 3.12 + `uv` 一併放在
-binary 旁邊,bot 開箱即用,不需另外安裝系統 Python。
+內建 bot 完全不需要任何執行環境。每個 zip 也將
+`python-build-standalone` 3.12 + `uv` 一併放在 binary 旁邊，
+因此選用的 [mjai bot](#mjai-bot-外掛介面) 不需另外安裝系統 Python。
 
-首次啟動時會引導你完成語言、平台、抓包
-模式、選用的 bot 安裝(Mortal)以及 CA 信任(僅 MITM
-模式才需要)。
+首次啟動時會引導你完成語言、平台、抓包模式、bot 設定，
+以及 CA 信任（僅 MITM 模式才需要）。沒有 bot 要安裝 ——
+內建的那個本來就在。
 
 ### B. Chromium 模式（不需信任 CA）
 
@@ -252,26 +262,66 @@ dir       = "./mjai_bot"
 
 ## Bots
 
-### 安裝 Bot
+### 內建 bot
 
-在 **Bots** 頁籤可直接從 GitHub release 安裝 bot：
+Akagi 內建一個 **純 Rust 的 bot**，完全在行程內執行 —— 不需要
+Python、不需要 libriichi、不需要 `uv sync`，也沒有任何東西要下載。
+它是兩種模式的預設值（`bot.active_4p = "akagi-native"`、
+`bot.active_3p = "akagi-native3p"`），會出現在 **Bots** 頁籤最上方，
+狀態永遠是「就緒」。
 
-範例:
+它是一個以天鳳牌譜做行為複製（behavior cloning）訓練出來的小型神經
+網路（權重直接嵌在執行檔內），因此棋力 **刻意保持在中等水準** ——
+它是個合理的預設值，而不是頂尖引擎。
 
-- Repo：`shinkuan/Akagi-MjaiBot-Mortal`
-- 四麻：`release4p.zip`
-- 三麻：`release3p.zip`
+### 雲端推論
 
-IPC 指令 `install_bot_from_github(repo, asset_glob?, name?)`
-會抓取最新 release zip，解壓至 `mjai_bot/<name>/`，驗證
-`bot.py`，並執行一次 `uv sync`。後續啟動很快 — sync
-會根據 `mjai_bot/<name>/.akagi/synced.stamp` 戳記決定是否
-跳過。
+內建 bot 可以選擇把每一次決策交給 **遠端推論伺服器**，而不是執行內嵌
+的模型 —— 那是一個透過網路存取、更強的託管模型。內嵌的本機模型仍會
+保持載入作為自動 **後備**：當伺服器連不上、被限流，或金鑰無效時，bot
+會安靜地改用本機模型的著手，讓進行中的對局不會卡住。
 
-你也可以從**本機 ZIP** 安裝 —— 適合離線安裝或本機建置的
-bot。在 **Bots** 頁籤點擊 **從 ZIP 安裝**，**瀏覽…** 選擇
-`.zip`（或貼上其路徑）即可安裝。它執行與 GitHub 安裝完全相同
-的解壓 / 驗證 / `uv sync` 流程，且不會改動你的來源 `.zip`。
+在 **Bots** 頁籤的 **雲端推論** 卡片中設定：
+
+- **啟用雲端推論 API** — 總開關。關閉（預設）⇒ 完全離線的本機模型。
+- **伺服器網址** — 推論伺服器。預設為 `https://mjapi.shinkuan.me`；
+  若你自架，可指向任意主機（`http://host:8080`、`https://host`）。
+- **API 金鑰** — 32 字元的金鑰。
+- **四麻 / 三麻模型** — 每種模式要請求的 model id；留空則使用伺服器的
+  預設值。**取得模型清單** 會列出你的金鑰可用的 id。
+
+按鈕可以 **檢查金鑰**（方案、到期時間、當日用量 vs 每日額度、速率
+限制）、**兌換序號**（把預付序號換成金鑰 —— 新發一組，或替現有金鑰
+加時間）、**購買金鑰**（見下方），以及對伺服器做 **健康檢查**。為了
+不超出伺服器的速率限制，bot 只在真正需要決策時才發出請求 —— 它會先在
+本機判斷這一手是否可能有合法動作 —— 而不是每次對手切牌都問一次。
+
+儲存後 **立即生效，即使在對局進行中**：bot 每次決策都會重新讀取這些
+設定，因此你可以在半莊中途開啟雲端推論、修正打錯的金鑰，或切換模型，
+都不必重開對局。若伺服器停止回應，bot 會退回本機模型，並在一段逐漸
+拉長的 backoff 視窗內跳過 API，而不是每一巡都等到逾時；狀態列的
+**Online API** 指示燈會轉紅，恢復後再轉綠。
+
+這些設定會保存在 `config.toml` 的 `[bot.api]`（`enabled`、`base_url`、
+`key`、`model_4p`、`model_3p`）。
+
+> **你的 API 金鑰以明文儲存** 在 `config.toml` 中，且 Akagi 會將它以
+> bearer token 送往設定的 **伺服器網址**。請把該檔案視為機密：不要提交
+> 到版本庫，分享前（例如回報問題時）也請先把 `key` 塗掉。
+
+#### 取得金鑰
+
+三種方式，都在 **雲端推論** 卡片上：
+
+- **購買金鑰** — 應用程式內購買。選擇方案（一次性加值，或每月訂閱），
+  Akagi 會在瀏覽器開啟 PayPal。價格由伺服器決定，應用程式只送出商品
+  id。付款完成後，金鑰會自動回填並儲存 —— 付款期間你可以關閉對話框，
+  狀態標籤會帶你回來。萬一回填失敗，金鑰也會寄到你的 PayPal 信箱，
+  購買永遠不會遺失。唯一的例外是勾選 *把時間加到目前的金鑰* 購買：
+  那會把買到的天數疊加到你已持有的金鑰上，因此寄到信箱的是用來加值的
+  預付 **序號**，而不是一組新金鑰。
+- **兌換序號** — 把預付序號換成金鑰，或替你已持有的金鑰加時間。
+- 到 [Discord 伺服器](https://discord.gg/Z2wjXUK8bN) 詢問。
 
 ### 依模式切換的 bot
 
@@ -279,38 +329,9 @@ bot。在 **Bots** 頁籤點擊 **從 ZIP 安裝**，**瀏覽…** 選擇
 局時依牌桌人數選用對應的 bot。將某個槽位留空即可在該
 模式下僅使用 **分析功能**（不顯示 bot 建議）。
 
-### 自行撰寫 bot
-
-```
-mjai_bot/<name>/
-├── bot.py            # JSONL stdin → JSONL stdout
-├── pyproject.toml    # requires-python = ">=3.12"
-├── manifest.toml     # 選填 — supported_modes、設定 schema
-└── README.md
-```
-
-`bot.py` 從 stdin 每行讀取一個 mjai 事件 JSON 陣列，並從
-stdout 每行寫出一個 mjai 動作物件（無動作時輸出
-`{"type":"none"}`）。Akagi 會把 stderr 內容寫入應用程式
-紀錄中的 `bot=<name>` 條目。
-
-完整協定、manifest schema 以及 secret 欄位處理請見
-[`src/bot/README.md`](./src/bot/README.md)。
-[`mjai_bot/example/`](./mjai_bot/example/) 為一個 in-tree、
-可運作的規則型範例 bot。
-
-本機開發時，把 bot 資料夾放到 `mjai_bot/<name>/`，在 **Bots** 頁籤該 bot
-列上點擊 **安裝環境** 即可建立其 venv —— 不必每次改動都重新打包安裝。環境
-就緒前啟用開關會保持停用。
-
-### AGPL 邊界
-
-Bot 以 Akagi 啟動的 **獨立 OS 子行程** 執行。通訊嚴格透
-過 stdin / stdout 上的 JSONL 進行 — 沒有 in-process 連結、
-沒有共享位址空間、沒有 FFI。這是刻意設計的授權邊界：
-AGPL 授權的 bot（例如連結 libriichi 的 Mortal）會留在
-其自己的行程內，因此把它放入 `mjai_bot/<name>/` **不會**
-讓 Akagi 成為該 bot 的衍生作品。
+除了這兩種後端之外，Akagi 也能以子行程執行 **外部 mjai bot**。
+那是給開發者的擴充點，而不是任何人都得走的步驟 ——
+請見 [mjai Bot 外掛介面](#mjai-bot-外掛介面)。
 
 ---
 
@@ -545,6 +566,60 @@ alpha.8 已完成：
 ```
 
 各模組的開發者指南位於對應的 `src/*/README.md`。
+
+## mjai Bot 外掛介面
+
+> 選用功能，主要面向開發者。[內建 bot](#內建-bot) 才是預設值，完全不需要
+> 這一節的任何步驟 —— 只有當你想讓 Akagi 驅動 *另一個* 引擎時才會用到。
+
+除了自家的 bot 之外，Akagi 也能驅動任何遵循 **mjai** 協定的引擎。這種 bot
+是一個獨立子行程，透過 stdin/stdout 以 JSONL 溝通：Akagi 把對局以 mjai
+事件餵給它，它則回覆一個動作，以及選填的 HUD 資料。
+
+### 自行撰寫
+
+```
+mjai_bot/<name>/
+├── bot.py            # JSONL stdin → JSONL stdout
+├── pyproject.toml    # requires-python = ">=3.12"
+├── manifest.toml     # 選填 — supported_modes、設定 schema
+└── README.md
+```
+
+`bot.py` 從 stdin 每行讀取一個 mjai 事件 JSON 陣列，並從 stdout 每行寫出
+一個 mjai 動作物件（無動作時輸出 `{"type":"none"}`）。Akagi 會把 stderr
+內容寫入應用程式紀錄中的 `bot=<name>` 條目。
+
+完整的 I/O 協定、mjai 事件流、reaction 與 `meta` HUD 格式、toast 通知，
+以及 `manifest.toml` 設定，請見
+**[`mjai_bot/README.md`](./mjai_bot/README.md)**。
+[`mjai_bot/example/`](./mjai_bot/example/) 為一個可直接複製、可運作的
+規則型範例 bot。
+
+本機開發時，把 bot 資料夾放到 `mjai_bot/<name>/`，在 **Bots** 頁籤該 bot
+列上點擊 **安裝環境** 即可建立其 venv —— 不必每次改動都重新打包安裝。
+環境就緒前，啟用開關會保持停用。
+
+### 安裝
+
+**Bots** 頁籤可以從 GitHub release 或本機 ZIP 安裝 bot。
+
+IPC 指令 `install_bot_from_github(repo, asset_glob?, name?)` 會抓取最新
+release zip，解壓至 `mjai_bot/<name>/`，驗證 `bot.py`，並執行一次
+`uv sync`。後續啟動很快 —— sync 會根據
+`mjai_bot/<name>/.akagi/synced.stamp` 戳記決定是否跳過。
+
+**從 ZIP 安裝** 是離線的等價流程：點擊 **瀏覽…** 選擇 `.zip`（或貼上其
+路徑）即可。它執行完全相同的解壓 / 驗證 / `uv sync` 流程，且不會改動你的
+來源 `.zip`。
+
+### AGPL 邊界
+
+Bot 以 Akagi 啟動的 **獨立 OS 子行程** 執行。通訊嚴格透過 stdin / stdout
+上的 JSONL 進行 —— 沒有 in-process 連結、沒有共享位址空間、沒有 FFI。
+這是刻意設計的授權邊界：AGPL 授權的 bot（例如連結 libriichi 的 Mortal）
+會留在其自己的行程內，因此把它放入 `mjai_bot/<name>/` **不會** 讓 Akagi
+成為該 bot 的衍生作品。
 
 ## 從原始碼建置
 
