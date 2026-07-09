@@ -18,6 +18,14 @@ use crate::{
 };
 use std::sync::Arc;
 
+#[derive(Debug, Clone, Default)]
+pub struct BuildHints {
+    pub our_seat: Option<u8>,
+    pub self_operation_index: Option<u32>,
+    pub self_operation_tile: Option<String>,
+    pub self_operation_moqie: Option<bool>,
+}
+
 /// Direction of a parsed frame relative to the proxied client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -70,6 +78,13 @@ pub trait Bridge: Send {
 
     /// Build a raw platform frame from an mjai command, if applicable.
     fn build(&mut self, command: &MjaiEvent) -> Option<Vec<u8>>;
+
+    /// Build with platform-specific hints supplied by the caller. Most
+    /// bridges do not need hints; Majsoul uses them for operations whose
+    /// wire request needs candidate metadata not represented by mjai.
+    fn build_with_hints(&mut self, command: &MjaiEvent, _hints: &BuildHints) -> Option<Vec<u8>> {
+        self.build(command)
+    }
 }
 
 /// Construct a bridge for the given platform.

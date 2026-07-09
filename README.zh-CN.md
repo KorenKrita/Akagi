@@ -188,6 +188,72 @@ bot 配置，以及 CA 信任（仅 MITM 模式才需要）。没有 bot 要安�
 
 ---
 
+## 配置文件
+
+配置文件 `config.toml` 位于可执行文件旁（或你以 `--config`
+指向的位置）。通过设置 UI 保存的修改会热重载对应子系统 —
+capture / proxy / bot active 槽位无需重启整个应用即可生效。
+
+```toml
+[general]
+language = "en"
+
+[logging]
+dir       = "./logs"
+level     = "info"
+all_level = "warn"
+
+[platform]
+kind = "Majsoul"
+
+[proxy]
+enabled = true
+addr    = "127.0.0.1:23410"
+ca_dir  = "./ca"
+upstream_enabled = false     # true = 将代理到服务器的流量导入上游代理
+upstream = ""                # 可选，例如 "http://127.0.0.1:7890"
+force_mitm_all = false       # true = 禁用 IP 直连 CONNECT 透传，强制 MITM
+
+[capture]
+mode = "mitm"               # 或 "chromium"
+
+[capture.chromium]
+executable    = ""          # 留空 = 自动检测
+user_data_dir = ""          # 留空 = <config_root>/chrome-profile
+start_url     = "https://game.maj-soul.com/1/"
+cft_channel   = "stable"
+force_cft     = false
+extra_args    = []
+
+[bot]
+enabled   = true
+active_4p = "mortal"        # 用于四麻
+active_3p = "mortal3p"      # 用于三麻；留空 = 不启用
+auto_sync = true
+dir       = "./mjai_bot"
+[bot.api]
+enabled  = false
+base_url = "https://mjapi.shinkuan.me"
+key      = ""
+model_4p = ""
+model_3p = ""
+```
+
+<details>
+<summary>配置文件位置（解析顺序）</summary>
+
+1. `--config <path>` CLI 参数。
+2. `<exe_dir>/configs/config.toml`。
+3. 当前工作目录下的 `./configs.toml`。
+4. 以上均不存在时，首次启动会将默认值写入
+   `<exe_dir>/configs/config.toml`。
+
+旧版配置（仍使用单一 `active = "..."` 键）加载时会自动
+迁移为 `active_4p`。
+</details>
+
+---
+
 ## Bots
 
 ### 内置 bot

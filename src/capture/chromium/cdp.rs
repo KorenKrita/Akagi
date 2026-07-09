@@ -20,7 +20,7 @@
 //! page-scoped WS today. If real-world testing shows otherwise, expand
 //! the polling to include `browser.targets()` and filter on type.
 
-use crate::autoplay::AutoplayContext;
+use crate::autoplay::{cdp_input::install_ws_hook, AutoplayContext};
 use crate::bridge::Direction;
 use crate::capture::flow::{slugify, FlowBridges};
 use crate::event_bus::MjaiBus;
@@ -238,6 +238,11 @@ async fn attach_page(
     page.execute(NetworkEnableParams::default())
         .await
         .context("Network.enable")?;
+    if autoplay.is_some() {
+        if let Err(e) = install_ws_hook(&page).await {
+            warn!("autoplay: failed to install WebSocket hook: {e:#}");
+        }
+    }
     let mut on_created = page
         .event_listener::<EventWebSocketCreated>()
         .await
@@ -269,7 +274,7 @@ async fn attach_page(
                     };
                     let label = format!("ws {}", ev.url);
                     let slug = slugify(&ev.url);
-                    let _ = bridges.acquire(key, &slug, &label);
+                    let bridge = bridges.acquire(key, &slug, &label);
                     debug!("ws created: {} (target {target_id} request {})", ev.url, ev.request_id.inner());
 
                     // If this is the platform's WS (Majsoul), capture
@@ -285,6 +290,8 @@ async fn attach_page(
                                 );
                             }
                             *guard = Some(page.clone());
+                            *ctx.packet_bridge.write().await = Some(bridge.clone());
+                            *ctx.packet_ws_url.write().await = Some(ev.url.clone());
                             autoplay_request_id = Some(ev.request_id.inner().clone());
                             info!(
                                 "autoplay: page handle bound to target {target_id} via WS {}",
@@ -321,6 +328,7 @@ async fn attach_page(
                         &payload,
                         &ev.response.payload_data,
                         &result,
+                        false,
                     );
                     for e in result.events {
                         let _ = mjai_bus.send(e);
@@ -346,6 +354,10 @@ async fn attach_page(
                         let mut b = bridge.lock().expect("bridge mutex poisoned");
                         b.parse(Direction::Up, &payload)
                     };
+                    let injected = match &autoplay {
+                        Some(ctx) => ctx.take_injected_ws_frame_mark(&payload).await,
+                        None => false,
+                    };
                     record_frame(
                         &inspector,
                         FrameDirection::Up,
@@ -354,6 +366,7 @@ async fn attach_page(
                         &payload,
                         &ev.response.payload_data,
                         &result,
+                        injected,
                     );
                     for e in result.events {
                         let _ = mjai_bus.send(e);
@@ -377,6 +390,8 @@ async fn attach_page(
                     if let (Some(ctx), Some(req)) = (&autoplay, &autoplay_request_id) {
                         if *req == *ev.request_id.inner() {
                             *ctx.page.write().await = None;
+                            *ctx.packet_bridge.write().await = None;
+                            *ctx.packet_ws_url.write().await = None;
                             autoplay_request_id = None;
                             debug!("autoplay: page handle cleared on WS close for target {target_id}");
                         }
@@ -413,6 +428,7 @@ fn record_frame(
     payload: &[u8],
     payload_data: &str,
     result: &crate::bridge::ParseResult,
+    injected: bool,
 ) {
     let raw = if opcode == 1 {
         FrameRaw::Text(payload_data.to_string())
@@ -427,6 +443,7 @@ fn record_frame(
         raw,
         parsed: result.parsed.clone(),
         emitted: result.events.len(),
+        injected,
     });
 }
 

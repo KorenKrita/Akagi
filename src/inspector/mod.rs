@@ -71,6 +71,9 @@ impl InspectorWriter {
     /// or the broadcast are swallowed so emit-site code stays simple
     /// (the inspector is observability, not an authoritative store).
     pub fn record(&self, entry: InspectorEntry) {
+        if is_ignored_entry(&entry) {
+            return;
+        }
         if let Ok(mut f) = self.inner.file.lock() {
             if serde_json::to_writer(&mut *f, &entry).is_ok() {
                 let _ = f.write_all(b"\n");
@@ -82,10 +85,20 @@ impl InspectorWriter {
     }
 }
 
+fn is_ignored_entry(entry: &InspectorEntry) -> bool {
+    matches!(
+        entry,
+        InspectorEntry::WsFrame {
+            parsed: Some(parsed),
+            ..
+        } if parsed.method == ".lq.Route.heartbeat"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{FrameDirection, FrameRaw, InspectorEntry};
+    use crate::schema::{FrameDirection, FrameRaw, InspectorEntry, ParsedFrame};
     use tempfile::TempDir;
 
     fn sample_frame() -> InspectorEntry {
@@ -97,6 +110,7 @@ mod tests {
             raw: FrameRaw::Text("<Z/>".into()),
             parsed: None,
             emitted: 0,
+            injected: false,
         }
     }
 
@@ -129,5 +143,31 @@ mod tests {
         writer.record(sample_frame());
         let body = std::fs::read_to_string(&path).unwrap();
         assert_eq!(body.lines().count(), 1);
+    }
+
+    #[test]
+    fn record_ignores_majsoul_route_heartbeat() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("inspector.jsonl");
+        let (writer, tx) = InspectorWriter::open(&path, 8).unwrap();
+        let mut rx = tx.subscribe();
+
+        writer.record(InspectorEntry::WsFrame {
+            ts_ms: 1,
+            direction: FrameDirection::Up,
+            flow_id: "majsoul:1".into(),
+            size: 3,
+            raw: FrameRaw::Binary("abc".into()),
+            parsed: Some(ParsedFrame {
+                method: ".lq.Route.heartbeat".into(),
+                args: serde_json::json!({}),
+            }),
+            emitted: 0,
+            injected: true,
+        });
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.is_empty());
+        assert!(rx.try_recv().is_err());
     }
 }

@@ -314,6 +314,10 @@ pub struct ReadInspectorRequest {
     pub limit: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kinds: Option<Vec<String>>,
+    /// WS frame directions: `"up"` and/or `"down"`. Non-WS entries are
+    /// unaffected by this filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directions: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<u8>,
     /// Case-insensitive substring on the entry's text representation

@@ -98,6 +98,7 @@ export type DetectedBrowser = {
 export type PlatformKind = 'Majsoul' | 'Tenhou' | 'RiichiCity'
 
 export type MajsoulAutoplayConfig = {
+  mode: 'packet_with_click_fallback' | 'packet' | 'click'
   pre_click_delay_min_ms: number
   pre_click_delay_max_ms: number
   inter_click_delay_ms: number
@@ -121,11 +122,31 @@ export type NativeApiConfig = {
   model_3p: string
 }
 
+export type KitaDebugResponse = {
+  canKita: boolean
+  sent: boolean
+  hasPage: boolean
+  hasPacketBridge: boolean
+  ourSeat?: number | null
+  numPlayers?: number | null
+  legalHasKita: boolean
+  handHasNorth: boolean
+  drawnTile?: string | null
+  reason: string
+}
+
 export type AppConfig = {
   general: { first_run_completed: boolean }
   logging: { dir: string; level: string; all_level: string }
   platform: { kind: PlatformKind }
-  proxy: { enabled: boolean; addr: string; ca_dir: string }
+  proxy: {
+    enabled: boolean
+    addr: string
+    ca_dir: string
+    upstream_enabled?: boolean
+    upstream?: string | null
+    force_mitm_all?: boolean
+  }
   bot: {
     enabled: boolean
     active_4p: string
@@ -561,6 +582,7 @@ export type InspectorEntry =
       raw: FrameRaw
       parsed?: ParsedFrame
       emitted: number
+      injected?: boolean
     }
   | {
       kind: 'mjai_event'
@@ -588,6 +610,7 @@ export type ReadInspectorRequest = {
   offset?: number
   limit?: number
   kinds?: InspectorKind[]
+  directions?: FrameDirection[]
   actor?: number
   search?: string
 }

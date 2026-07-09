@@ -462,6 +462,25 @@ function ConfigStep({
             placeholder="127.0.0.1:23410"
           />
         </Field>
+        <Field label={t('settings.upstream_proxy')} hint={t('settings.upstream_proxy_hint')}>
+          <Select
+            value={draft.proxy.upstream_enabled ? 'on' : 'off'}
+            onValueChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, upstream_enabled: v === 'on' } })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="on">{t('common.on')}</SelectItem>
+              <SelectItem value="off">{t('common.off')}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            value={draft.proxy.upstream ?? ''}
+            onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, upstream: e.target.value } })}
+            placeholder="http://127.0.0.1:7890"
+          />
+        </Field>
         <Field
           label={t('settings.ca_dir')}
           hint={t('setup.mitm.ca_dir_hint')}
@@ -475,6 +494,20 @@ function ConfigStep({
           <Select
             value={draft.proxy.enabled ? 'on' : 'off'}
             onValueChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, enabled: v === 'on' } })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="on">{t('common.on')}</SelectItem>
+              <SelectItem value="off">{t('common.off')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label={t('settings.force_mitm_all')} hint={t('settings.force_mitm_all_hint')}>
+          <Select
+            value={draft.proxy.force_mitm_all ? 'on' : 'off'}
+            onValueChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, force_mitm_all: v === 'on' } })}
           >
             <SelectTrigger className="w-full">
               <SelectValue />
@@ -966,6 +999,9 @@ function FinishStep({ draft }: { draft: AppConfig }) {
         {m === 'mitm' && (
           <>
             <div><b>{t('setup.finish.listen_label')}</b> {draft.proxy.addr}</div>
+            <div><b>{t('setup.finish.upstream_enabled_label')}</b> {draft.proxy.upstream_enabled ? t('common.on') : t('common.off')}</div>
+            <div><b>{t('setup.finish.upstream_label')}</b> {draft.proxy.upstream || t('common.none_paren')}</div>
+            <div><b>{t('setup.finish.force_mitm_all_label')}</b> {draft.proxy.force_mitm_all ? t('common.on') : t('common.off')}</div>
             <div><b>{t('setup.finish.ca_dir_label')}</b> {draft.proxy.ca_dir}</div>
           </>
         )}

@@ -5,12 +5,101 @@
 
 use crate::autoplay::context::CanvasRect;
 use anyhow::{anyhow, Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
 };
 use chromiumoxide::layout::Point;
 use chromiumoxide::page::Page;
 use std::time::Duration;
+
+const WS_HOOK_SCRIPT: &str = r#"
+(() => {
+  const NativeWebSocket = window.__akagiNativeWebSocket || window.WebSocket;
+  window.__akagiNativeWebSocket = NativeWebSocket;
+  window.__akagiSockets = window.__akagiSockets || [];
+  function remember(ws, url) {
+    const resolvedUrl = String(url || ws.url || "");
+    window.__akagiSockets.push({ ws, url: resolvedUrl });
+    ws.addEventListener('close', () => {
+      window.__akagiSockets = (window.__akagiSockets || []).filter((s) => (s.ws || s) !== ws);
+    });
+  }
+  if (!window.__akagiWsHookInstalled) {
+    window.__akagiWsHookInstalled = true;
+    function AkagiWebSocket(...args) {
+      const ws = new NativeWebSocket(...args);
+      remember(ws, args[0]);
+      return ws;
+    }
+    AkagiWebSocket.prototype = NativeWebSocket.prototype;
+    Object.setPrototypeOf(AkagiWebSocket, NativeWebSocket);
+    for (const key of Object.getOwnPropertyNames(NativeWebSocket)) {
+      if (!(key in AkagiWebSocket)) {
+        try { Object.defineProperty(AkagiWebSocket, key, Object.getOwnPropertyDescriptor(NativeWebSocket, key)); } catch (_) {}
+      }
+    }
+    window.WebSocket = AkagiWebSocket;
+  }
+  function urlsLikelySame(a, b) {
+    if (!a || !b) return false;
+    if (a === b || a.includes(b) || b.includes(a)) return true;
+    try {
+      const au = new URL(a);
+      const bu = new URL(b);
+      return au.host === bu.host && au.pathname === bu.pathname;
+    } catch (_) {
+      return false;
+    }
+  }
+  window.__akagiSendWsBase64 = (b64, targetUrl) => {
+    const sockets = (window.__akagiSockets || [])
+      .map((s) => ({ ws: s.ws || s, url: String(s.url || (s.ws || s).url || "") }))
+      .filter((s) => s.ws && s.ws.readyState === NativeWebSocket.OPEN);
+    let target = sockets.find((s) => urlsLikelySame(s.url, targetUrl));
+    if (!target && sockets.length === 1) target = sockets[0];
+    if (!target) return false;
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    target.ws.send(bytes);
+    return true;
+  };
+})();
+"#;
+
+pub async fn install_ws_hook(page: &Page) -> Result<()> {
+    page.evaluate_on_new_document(WS_HOOK_SCRIPT)
+        .await
+        .context("CDP install WebSocket init hook")?;
+    page.evaluate(WS_HOOK_SCRIPT)
+        .await
+        .context("CDP install WebSocket live hook")?;
+    Ok(())
+}
+
+pub async fn dispatch_ws_binary(page: &Page, target_url: &str, bytes: &[u8]) -> Result<bool> {
+    let b64 = BASE64.encode(bytes);
+    let expr = format!(
+        "(()=>window.__akagiSendWsBase64 && window.__akagiSendWsBase64({}, {}))()",
+        serde_json::to_string(&b64).expect("base64 string serializes"),
+        serde_json::to_string(target_url).expect("target url string serializes")
+    );
+    let result = page
+        .evaluate(expr)
+        .await
+        .context("CDP send WebSocket frame")?;
+    Ok(result.value().and_then(|v| v.as_bool()).unwrap_or(false))
+}
+
+/// Dispatch a mouse move without pressing. Used to force a fresh hover
+/// transition before retrying a click that may have been swallowed.
+pub async fn dispatch_mouse_move(page: &Page, x: f64, y: f64) -> Result<()> {
+    page.move_mouse(Point::new(x, y))
+        .await
+        .context("CDP move_mouse")?;
+    Ok(())
+}
 
 /// Dispatch a single mouse click at `(x, y)` (CSS pixels) as four CDP
 /// events, with mandatory hover before press:
@@ -33,7 +122,7 @@ pub async fn dispatch_click(
     click_hold_ms: u32,
 ) -> Result<()> {
     let pt = Point::new(x, y);
-    page.move_mouse(pt).await.context("CDP move_mouse")?;
+    dispatch_mouse_move(page, x, y).await?;
     if hover_delay_ms > 0 {
         tokio::time::sleep(Duration::from_millis(hover_delay_ms as u64)).await;
     }

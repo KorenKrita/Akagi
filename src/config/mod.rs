@@ -6,7 +6,7 @@ mod logging;
 mod platform;
 mod proxy;
 
-pub use autoplay::{AutoplayConfig, MajsoulAutoplayConfig};
+pub use autoplay::{AutoplayConfig, MajsoulAutoplayConfig, MajsoulAutoplayMode};
 pub use bot::{BotConfig, NativeApiConfig};
 pub use capture::{CaptureConfig, CaptureMode, ChromiumConfig};
 pub use general::GeneralConfig;
@@ -158,7 +158,10 @@ pub fn load_config(cli_path: Option<&Path>) -> (AppConfig, PathBuf) {
 
     let mut cfg = match std::fs::read_to_string(&path) {
         Ok(content) => match toml::from_str::<AppConfig>(&content) {
-            Ok(config) => config,
+            Ok(mut config) => {
+                migrate_upstream_enabled_marker(&mut config, &content);
+                config
+            }
             Err(e) => {
                 eprintln!("Failed to parse config: {e}, using defaults");
                 AppConfig::default()
@@ -201,6 +204,21 @@ fn migrate_first_run_marker(cfg: &mut AppConfig, path: &Path) {
     // the wizard.
     if !body.contains("first_run_completed") {
         cfg.general.first_run_completed = true;
+    }
+}
+
+fn migrate_upstream_enabled_marker(cfg: &mut AppConfig, body: &str) {
+    if body.contains("upstream_enabled") {
+        return;
+    }
+    let has_upstream = cfg
+        .proxy
+        .upstream
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if has_upstream {
+        cfg.proxy.upstream_enabled = true;
     }
 }
 

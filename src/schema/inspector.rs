@@ -90,6 +90,8 @@ pub enum InspectorEntry {
         /// surfaced in the row so the user spots "frame parsed but
         /// produced 0 events" at a glance.
         emitted: usize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        injected: bool,
     },
     /// MJAI event observed on `mjai_bus`.
     MjaiEvent { ts_ms: i64, event: MjaiEvent },
@@ -118,6 +120,7 @@ mod tests {
                 args: serde_json::json!({"seed":"1,0,0,2,5,134"}),
             }),
             emitted: 1,
+            injected: false,
         };
         let j = serde_json::to_string(&entry).unwrap();
         assert!(j.contains(r#""kind":"ws_frame""#));
@@ -137,9 +140,11 @@ mod tests {
             raw: FrameRaw::Binary("AAECA2g=".into()),
             parsed: None,
             emitted: 0,
+            injected: true,
         };
         let j = serde_json::to_string(&entry).unwrap();
         assert!(j.contains(r#""format":"binary""#));
+        assert!(j.contains(r#""injected":true"#));
         // `parsed: None` is skipped, not emitted as `null`.
         assert!(!j.contains(r#""parsed""#));
         let back: InspectorEntry = serde_json::from_str(&j).unwrap();

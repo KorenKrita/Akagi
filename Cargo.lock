@@ -56,6 +56,7 @@ dependencies = [
  "time",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
+ "tower-service",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -2143,8 +2144,6 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hudsucker"
 version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e69a3f72552bb8b8322341f995d021d0cccb3cd3717781a6dcb33243f29902b"
 dependencies = [
  "bstr",
  "futures",

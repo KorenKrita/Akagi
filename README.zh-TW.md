@@ -188,6 +188,72 @@ Akagi 以 portable zip 發佈 — 每個平台一個自帶所需檔案的資料�
 
 ---
 
+## 設定檔
+
+設定檔 `config.toml` 位於可執行檔旁（或你以 `--config` 指
+向的位置）。透過設定 UI 儲存的修改會熱重載對應子系統 —
+capture / proxy / bot active 槽位無需重啟整個應用即可生效。
+
+```toml
+[general]
+language = "en"
+
+[logging]
+dir       = "./logs"
+level     = "info"
+all_level = "warn"
+
+[platform]
+kind = "Majsoul"
+
+[proxy]
+enabled = true
+addr    = "127.0.0.1:23410"
+ca_dir  = "./ca"
+upstream_enabled = false     # true = 將代理到伺服器的流量導入上游代理
+upstream = ""                # 可選，例如 "http://127.0.0.1:7890"
+force_mitm_all = false       # true = 停用 IP 直連 CONNECT 透傳，強制 MITM
+
+[capture]
+mode = "mitm"               # 或 "chromium"
+
+[capture.chromium]
+executable    = ""          # 留空 = 自動偵測
+user_data_dir = ""          # 留空 = <config_root>/chrome-profile
+start_url     = "https://game.maj-soul.com/1/"
+cft_channel   = "stable"
+force_cft     = false
+extra_args    = []
+
+[bot]
+enabled   = true
+active_4p = "mortal"        # 用於四麻
+active_3p = "mortal3p"      # 用於三麻；留空 = 不啟用
+auto_sync = true
+dir       = "./mjai_bot"
+[bot.api]
+enabled  = false
+base_url = "https://mjapi.shinkuan.me"
+key      = ""
+model_4p = ""
+model_3p = ""
+```
+
+<details>
+<summary>設定檔位置（解析順序）</summary>
+
+1. `--config <path>` CLI 旗標。
+2. `<exe_dir>/configs/config.toml`。
+3. 當前工作目錄下的 `./configs.toml`。
+4. 以上皆不存在時，首次啟動會將預設值寫入
+   `<exe_dir>/configs/config.toml`。
+
+舊版設定（仍使用單一 `active = "..."` 鍵）載入時會自動
+遷移為 `active_4p`。
+</details>
+
+---
+
 ## Bots
 
 ### 內建 bot

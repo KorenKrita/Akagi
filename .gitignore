@@ -17,6 +17,7 @@ reference*.md
 # Runtime data
 ca/
 logs/
+chrome-profile/
 
 # Per-bot uv venvs and stamp files (managed by Akagi)
 mjai_bot/*/.akagi/

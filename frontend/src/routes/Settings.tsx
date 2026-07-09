@@ -50,7 +50,7 @@ import {
   isKnownDefaultStartUrl,
   platformInfo,
 } from '@/lib/platforms'
-import type { AppConfig, CaptureMode, DetectedBrowser, PlatformKind } from '@/types'
+import type { AppConfig, CaptureMode, DetectedBrowser, KitaDebugResponse, PlatformKind } from '@/types'
 
 export function Settings() {
   const { t, i18n } = useTranslation()
@@ -474,10 +474,23 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string
+  value: boolean
+  onChange: (v: boolean) => void
+  hint?: string
+}) {
   return (
-    <div className="flex items-center justify-between">
-      <Label>{label}</Label>
+    <div className="flex items-center justify-between gap-3">
+      <div className="grid gap-1">
+        <Label>{label}</Label>
+        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      </div>
       <Switch checked={value} onCheckedChange={onChange} />
     </div>
   )
@@ -619,6 +632,7 @@ function AutoplayCard({
   const ap = draft.autoplay ?? {
     enabled: false,
     majsoul: {
+      mode: 'packet_with_click_fallback',
       pre_click_delay_min_ms: 1000,
       pre_click_delay_max_ms: 3000,
       inter_click_delay_ms: 300,
@@ -635,6 +649,36 @@ function AutoplayCard({
       ...draft,
       autoplay: { ...ap, majsoul: { ...ap.majsoul, ...patch } },
     })
+  const showKitaDebug = (info: KitaDebugResponse) => {
+    const detail = [
+      info.reason,
+      `can=${info.canKita}`,
+      `sent=${info.sent}`,
+      `seat=${info.ourSeat ?? '-'}`,
+      `np=${info.numPlayers ?? '-'}`,
+      `legal=${info.legalHasKita}`,
+      `north=${info.handHasNorth}`,
+      `drawn=${info.drawnTile ?? '-'}`,
+      `bridge=${info.hasPacketBridge}`,
+      `page=${info.hasPage}`,
+    ].join(' | ')
+    if (info.sent || info.canKita) toast.success(detail)
+    else toast.warning(detail)
+  }
+  const checkKita = async () => {
+    try {
+      showKitaDebug(await invoke<KitaDebugResponse>('debug_kita_status'))
+    } catch (err) {
+      toast.error(String(err))
+    }
+  }
+  const sendKita = async () => {
+    try {
+      showKitaDebug(await invoke<KitaDebugResponse>('debug_send_kita_packet'))
+    } catch (err) {
+      toast.error(String(err))
+    }
+  }
   return (
     <Card>
       <CardHeader>
@@ -654,6 +698,39 @@ function AutoplayCard({
             {t('settings.autoplay.requires_chromium')}
           </p>
         )}
+        <Field label={t('settings.autoplay.mode')}>
+          <Select
+            value={ap.majsoul.mode ?? 'packet_with_click_fallback'}
+            onValueChange={(v) =>
+              setMajsoulField({
+                mode: v as typeof ap.majsoul.mode,
+              })
+            }
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="packet_with_click_fallback">
+                {t('settings.autoplay.mode_packet_with_click_fallback')}
+              </SelectItem>
+              <SelectItem value="packet">
+                {t('settings.autoplay.mode_packet')}
+              </SelectItem>
+              <SelectItem value="click">
+                {t('settings.autoplay.mode_click')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={checkKita}>
+            {t('settings.autoplay.kita_check')}
+          </Button>
+          <Button type="button" variant="outline" onClick={sendKita}>
+            {t('settings.autoplay.kita_send')}
+          </Button>
+        </div>
         <Field label={t('settings.autoplay.pre_click_delay_min')}>
           <Input
             type="number"
@@ -840,11 +917,29 @@ function CaptureCard({
               value={draft.proxy.enabled}
               onChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, enabled: v } })}
             />
+            <Toggle
+              label={t('settings.force_mitm_all')}
+              value={draft.proxy.force_mitm_all ?? false}
+              onChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, force_mitm_all: v } })}
+              hint={t('settings.force_mitm_all_hint')}
+            />
             <Field label={t('settings.address')}>
               <Input
                 value={draft.proxy.addr}
                 onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, addr: e.target.value } })}
                 placeholder="127.0.0.1:23410"
+              />
+            </Field>
+            <Field label={t('settings.upstream_proxy')} hint={t('settings.upstream_proxy_hint')}>
+              <Toggle
+                label={t('settings.upstream_proxy_enabled')}
+                value={draft.proxy.upstream_enabled ?? false}
+                onChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, upstream_enabled: v } })}
+              />
+              <Input
+                value={draft.proxy.upstream ?? ''}
+                onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, upstream: e.target.value } })}
+                placeholder="http://127.0.0.1:7890"
               />
             </Field>
             <Field label={t('settings.ca_dir')} hint={t('settings.ca_dir_hint')}>

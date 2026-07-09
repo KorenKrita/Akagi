@@ -12,7 +12,7 @@
 pub mod parser;
 pub mod tile;
 
-use super::{Bridge, Direction, ParseResult};
+use super::{Bridge, BuildHints, Direction, ParseResult};
 use crate::{
     config::Platform,
     logger::{FlowLogger, Session},
@@ -21,9 +21,11 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use chrono::Local;
 use parser::{LiqiParser, MessageType, ParsedMessage};
+use prost::Message;
+use rand::Rng;
 use serde_json::{json, Value as JsonValue};
 use std::{collections::HashMap, sync::Arc};
-use tile::{compare_pai, ms_to_mjai};
+use tile::{compare_pai, mjai_to_ms, ms_to_mjai};
 use tracing::{info, warn};
 
 const METHOD_AUTH_GAME: &str = ".lq.FastTest.authGame";
@@ -33,6 +35,8 @@ const METHOD_NOTIFY_GAME_END_RESULT: &str = ".lq.NotifyGameEndResult";
 /// current kyoku. See `handle_game_restore`.
 const METHOD_SYNC_GAME: &str = ".lq.FastTest.syncGame";
 const METHOD_ENTER_GAME: &str = ".lq.FastTest.enterGame";
+const METHOD_INPUT_OPERATION: &str = ".lq.FastTest.inputOperation";
+const METHOD_INPUT_CHI_PENG_GANG: &str = ".lq.FastTest.inputChiPengGang";
 const ACTION_NEW_ROUND: &str = "ActionNewRound";
 const ACTION_DEAL_TILE: &str = "ActionDealTile";
 const ACTION_DISCARD_TILE: &str = "ActionDiscardTile";
@@ -54,6 +58,18 @@ const AN_GANG_ADD_GANG_ADD: u64 = 2;
 const TEHAI_SIZE: usize = 13;
 const TSUMO_TEHAI_SIZE: usize = 14;
 const UNKNOWN_TILE: &str = "?";
+
+const OP_DAHAI: u32 = 1;
+const OP_CHI: u32 = 2;
+const OP_PON: u32 = 3;
+const OP_ANKAN: u32 = 4;
+const OP_DAIMINKAN: u32 = 5;
+const OP_KAKAN: u32 = 6;
+const OP_RIICHI: u32 = 7;
+const OP_TSUMO: u32 = 8;
+const OP_RON: u32 = 9;
+const OP_RYUKYOKU: u32 = 10;
+const OP_KITA: u32 = 11;
 
 /// Per-flow Majsoul state. Holds the liqi parser and the game state mirror
 /// needed to emit mjai events.
@@ -81,6 +97,47 @@ enum DoraTiming {
     /// emits `tsumo` first; the new dora marker is held back and flipped
     /// just before the next `dahai`.
     PendingAfterRinshan,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ReqSelfOperation {
+    #[prost(uint32, tag = "1")]
+    r#type: u32,
+    #[prost(uint32, tag = "2")]
+    index: u32,
+    #[prost(string, tag = "3")]
+    tile: String,
+    #[prost(bool, tag = "4")]
+    cancel_operation: bool,
+    #[prost(bool, tag = "5")]
+    moqie: bool,
+    #[prost(uint32, tag = "6")]
+    timeuse: u32,
+    #[prost(int32, tag = "7")]
+    tile_state: i32,
+    #[prost(string, repeated, tag = "8")]
+    change_tiles: Vec<String>,
+    #[prost(int32, repeated, tag = "9")]
+    tile_states: Vec<i32>,
+    #[prost(uint32, tag = "10")]
+    gap_type: u32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ReqChiPengGang {
+    #[prost(uint32, tag = "1")]
+    r#type: u32,
+    #[prost(uint32, tag = "2")]
+    index: u32,
+    #[prost(bool, tag = "3")]
+    cancel_operation: bool,
+    #[prost(uint32, tag = "6")]
+    timeuse: u32,
+}
+
+enum OutboundCommand {
+    SelfOperation(ReqSelfOperation),
+    ChiPengGang(ReqChiPengGang),
 }
 
 pub struct MajsoulBridge {
@@ -124,6 +181,8 @@ pub struct MajsoulBridge {
     /// `authGame` response. Defaults to 4 so per-flow code that runs before
     /// auth (none today, but be defensive) sees a sane value.
     num_players: u8,
+    next_msg_id: u16,
+    last_self_tsumo: Option<String>,
 }
 
 impl MajsoulBridge {
@@ -141,7 +200,140 @@ impl MajsoulBridge {
             last_revealed_tile_actor: None,
             pending_reach_accepted: None,
             num_players: 4,
+            next_msg_id: 1,
+            last_self_tsumo: None,
         }
+    }
+
+    fn note_request_id(&mut self, msg_id: u16) {
+        self.next_msg_id = msg_id.wrapping_add(1).max(1);
+    }
+
+    fn take_request_id(&mut self) -> u16 {
+        let id = self.next_msg_id;
+        self.next_msg_id = self.next_msg_id.wrapping_add(1).max(1);
+        id
+    }
+
+    fn build_command_with_hints(
+        &self,
+        command: &MjaiEvent,
+        hints: &BuildHints,
+    ) -> Result<Option<OutboundCommand>> {
+        let timeuse = random_timeuse();
+        let our_seat = self.seat.or(hints.our_seat);
+        let cmd = match command {
+            MjaiEvent::Dahai {
+                actor,
+                pai,
+                tsumogiri,
+            } if Some(*actor) == our_seat => {
+                let tile = match &hints.self_operation_tile {
+                    Some(tile) => tile.clone(),
+                    None => mjai_to_ms(pai)?.to_string(),
+                };
+                OutboundCommand::SelfOperation(self_operation(
+                    OP_DAHAI,
+                    hints.self_operation_index.unwrap_or(0),
+                    tile,
+                    hints.self_operation_moqie.unwrap_or(*tsumogiri),
+                    false,
+                    timeuse,
+                ))
+            }
+            MjaiEvent::Reach { actor, pai } if Some(*actor) == our_seat => {
+                let Some(pai) = pai else {
+                    return Ok(None);
+                };
+                OutboundCommand::SelfOperation(self_operation(
+                    OP_RIICHI,
+                    0,
+                    mjai_to_ms(pai)?.to_string(),
+                    false,
+                    false,
+                    timeuse,
+                ))
+            }
+            MjaiEvent::Tsumo { actor, .. } if Some(*actor) == our_seat => {
+                OutboundCommand::SelfOperation(self_operation(
+                    OP_TSUMO,
+                    0,
+                    String::new(),
+                    false,
+                    false,
+                    timeuse,
+                ))
+            }
+            MjaiEvent::Hora { actor, target, .. } if Some(*actor) == our_seat => {
+                if actor == target {
+                    OutboundCommand::SelfOperation(self_operation(
+                        OP_TSUMO,
+                        0,
+                        String::new(),
+                        false,
+                        false,
+                        timeuse,
+                    ))
+                } else {
+                    OutboundCommand::ChiPengGang(chi_peng_gang(OP_RON, 0, false, timeuse))
+                }
+            }
+            MjaiEvent::Chi { actor, .. } if Some(*actor) == our_seat => {
+                OutboundCommand::ChiPengGang(chi_peng_gang(OP_CHI, 0, false, timeuse))
+            }
+            MjaiEvent::Pon { actor, .. } if Some(*actor) == our_seat => {
+                OutboundCommand::ChiPengGang(chi_peng_gang(OP_PON, 0, false, timeuse))
+            }
+            MjaiEvent::Daiminkan { actor, .. } if Some(*actor) == our_seat => {
+                OutboundCommand::ChiPengGang(chi_peng_gang(OP_DAIMINKAN, 0, false, timeuse))
+            }
+            MjaiEvent::Ankan { actor, .. } if Some(*actor) == our_seat => {
+                OutboundCommand::SelfOperation(self_operation(
+                    OP_ANKAN,
+                    0,
+                    String::new(),
+                    false,
+                    false,
+                    timeuse,
+                ))
+            }
+            MjaiEvent::Kakan { actor, .. } if Some(*actor) == our_seat => {
+                OutboundCommand::SelfOperation(self_operation(
+                    OP_KAKAN,
+                    hints.self_operation_index.unwrap_or(0),
+                    hints.self_operation_tile.clone().unwrap_or_default(),
+                    hints.self_operation_moqie.unwrap_or(false),
+                    false,
+                    timeuse,
+                ))
+            }
+            MjaiEvent::Kita { actor, .. } if Some(*actor) == our_seat => {
+                OutboundCommand::SelfOperation(self_operation(
+                    OP_KITA,
+                    hints.self_operation_index.unwrap_or(0),
+                    hints
+                        .self_operation_tile
+                        .clone()
+                        .unwrap_or_else(|| "4z".into()),
+                    hints
+                        .self_operation_moqie
+                        .unwrap_or_else(|| self.last_self_tsumo.as_deref() == Some("N")),
+                    false,
+                    timeuse,
+                ))
+            }
+            MjaiEvent::Ryukyoku { .. } => OutboundCommand::SelfOperation(self_operation(
+                OP_RYUKYOKU,
+                0,
+                String::new(),
+                false,
+                false,
+                timeuse,
+            )),
+            MjaiEvent::None => OutboundCommand::ChiPengGang(chi_peng_gang(0, 0, true, timeuse)),
+            _ => return Ok(None),
+        };
+        Ok(Some(cmd))
     }
 
     /// Open a fresh `majsoul_<ts>.mjai.jsonl` in the platform subdir and
@@ -382,6 +574,9 @@ impl MajsoulBridge {
         } else {
             UNKNOWN_TILE.into()
         };
+        if actor == self_seat {
+            self.last_self_tsumo = Some(pai.clone());
+        }
 
         let new_marker = self.consume_new_dora(data)?;
         let timing = self.dora_timing.take();
@@ -484,6 +679,9 @@ impl MajsoulBridge {
         });
         if is_riichi {
             self.pending_reach_accepted = Some(actor);
+        }
+        if Some(actor) == self.seat {
+            self.last_self_tsumo = None;
         }
         self.last_revealed_tile_actor = Some(actor);
         Ok(events)
@@ -890,6 +1088,7 @@ impl MajsoulBridge {
         self.deferred_dora = None;
         self.last_revealed_tile_actor = None;
         self.pending_reach_accepted = None;
+        self.last_self_tsumo = None;
 
         Ok(vec![
             MjaiEvent::StartKyoku {
@@ -938,6 +1137,9 @@ impl MajsoulBridge {
                 "ActionBaBei received in {}p flow (expected 3p): {data}",
                 self.num_players
             );
+        }
+        if Some(actor) == self.seat {
+            self.last_self_tsumo = None;
         }
         self.last_revealed_tile_actor = Some(actor);
         Ok(vec![MjaiEvent::Kita {
@@ -1141,6 +1343,41 @@ impl Default for MajsoulBridge {
     }
 }
 
+fn random_timeuse() -> u32 {
+    rand::rng().random_range(6..=32)
+}
+
+fn self_operation(
+    r#type: u32,
+    index: u32,
+    tile: String,
+    moqie: bool,
+    cancel_operation: bool,
+    timeuse: u32,
+) -> ReqSelfOperation {
+    ReqSelfOperation {
+        r#type,
+        index,
+        tile,
+        cancel_operation,
+        moqie,
+        timeuse,
+        tile_state: 0,
+        change_tiles: Vec::new(),
+        tile_states: Vec::new(),
+        gap_type: 0,
+    }
+}
+
+fn chi_peng_gang(r#type: u32, index: u32, cancel_operation: bool, timeuse: u32) -> ReqChiPengGang {
+    ReqChiPengGang {
+        r#type,
+        index,
+        cancel_operation,
+        timeuse,
+    }
+}
+
 impl Bridge for MajsoulBridge {
     /// Parse a raw Majsoul WS binary frame, log the decoded message to the
     /// flow log (if any), and emit any resulting mjai events.
@@ -1148,6 +1385,11 @@ impl Bridge for MajsoulBridge {
         use crate::schema::ParsedFrame;
         match self.parser.parse(content) {
             Ok(msg) => {
+                if msg.msg_type == MessageType::Request {
+                    if let Some(msg_id) = msg.msg_id {
+                        self.note_request_id(msg_id);
+                    }
+                }
                 let kind = match msg.msg_type {
                     MessageType::Notify => "NOTIFY",
                     MessageType::Request => "REQUEST",
@@ -1164,6 +1406,7 @@ impl Bridge for MajsoulBridge {
                     msg.method_name,
                     msg.payload
                 );
+                log_fasttest_response_error(&msg);
                 if let Some(log) = &self.flow_log {
                     let line = json!({
                         "ts": Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
@@ -1220,8 +1463,90 @@ impl Bridge for MajsoulBridge {
         }
     }
 
-    fn build(&mut self, _command: &MjaiEvent) -> Option<Vec<u8>> {
-        None
+    fn build(&mut self, command: &MjaiEvent) -> Option<Vec<u8>> {
+        self.build_with_hints(command, &BuildHints::default())
+    }
+
+    fn build_with_hints(&mut self, command: &MjaiEvent, hints: &BuildHints) -> Option<Vec<u8>> {
+        let command = match self.build_command_with_hints(command, hints) {
+            Ok(Some(command)) => command,
+            Ok(None) => return None,
+            Err(e) => {
+                warn!(
+                    target: "akagi::bridge::majsoul",
+                    "failed to build outbound command from {:?}: {e:#}",
+                    command
+                );
+                return None;
+            }
+        };
+        let msg_id = self.take_request_id();
+        let (method, payload) = match command {
+            OutboundCommand::SelfOperation(req) => {
+                let mut payload = Vec::with_capacity(req.encoded_len());
+                req.encode(&mut payload)
+                    .expect("Vec encode for ReqSelfOperation cannot fail");
+                (METHOD_INPUT_OPERATION, payload)
+            }
+            OutboundCommand::ChiPengGang(req) => {
+                let mut payload = Vec::with_capacity(req.encoded_len());
+                req.encode(&mut payload)
+                    .expect("Vec encode for ReqChiPengGang cannot fail");
+                (METHOD_INPUT_CHI_PENG_GANG, payload)
+            }
+        };
+        Some(parser::build_request_frame(msg_id, method, payload))
+    }
+}
+
+fn log_fasttest_response_error(msg: &ParsedMessage) {
+    if msg.msg_type != MessageType::Response {
+        return;
+    }
+    if !matches!(
+        msg.method_name.as_ref(),
+        METHOD_INPUT_OPERATION | METHOD_INPUT_CHI_PENG_GANG
+    ) {
+        return;
+    }
+    let Some(error) = response_error_payload(&msg.payload) else {
+        return;
+    };
+    warn!(
+        target: "akagi::bridge::majsoul",
+        "autoplay: packet response error method={} msg_id={:?} error={}",
+        msg.method_name,
+        msg.msg_id,
+        error
+    );
+}
+
+fn response_error_payload(payload: &JsonValue) -> Option<&JsonValue> {
+    let error = payload.get("error")?;
+    match error {
+        JsonValue::Null => None,
+        JsonValue::Object(map) if map.is_empty() => None,
+        JsonValue::Object(map) => {
+            let code = map.get("code").and_then(JsonValue::as_u64).unwrap_or(0);
+            let message = map
+                .get("message")
+                .and_then(JsonValue::as_str)
+                .unwrap_or_default();
+            let args = map
+                .get("args")
+                .and_then(JsonValue::as_str)
+                .unwrap_or_default();
+            let json_param = map
+                .get("json_param")
+                .and_then(JsonValue::as_str)
+                .unwrap_or_default();
+            if code == 0 && message.is_empty() && args.is_empty() && json_param.is_empty() {
+                None
+            } else {
+                Some(error)
+            }
+        }
+        _ => Some(error),
     }
 }
 
@@ -1238,6 +1563,297 @@ mod tests {
             method_name: Arc::from(method),
             payload,
         }
+    }
+
+    fn parse_built(frame: &[u8]) -> ParsedMessage {
+        let mut parser = LiqiParser::new();
+        parser.parse(frame).expect("built frame must parse")
+    }
+
+    #[test]
+    fn build_dahai_request_frame() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(2);
+        bridge.next_msg_id = 298;
+
+        let frame = bridge
+            .build(&MjaiEvent::Dahai {
+                actor: 2,
+                pai: "N".into(),
+                tsumogiri: false,
+            })
+            .expect("dahai builds");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.msg_type, MessageType::Request);
+        assert_eq!(msg.msg_id, Some(298));
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], 1);
+        assert_eq!(msg.payload["index"], 0);
+        assert_eq!(msg.payload["tile"], "4z");
+        assert_eq!(msg.payload["moqie"], false);
+        assert_eq!(msg.payload["cancel_operation"], false);
+    }
+
+    #[test]
+    fn build_red_five_tsumogiri_request_frame() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(0);
+
+        let frame = bridge
+            .build(&MjaiEvent::Dahai {
+                actor: 0,
+                pai: "5mr".into(),
+                tsumogiri: true,
+            })
+            .expect("red five dahai builds");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], 1);
+        assert_eq!(msg.payload["tile"], "0m");
+        assert_eq!(msg.payload["moqie"], true);
+    }
+
+    #[test]
+    fn build_dahai_request_applies_hints() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(1);
+
+        let frame = bridge
+            .build_with_hints(
+                &MjaiEvent::Dahai {
+                    actor: 1,
+                    pai: "9s".into(),
+                    tsumogiri: false,
+                },
+                &BuildHints {
+                    self_operation_index: Some(13),
+                    self_operation_tile: Some("9s".into()),
+                    self_operation_moqie: Some(true),
+                    ..BuildHints::default()
+                },
+            )
+            .expect("dahai builds");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], OP_DAHAI);
+        assert_eq!(msg.payload["index"], 13);
+        assert_eq!(msg.payload["tile"], "9s");
+        assert_eq!(msg.payload["moqie"], true);
+    }
+
+    #[test]
+    fn build_chi_peng_gang_and_pass_request_frames() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(1);
+
+        let pon = bridge
+            .build(&MjaiEvent::Pon {
+                actor: 1,
+                target: 0,
+                pai: "4m".into(),
+                consumed: ["4m".into(), "4m".into()],
+            })
+            .expect("pon builds");
+        let msg = parse_built(&pon);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_CHI_PENG_GANG);
+        assert_eq!(msg.payload["type"], 3);
+        assert_eq!(msg.payload["index"], 0);
+        assert_eq!(msg.payload["cancel_operation"], false);
+
+        let pass = bridge.build(&MjaiEvent::None).expect("pass builds");
+        let msg = parse_built(&pass);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_CHI_PENG_GANG);
+        assert_eq!(msg.payload["type"], 0);
+        assert_eq!(msg.payload["cancel_operation"], true);
+    }
+
+    #[test]
+    fn build_terminal_self_operation_request_frames() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(3);
+
+        let cases = [
+            (
+                MjaiEvent::Ankan {
+                    actor: 3,
+                    consumed: ["1m".into(), "1m".into(), "1m".into(), "1m".into()],
+                },
+                OP_ANKAN,
+            ),
+            (
+                MjaiEvent::Kakan {
+                    actor: 3,
+                    pai: "2m".into(),
+                    consumed: ["2m".into(), "2m".into(), "2m".into()],
+                },
+                OP_KAKAN,
+            ),
+            (MjaiEvent::Ryukyoku { deltas: None }, OP_RYUKYOKU),
+        ];
+
+        for (event, op_type) in cases {
+            let frame = bridge.build(&event).expect("self operation builds");
+            let msg = parse_built(&frame);
+            assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+            assert_eq!(msg.payload["type"], op_type);
+            assert_eq!(msg.payload["tile"], "");
+        }
+    }
+
+    #[test]
+    fn build_kita_request_uses_north_tile() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(3);
+
+        let frame = bridge
+            .build(&MjaiEvent::Kita {
+                actor: 3,
+                pai: Some("N".into()),
+            })
+            .expect("kita builds");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], OP_KITA);
+        assert_eq!(msg.payload["tile"], "4z");
+    }
+
+    #[test]
+    fn build_kita_request_applies_hints() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(3);
+
+        let frame = bridge
+            .build_with_hints(
+                &MjaiEvent::Kita {
+                    actor: 3,
+                    pai: Some("N".into()),
+                },
+                &BuildHints {
+                    self_operation_index: Some(1),
+                    self_operation_tile: Some("4z".into()),
+                    self_operation_moqie: Some(true),
+                    ..BuildHints::default()
+                },
+            )
+            .expect("kita builds");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], OP_KITA);
+        assert_eq!(msg.payload["index"], 1);
+        assert_eq!(msg.payload["tile"], "4z");
+        assert_eq!(msg.payload["moqie"], true);
+    }
+
+    #[test]
+    fn build_uses_hint_seat_when_bridge_seat_is_unresolved() {
+        let mut bridge = MajsoulBridge::default();
+
+        let frame = bridge
+            .build_with_hints(
+                &MjaiEvent::Kita {
+                    actor: 0,
+                    pai: None,
+                },
+                &BuildHints {
+                    our_seat: Some(0),
+                    self_operation_index: Some(0),
+                    self_operation_tile: Some("4z".into()),
+                    self_operation_moqie: Some(false),
+                },
+            )
+            .expect("kita builds with hint seat");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], OP_KITA);
+        assert_eq!(msg.payload["tile"], "4z");
+    }
+
+    #[test]
+    fn build_kakan_request_applies_hints() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(0);
+
+        let frame = bridge
+            .build_with_hints(
+                &MjaiEvent::Kakan {
+                    actor: 0,
+                    pai: "C".into(),
+                    consumed: ["C".into(), "C".into(), "C".into()],
+                },
+                &BuildHints {
+                    self_operation_index: Some(2),
+                    self_operation_tile: Some("7z".into()),
+                    self_operation_moqie: Some(true),
+                    ..BuildHints::default()
+                },
+            )
+            .expect("kakan builds");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], OP_KAKAN);
+        assert_eq!(msg.payload["index"], 2);
+        assert_eq!(msg.payload["tile"], "7z");
+        assert_eq!(msg.payload["moqie"], true);
+    }
+
+    #[test]
+    fn build_kita_sets_moqie_when_north_was_just_drawn() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(0);
+        bridge.last_self_tsumo = Some("N".into());
+
+        let frame = bridge
+            .build(&MjaiEvent::Kita {
+                actor: 0,
+                pai: Some("N".into()),
+            })
+            .expect("kita builds");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], OP_KITA);
+        assert_eq!(msg.payload["moqie"], true);
+    }
+
+    #[test]
+    fn build_kita_leaves_moqie_false_when_north_was_in_hand() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(0);
+        bridge.last_self_tsumo = Some("5p".into());
+
+        let frame = bridge
+            .build(&MjaiEvent::Kita {
+                actor: 0,
+                pai: Some("N".into()),
+            })
+            .expect("kita builds");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], OP_KITA);
+        assert_eq!(msg.payload["moqie"], false);
+    }
+
+    #[test]
+    fn build_riichi_request_requires_tile() {
+        let mut bridge = MajsoulBridge::default();
+        bridge.seat = Some(0);
+
+        assert!(bridge
+            .build(&MjaiEvent::Reach {
+                actor: 0,
+                pai: None,
+            })
+            .is_none());
+
+        let frame = bridge
+            .build(&MjaiEvent::Reach {
+                actor: 0,
+                pai: Some("6p".into()),
+            })
+            .expect("riichi with tile builds");
+        let msg = parse_built(&frame);
+        assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
+        assert_eq!(msg.payload["type"], OP_RIICHI);
+        assert_eq!(msg.payload["tile"], "6p");
     }
 
     fn resp(method: &str, payload: JsonValue) -> ParsedMessage {

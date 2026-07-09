@@ -15,21 +15,52 @@
 //! active. The MITM backend leaves the context untouched, so reads return
 //! `None` and the manager skips the click.
 
+use crate::capture::flow::SharedBridge;
 use chromiumoxide::page::Page;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 #[derive(Default)]
 pub struct AutoplayContext {
     pub page: Arc<RwLock<Option<Page>>>,
     pub canvas_rect: Arc<RwLock<Option<CanvasRect>>>,
+    pub packet_bridge: Arc<RwLock<Option<SharedBridge>>>,
+    pub packet_ws_url: Arc<RwLock<Option<String>>>,
+    injected_ws_frames: Arc<Mutex<VecDeque<u64>>>,
 }
 
 impl AutoplayContext {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub async fn mark_injected_ws_frame(&self, bytes: &[u8]) {
+        let mut frames = self.injected_ws_frames.lock().await;
+        frames.push_back(frame_fingerprint(bytes));
+        while frames.len() > 32 {
+            frames.pop_front();
+        }
+    }
+
+    pub async fn take_injected_ws_frame_mark(&self, bytes: &[u8]) -> bool {
+        let fingerprint = frame_fingerprint(bytes);
+        let mut frames = self.injected_ws_frames.lock().await;
+        if let Some(pos) = frames.iter().position(|f| *f == fingerprint) {
+            frames.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn frame_fingerprint(bytes: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// CSS-pixel bounding rect for the game canvas, as reported by

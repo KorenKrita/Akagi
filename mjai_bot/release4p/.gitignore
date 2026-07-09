@@ -1,0 +1,8 @@
+__pycache__
+.akagi
+.pytest_cache
+mjai_bot
+
+*.zip
+settings.toml
+uv.lock

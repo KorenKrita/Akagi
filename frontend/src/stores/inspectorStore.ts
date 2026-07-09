@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { InspectorEntry, InspectorKind } from '@/types'
+import type { FrameDirection, InspectorEntry, InspectorKind } from '@/types'
 
 /**
  * Inspector tab store.
@@ -16,6 +16,8 @@ const MAX_ENTRIES = 5000
 
 export type InspectorFilter = {
   kinds: Set<InspectorKind>
+  /** WS frame directions to show. Empty means hide all WS frames. */
+  directions: Set<FrameDirection>
   /** 0/1/2/3 for individual seats; null = all. */
   actor: number | null
   search: string
@@ -40,6 +42,7 @@ export const useInspectorStore = create<InspectorStore>((set) => ({
   entries: [],
   filter: {
     kinds: new Set<InspectorKind>(['ws_frame', 'mjai_event', 'bot_reaction']),
+    directions: new Set<FrameDirection>(['up', 'down']),
     actor: null,
     search: '',
   },

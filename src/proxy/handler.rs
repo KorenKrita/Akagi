@@ -61,6 +61,9 @@ pub struct ProxyHandler {
     /// connections; existing ones would drain naturally and the game
     /// client would never see a disconnect.
     force_close: Arc<Notify>,
+    /// When true, disables compatibility raw-tunneling for IP-literal
+    /// CONNECT flows so everything hudsucker can parse is MITM'd.
+    force_mitm_all: bool,
 }
 
 impl ProxyHandler {
@@ -69,6 +72,7 @@ impl ProxyHandler {
         platform: Platform,
         mjai_tx: Option<MjaiBus>,
         force_close: Arc<Notify>,
+        force_mitm_all: bool,
     ) -> anyhow::Result<Self> {
         let binary = session.binary_logger("proxy")?;
         let inspector = session.inspector();
@@ -82,6 +86,7 @@ impl ProxyHandler {
             inspector,
             inspector_flow_ids: Arc::new(StdMutex::new(HashMap::new())),
             force_close,
+            force_mitm_all,
         })
     }
 
@@ -203,6 +208,15 @@ impl HttpHandler for ProxyHandler {
     /// Hostnames are always MITM'd; the maj-soul hostname endpoints
     /// (`mjusgs.mahjongsoul.com`, etc.) don't hit this code path.
     async fn should_intercept(&mut self, _ctx: &HttpContext, req: &Request<Body>) -> bool {
+        if self.force_mitm_all {
+            info!(
+                target: "akagi::proxy::forward",
+                "force-MITM enabled; intercepting CONNECT to {}",
+                req.uri()
+            );
+            return true;
+        }
+
         let Some(host) = req.uri().host() else {
             return true;
         };
@@ -413,6 +427,7 @@ impl ProxyHandler {
             raw,
             parsed: result.parsed.clone(),
             emitted: result.events.len(),
+            injected: false,
         });
     }
 }

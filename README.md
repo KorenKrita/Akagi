@@ -203,6 +203,73 @@ System-wide proxy with a self-signed root CA at `./ca/`:
 
 ---
 
+## Configuration
+
+Configuration lives in `config.toml` next to the binary (or wherever
+you point `--config`). Edits saved through the Settings UI hot-reload
+the affected subsystem — capture / proxy / bot active slots restart
+without an app relaunch.
+
+```toml
+[general]
+language = "en"
+
+[logging]
+dir       = "./logs"
+level     = "info"
+all_level = "warn"
+
+[platform]
+kind = "Majsoul"
+
+[proxy]
+enabled = true
+addr    = "127.0.0.1:23410"
+ca_dir  = "./ca"
+upstream_enabled = false     # true = route proxy-to-server traffic through upstream
+upstream = ""                # optional, e.g. "http://127.0.0.1:7890"
+force_mitm_all = false       # true = disable raw CONNECT tunneling for IP literals
+
+[capture]
+mode = "mitm"               # or "chromium"
+
+[capture.chromium]
+executable    = ""          # blank = auto-detect
+user_data_dir = ""          # blank = <config_root>/chrome-profile
+start_url     = "https://game.maj-soul.com/1/"
+cft_channel   = "stable"
+force_cft     = false
+extra_args    = []
+
+[bot]
+enabled   = true
+active_4p = "mortal"        # used in 4-player (yonma) games
+active_3p = "mortal3p"      # used in 3-player (sanma); empty = none
+auto_sync = true
+dir       = "./mjai_bot"
+
+[bot.api]
+enabled  = false
+base_url = "https://mjapi.shinkuan.me"
+key      = ""
+model_4p = ""
+model_3p = ""
+```
+
+<details>
+<summary>Where the config file lives (resolution order)</summary>
+
+1. `--config <path>` CLI flag.
+2. `<exe_dir>/configs/config.toml`.
+3. `./configs.toml` in the current working directory.
+4. If none of the above exist, defaults are auto-written to
+   `<exe_dir>/configs/config.toml` on first launch.
+
+Pre-3p configs that still use a single `active = "..."` key are
+auto-migrated into `active_4p` on load.
+</details>
+
+---
 ## Bots
 
 ### Built-in bot (no install)

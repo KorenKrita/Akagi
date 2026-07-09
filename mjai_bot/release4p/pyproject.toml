@@ -1,0 +1,15 @@
+[project]
+name = "mortal-bot"
+version = "0.1.0"
+description = "Mortal RL mahjong bot — wraps libriichi (precompiled) + PyTorch"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch<2.9",
+    "numpy>=1.24",
+    "requests>=2.28",
+]
+
+# Bot is a script (bot.py), not a library — uv installs only deps and
+# skips building the project itself.
+[tool.uv]
+package = false

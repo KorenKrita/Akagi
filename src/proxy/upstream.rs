@@ -20,8 +20,11 @@
 //! client still validates our MITM cert against the Akagi CA the user
 //! installed, so the local security boundary doesn't change.
 
+use anyhow::{Context, Result};
 use hudsucker::{
-    hyper_util::client::legacy::connect::HttpConnector,
+    hyper::{HeaderMap, Uri},
+    hyper_util::client::legacy::connect::proxy::Tunnel,
+    hyper_util::client::legacy::connect::{Connect, HttpConnector},
     rustls::{
         client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
         crypto::aws_lc_rs,
@@ -102,14 +105,25 @@ fn client_config() -> Arc<ClientConfig> {
 
 /// HTTPS connector for the proxy's upstream HTTP/WS leg. HTTP/1 + HTTP/2
 /// both enabled; ALPN is negotiated per-connection by hyper-rustls.
-pub fn http_connector() -> hyper_rustls::HttpsConnector<HttpConnector> {
+pub fn http_connector(
+    upstream_proxy: Option<Uri>,
+) -> Result<impl Connect + Clone + Send + Sync + 'static> {
     let config = client_config();
-    hyper_rustls::HttpsConnectorBuilder::new()
+    let http = match upstream_proxy {
+        Some(proxy) => {
+            validate_upstream_proxy(&proxy)?;
+            EitherConnector::Tunnel(
+                Tunnel::new(proxy, HttpConnector::new()).with_headers(HeaderMap::new()),
+            )
+        }
+        None => EitherConnector::Direct(HttpConnector::new()),
+    };
+    Ok(hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config((*config).clone())
         .https_or_http()
         .enable_http1()
         .enable_http2()
-        .build()
+        .wrap_connector(http))
 }
 
 /// WebSocket connector for upstream WS upgrades originating from the
@@ -117,4 +131,61 @@ pub fn http_connector() -> hyper_rustls::HttpsConnector<HttpConnector> {
 /// policy applies.
 pub fn websocket_connector() -> WsConnector {
     WsConnector::Rustls(client_config())
+}
+
+#[derive(Clone)]
+enum EitherConnector {
+    Direct(HttpConnector),
+    Tunnel(Tunnel<HttpConnector>),
+}
+
+impl tower_service::Service<Uri> for EitherConnector {
+    type Response = hudsucker::hyper_util::rt::TokioIo<tokio::net::TcpStream>;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        match self {
+            Self::Direct(c) => {
+                tower_service::Service::poll_ready(c, cx).map_err(|e| Box::new(e) as Self::Error)
+            }
+            Self::Tunnel(c) => {
+                tower_service::Service::poll_ready(c, cx).map_err(|e| Box::new(e) as Self::Error)
+            }
+        }
+    }
+
+    fn call(&mut self, dst: Uri) -> Self::Future {
+        match self {
+            Self::Direct(c) => {
+                let fut = tower_service::Service::call(c, dst);
+                Box::pin(async move { fut.await.map_err(|e| Box::new(e) as Self::Error) })
+            }
+            Self::Tunnel(c) => {
+                let fut = tower_service::Service::call(c, dst);
+                Box::pin(async move { fut.await.map_err(|e| Box::new(e) as Self::Error) })
+            }
+        }
+    }
+}
+
+fn validate_upstream_proxy(uri: &Uri) -> Result<()> {
+    match uri.scheme_str() {
+        Some("http") => {}
+        Some(other) => {
+            anyhow::bail!("unsupported upstream proxy scheme `{other}`; use http://host:port")
+        }
+        None => {
+            anyhow::bail!("upstream proxy must include a scheme, for example http://127.0.0.1:7890")
+        }
+    }
+    uri.host()
+        .filter(|h| !h.is_empty())
+        .context("upstream proxy must include a host")?;
+    Ok(())
 }

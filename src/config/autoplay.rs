@@ -12,8 +12,24 @@ pub struct AutoplayConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MajsoulAutoplayMode {
+    PacketWithClickFallback,
+    Packet,
+    Click,
+}
+
+impl Default for MajsoulAutoplayMode {
+    fn default() -> Self {
+        Self::PacketWithClickFallback
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MajsoulAutoplayConfig {
+    /// How Majsoul autoplay executes bot decisions.
+    pub mode: MajsoulAutoplayMode,
     /// Lower bound of the random pre-click delay (ms). The reference
     /// Akagi autoplay used `random.uniform(1.0, 3.0)` seconds; the same
     /// distribution is replicated here as `[1000, 3000]` ms by default.
@@ -45,6 +61,7 @@ pub struct MajsoulAutoplayConfig {
 impl Default for MajsoulAutoplayConfig {
     fn default() -> Self {
         Self {
+            mode: MajsoulAutoplayMode::default(),
             pre_click_delay_min_ms: 1000,
             pre_click_delay_max_ms: 3000,
             inter_click_delay_ms: 300,

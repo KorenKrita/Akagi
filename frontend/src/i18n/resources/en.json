@@ -127,6 +127,8 @@
     "kind_ws_frame": "WS",
     "kind_mjai_event": "MJAI",
     "kind_bot_reaction": "Bot",
+    "direction": "Direction",
+    "direction_all": "all",
     "actor": "Actor",
     "actor_all": "all",
     "search_placeholder": "Search frames, events, actions…",
@@ -139,6 +141,7 @@
     "detail_flow": "Flow",
     "detail_size": "Size",
     "detail_emitted": "MJAI events emitted",
+    "detail_injected": "Injected by Akagi",
     "detail_method": "Method",
     "detail_args": "Args",
     "detail_raw_text": "Raw (text)",
@@ -330,9 +333,15 @@
     "autoplay": {
       "title": "Autoplay",
       "enable": "Enable autoplay",
-      "enable_help": "When enabled, Akagi clicks the bot's chosen action on the Mahjong Soul board automatically. Requires the Chromium capture mode and a running game tab.",
+      "enable_help": "When enabled, Akagi executes the bot's chosen action using the selected mode. Requires the Chromium capture mode and a running game tab.",
       "platform_note": "Mahjong Soul only.",
       "requires_chromium": "Autoplay requires the Chromium capture mode.",
+      "mode": "Autoplay mode",
+      "mode_packet_with_click_fallback": "Packet, fallback to click",
+      "mode_packet": "Packet only",
+      "mode_click": "Click only",
+      "kita_check": "Check Kita",
+      "kita_send": "Send Kita packet",
       "pre_click_delay_min": "Pre-click delay (min, ms)",
       "pre_click_delay_max": "Pre-click delay (max, ms)",
       "inter_click_delay": "Inter-click delay (ms)",
@@ -341,7 +350,12 @@
       "click_hold": "Click hold (ms)",
       "dealer_first_discard_extra_delay": "Dealer first-discard extra delay (ms)",
       "dealer_first_discard_extra_delay_hint": "Mahjong Soul plays a hand-sort animation when the dealer is dealt all 14 tiles. Clicks during the animation are dropped. ~2000ms covers most devices."
-    }
+    },
+    "upstream_proxy": "Upstream proxy",
+    "upstream_proxy_hint": "HTTP proxy endpoint for MITM upstream traffic. It is used only when the upstream proxy switch is on.",
+    "force_mitm_all": "Force MITM for all traffic",
+    "force_mitm_all_hint": "Disables raw tunneling for IP-literal CONNECT flows. Use only when you need every readable HTTP/TLS flow intercepted; some CDN clients may break.",
+    "upstream_proxy_enabled": "Use upstream proxy"
   },
   "setup": {
     "title": "Akagi Setup",
@@ -418,7 +432,10 @@
       "bots_none": "none — analysis will be unavailable",
       "click_finish_pre": "Click ",
       "click_finish_btn": "Finish",
-      "click_finish_post": " to save these settings. The capture backend will start automatically. You can change everything later in Settings → Capture, or rerun this wizard from there."
+      "click_finish_post": " to save these settings. The capture backend will start automatically. You can change everything later in Settings → Capture, or rerun this wizard from there.",
+      "upstream_label": "Upstream proxy:",
+      "force_mitm_all_label": "Force MITM:",
+      "upstream_enabled_label": "Use upstream proxy:"
     }
   },
   "bots": {

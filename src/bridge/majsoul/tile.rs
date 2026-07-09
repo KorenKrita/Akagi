@@ -12,6 +12,8 @@ use std::cmp::Ordering;
 /// for unknown inputs so a malformed liqi payload can't silently corrupt the
 /// mjai stream.
 pub fn ms_to_mjai(ms: &str) -> Result<&'static str> {
+    let ms = ms.strip_suffix('t').unwrap_or(ms);
+
     Ok(match ms {
         "0m" => "5mr",
         "1m" => "1m",
@@ -54,6 +56,50 @@ pub fn ms_to_mjai(ms: &str) -> Result<&'static str> {
     })
 }
 
+/// Convert an mjai tile string back to Majsoul's wire tile string.
+pub fn mjai_to_ms(pai: &str) -> Result<&'static str> {
+    Ok(match pai {
+        "5mr" => "0m",
+        "1m" => "1m",
+        "2m" => "2m",
+        "3m" => "3m",
+        "4m" => "4m",
+        "5m" => "5m",
+        "6m" => "6m",
+        "7m" => "7m",
+        "8m" => "8m",
+        "9m" => "9m",
+        "5pr" => "0p",
+        "1p" => "1p",
+        "2p" => "2p",
+        "3p" => "3p",
+        "4p" => "4p",
+        "5p" => "5p",
+        "6p" => "6p",
+        "7p" => "7p",
+        "8p" => "8p",
+        "9p" => "9p",
+        "5sr" => "0s",
+        "1s" => "1s",
+        "2s" => "2s",
+        "3s" => "3s",
+        "4s" => "4s",
+        "5s" => "5s",
+        "6s" => "6s",
+        "7s" => "7s",
+        "8s" => "8s",
+        "9s" => "9s",
+        "E" => "1z",
+        "S" => "2z",
+        "W" => "3z",
+        "N" => "4z",
+        "P" => "5z",
+        "F" => "6z",
+        "C" => "7z",
+        other => bail!("unknown mjai tile: {other:?}"),
+    })
+}
+
 /// Index of `pai` in mjai canonical order (smallest first):
 /// `1m..4m, 5mr, 5m..9m, 1p..4p, 5pr, 5p..9p, 1s..4s, 5sr, 5s..9s, E S W N P F C, ?`.
 /// Unknown strings sort last (one past `?`).
@@ -80,18 +126,30 @@ mod tests {
         assert_eq!(ms_to_mjai("0m").unwrap(), "5mr");
         assert_eq!(ms_to_mjai("0p").unwrap(), "5pr");
         assert_eq!(ms_to_mjai("0s").unwrap(), "5sr");
+        assert_eq!(mjai_to_ms("5mr").unwrap(), "0m");
+        assert_eq!(mjai_to_ms("5pr").unwrap(), "0p");
+        assert_eq!(mjai_to_ms("5sr").unwrap(), "0s");
     }
 
     #[test]
     fn honors_map_to_letters() {
         assert_eq!(ms_to_mjai("1z").unwrap(), "E");
         assert_eq!(ms_to_mjai("7z").unwrap(), "C");
+        assert_eq!(mjai_to_ms("E").unwrap(), "1z");
+        assert_eq!(mjai_to_ms("C").unwrap(), "7z");
     }
 
     #[test]
     fn unknown_tile_errors() {
         assert!(ms_to_mjai("8z").is_err());
         assert!(ms_to_mjai("garbage").is_err());
+    }
+
+    #[test]
+    fn trailing_t_tiles_are_normalized() {
+        assert_eq!(ms_to_mjai("2pt").unwrap(), "2p");
+        assert_eq!(ms_to_mjai("0mt").unwrap(), "5mr");
+        assert_eq!(ms_to_mjai("7zt").unwrap(), "C");
     }
 
     #[test]

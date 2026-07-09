@@ -591,6 +591,7 @@ mod tests {
 
     fn cfg() -> MajsoulAutoplayConfig {
         MajsoulAutoplayConfig {
+            mode: Default::default(),
             pre_click_delay_min_ms: 0,
             pre_click_delay_max_ms: 0,
             inter_click_delay_ms: 0,
