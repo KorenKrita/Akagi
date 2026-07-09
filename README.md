@@ -331,7 +331,10 @@ Three ways, all from the **Cloud inference** card:
   server; the app only sends the product id. Once payment clears, the key is
   delivered back into the app and saved automatically — you can close the dialog
   while you pay, and a status chip leads you back. If delivery ever fails, the
-  key is also emailed to the address you gave at checkout.
+  key is also emailed to your PayPal address, so a purchase is never lost.
+  The one exception is buying with *Add the time to my current key* ticked:
+  that stacks the purchased days onto the key you already hold, so what arrives
+  by email is the prepaid **code** used to top it up, not a new key.
 - **Redeem code** — turn a prepaid code into a key, or add time to the key you
   already hold.
 - Ask in the [Discord server](https://discord.gg/Z2wjXUK8bN).

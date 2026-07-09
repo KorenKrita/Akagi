@@ -187,10 +187,16 @@ export type CreatedSubscription = {
   claim_secret: string
 }
 
-/** One poll of `POST /paypal/order-result`. `code` only on `status: ready`. */
+/**
+ * One poll of `POST /paypal/order-result`. On `status: ready` exactly one of
+ * `key` / `code` is set: `key` when the order was created with `redeem: true`
+ * (the server already spent the code), `code` otherwise. Branch on whichever
+ * is present — never re-redeem a code that came back alongside a key.
+ */
 export type OrderResult = {
   status: string
   code?: string | null
+  key?: string | null
   plan?: string | null
   days?: number | null
 }

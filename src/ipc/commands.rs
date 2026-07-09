@@ -1378,18 +1378,25 @@ pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::H
 
 /// Start a one-time purchase (`POST /paypal/create-order`, no auth). Not
 /// idempotent — each call opens a fresh PayPal order.
+///
+/// `redeem: true` has the server turn the prepaid code into an API key
+/// itself, so the poll and the buyer's email both carry the key. Pass `false`
+/// only to renew an existing key, which needs the raw code for
+/// `/v3/redeem`'s `renew_key`.
 #[tauri::command]
 pub async fn native_api_create_order(
     base_url: String,
     product: String,
+    redeem: bool,
 ) -> CmdResult<crate::bot::purchase::CreatedOrder> {
-    crate::bot::purchase::create_order(&base_url, &product)
+    crate::bot::purchase::create_order(&base_url, &product, redeem)
         .await
         .map_err(|e| format!("{e:#}"))
 }
 
 /// Poll a one-time purchase (`POST /paypal/order-result`, no auth).
-/// Idempotent; returns `pending` until paid, then `ready` with the code.
+/// Idempotent; returns `pending` until paid, then `ready` with the API key
+/// (`redeem: true` order) or the redeem code (`redeem: false`).
 #[tauri::command]
 pub async fn native_api_order_result(
     base_url: String,
