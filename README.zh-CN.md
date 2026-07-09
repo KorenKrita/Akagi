@@ -65,9 +65,9 @@
 Akagi 通过本机 Proxy 或内置浏览器监听你在雀魂 / 天凤的对局，
 镜像游戏状态，并在可拖拽的 HUD 中显示 **向听**、**听牌**、
 **和牌率**、**听牌率**、**对各家放铳风险**，以及
-**推荐切牌**。可执行文件本身就内置了一个 **bot** —— 无需安装任何东西 ——
+**推荐切牌**。可执行文件本身就内置了一个AI模型 —— 无需安装任何东西 ——
 它的建议会在每巡显示；若想要更强的托管模型，可以把它指向
-**云端推理 API**。
+云端推理 API。
 
 ## 截图
 
@@ -85,7 +85,6 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 - [功能](#功能)
 - [支持的平台](#支持的平台)
 - [快速开始](#快速开始)
-- [配置文件](#配置文件)
 - [Bots](#bots)
 - [对局历史](#对局历史)
 - [日志与诊断](#日志与诊断)
@@ -109,8 +108,7 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 ## 功能
 
 - **实时 HUD** — 向听、听牌、和牌率、听牌率、对各家放铳
-  风险、推荐的进攻 / 防守切牌。可拖拽、可缩放的牌格布局
-  会持久化到 local storage。
+  风险、推荐的进攻 / 防守切牌。可拖拽、可缩放的UI布局。
 - **两种抓包模式**
   - **MITM proxy**（默认） — 系统级；需一次性的 CA 信任。
   - **Chromium** — 由 Akagi 启动受控的 Chromium 系列浏览器，
@@ -120,7 +118,7 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
   - **内置 bot**（默认） — 嵌在可执行文件内的纯 Rust 神经网络。
     不需要 Python、不需要下载、不需要配置；四麻与三麻都能直接开打。
   - **云端推理**（可选） — 把每一次决策交给通过 HTTP 访问、
-    更强的托管模型。内置模型仍保持加载作为自动兜底，因此服务器
+    **更强的托管模型**。内置模型仍保持加载作为自动兜底，因此服务器
     连不上时也不会让对局卡住。密钥可直接在应用内购买或兑换。
 
   两者皆可按模式切换：`bot.active_4p` 与 `bot.active_3p`
@@ -130,22 +128,19 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
   天凤段位 / 自定义 uma），以及详细统计（和牌率、放铳率、
   立直率、副露率、流局率、平均和牌 / 放铳点数、平均和牌
   巡目、役满 / 流局满贯次数）。
-- **日志查看** — **Diagnostic** 标签页实时 tail 应用日志，
-  可按模块过滤；**Inspector** 标签页显示原始 WebSocket 帧
-  → mjai 事件 → bot 反应，附帧数与 meta 检视。
-- **首次启动设置** — 语言 → 平台 → 抓包模式 →
+- **简单的首次启动设置** — 语言 → 平台 → 抓包模式 →
   CA 信任 / Chromium 选择 → bot 配置 → 完成。
-  没有东西要安装：内置 bot 本来就在。
 - **多语言** — English、日本語、繁體中文、简体中文。
-  可在配置向导或侧栏即时切换，覆盖整个 UI。
-- **三麻** — 完整流程：bridge、tracker、snapshot、
-  分析、按模式 bot 路由、历史统计、3p uma 表。
+  可在配置向导或设置即时切换。
+- **三麻** — 完整支持：AI分析、按模式 bot 路由、历史统计、3p uma 表。
+- **应用内更新** — 启动时自动检查新版本，也可在 *设置 → 更新*
+  手动检查；一键下载、原地更新并重新启动。
 
 ## 支持的平台
 
 | 平台 | 四麻 | 三麻 | AutoPlay |
 |---|:---:|:---:|:---:|
-| **雀魂（Mahjong Soul / Majsoul）** | &check; | &check; | （计划中） |
+| **雀魂（Mahjong Soul / Majsoul）** | &check; | &check; | &check; |
 | **天凤（Tenhou）** | &check; | &check; | &cross; |
 | **Riichi City** | &check; | &check; | &cross; |
 | **Amatsuki** | （计划中） | （计划中） | &cross; |
@@ -159,8 +154,8 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 Akagi 以 portable zip 形式发布 — 每个平台一个自带所需文件的目录。
 从 [Releases](https://github.com/shinkuan/Akagi/releases) 下载
 对应操作系统的 zip,解压到任何你有写入权限的位置(例如
-`~/Apps/`、桌面),然后直接运行里面的 binary 即可。配置文件、
-日志、对局历史、CA 证书以及 bot 都会建立在 binary 旁边,所以
+`~/Apps/`、桌面),然后直接运行里面的`akagi`即可。配置文件、
+日志、对局历史、CA 证书以及 bot 都会建立在旁边,所以
 迁移 / 备份 / 卸载就是迁移 / 复制 / 删除整个目录。
 
 | OS | 文件 | 备注 |
@@ -169,23 +164,13 @@ Akagi 以 portable zip 形式发布 — 每个平台一个自带所需文件的�
 | macOS | `akagi-<version>-macos-arm64.zip` | Apple Silicon。未签名,解压后执行一次 `xattr -cr <解压后目录>`,或第一次右键 → *Open*。 |
 | Linux | `akagi-<version>-linux-x64.zip` | 在 `ubuntu-22.04` 上构建(glibc 2.35+)。需要 WebKit2GTK 4.1(`apt install libwebkit2gtk-4.1-0` / `dnf install webkit2gtk4.1` / `pacman -S webkit2gtk-4.1`)。 |
 
-内置 bot 完全不需要任何运行时。每个 zip 也将
-`python-build-standalone` 3.12 + `uv` 一并放在 binary 旁边，
-因此可选的 [mjai bot](#mjai-bot-插件接口) 不需要额外安装系统 Python。
-
 首次启动时，**配置向导** 会引导你完成语言、平台、抓包模式、
 bot 配置，以及 CA 信任（仅 MITM 模式才需要）。没有 bot 要安装
 —— 内置的那个本来就在。
 
 ### B. Chromium 模式（无需信任 CA）
 
-最简单的方式。完成配置向导后：
-
-1. 设置 → **Capture** → 将 Mode 设为 **Chromium**。
-2. 点击 **Detect** 自动查找 Chrome / Edge / Brave / Chromium，
-   或手动设置 `capture.chromium.executable`。
-3. Akagi 会以独立的用户配置启动浏览器，目录位于
-   `<config_root>/chrome-profile`。登录雀魂后即可开始游玩。
+最简单的方式。完成配置向导后Akagi会自动查找 Chrome / Edge / Brave / Chromium 然后以独立的用户配置启动浏览器，登录雀魂后即可开始游玩。
 
 帧通过 Chrome DevTools Protocol 拦截 — 不需要系统 proxy、
 不需要证书。
@@ -194,7 +179,7 @@ bot 配置，以及 CA 信任（仅 MITM 模式才需要）。没有 bot 要安�
 
 系统级的 proxy，搭配位于 `./ca/` 的自签根 CA：
 
-1. 在操作系统 / 浏览器的证书库中信任
+1. 信任证书
    `./ca/akagi-ca.crt`（或 `.cer` / `.pem` / `.der`）。
 2. 将游戏客户端的流量导向 `127.0.0.1:23410`。
    健康检查：`GET /ping` → `pong`。
@@ -203,131 +188,37 @@ bot 配置，以及 CA 信任（仅 MITM 模式才需要）。没有 bot 要安�
 
 ---
 
-## 配置文件
-
-配置文件 `config.toml` 位于可执行文件旁（或你以 `--config`
-指向的位置）。通过设置 UI 保存的修改会热重载对应子系统 —
-capture / proxy / bot active 槽位无需重启整个应用即可生效。
-
-```toml
-[general]
-language = "en"
-
-[logging]
-dir       = "./logs"
-level     = "info"
-all_level = "warn"
-
-[platform]
-kind = "Majsoul"
-
-[proxy]
-enabled = true
-addr    = "127.0.0.1:23410"
-ca_dir  = "./ca"
-
-[capture]
-mode = "mitm"               # 或 "chromium"
-
-[capture.chromium]
-executable    = ""          # 留空 = 自动检测
-user_data_dir = ""          # 留空 = <config_root>/chrome-profile
-start_url     = "https://game.maj-soul.com/1/"
-cft_channel   = "stable"
-force_cft     = false
-extra_args    = []
-
-[bot]
-enabled   = true
-active_4p = "mortal"        # 用于四麻
-active_3p = "mortal3p"      # 用于三麻；留空 = 不启用
-auto_sync = true
-dir       = "./mjai_bot"
-```
-
-<details>
-<summary>配置文件位置（解析顺序）</summary>
-
-1. `--config <path>` CLI 参数。
-2. `<exe_dir>/configs/config.toml`。
-3. 当前工作目录下的 `./configs.toml`。
-4. 以上均不存在时，首次启动会将默认值写入
-   `<exe_dir>/configs/config.toml`。
-
-旧版配置（仍使用单一 `active = "..."` 键）加载时会自动
-迁移为 `active_4p`。
-</details>
-
----
-
 ## Bots
 
 ### 内置 bot
 
-Akagi 内置一个 **纯 Rust 的 bot**，完全在进程内运行 —— 不需要
-Python、不需要 libriichi、不需要 `uv sync`，也没有任何东西要下载。
-它是两种模式的默认值（`bot.active_4p = "akagi-native"`、
+Akagi 内置一个 **纯 Rust 的 bot**，它是两种模式的默认值（`bot.active_4p = "akagi-native"`、
 `bot.active_3p = "akagi-native3p"`），会出现在 **Bots** 标签页最上方，
 状态永远是「就绪」。
 
-它是一个以天凤牌谱做行为克隆（behavior cloning）训练出来的小型神经
+它是一个以行为克隆（behavior cloning）训练出来的小型神经
 网络（权重直接嵌在可执行文件内），因此棋力 **刻意保持在中等水平** ——
 它是个合理的默认值，而不是顶尖引擎。
 
 ### 云端推理
 
-内置 bot 可以选择把每一次决策交给 **远程推理服务器**，而不是运行内嵌
+内置 bot 可以选择把决策交给 **远程推理服务器**，而不是运行内嵌
 的模型 —— 那是一个通过网络访问、更强的托管模型。内嵌的本地模型仍会
 保持加载作为自动 **兜底**：当服务器连不上、被限流，或密钥无效时，bot
-会安静地改用本地模型的着法，让进行中的对局不会卡住。
+会改用本地模型的着法，让进行中的对局不会卡住。
 
-在 **Bots** 标签页的 **云端推理** 卡片中配置：
+#### 获取云端推理密钥
 
-- **启用云端推理 API** — 总开关。关闭（默认）⇒ 完全离线的本地模型。
-- **服务器地址** — 推理服务器。默认为 `https://mjapi.shinkuan.me`；
-  若你自建，可指向任意主机（`http://host:8080`、`https://host`）。
-- **API 密钥** — 32 字符的密钥。
-- **四麻 / 三麻模型** — 每种模式要请求的 model id；留空则使用服务器的
-  默认值。**获取模型列表** 会列出你的密钥可用的 id。
+三种方式：
 
-按钮可以 **检查密钥**（套餐、到期时间、当日用量 vs 每日额度、速率
-限制）、**兑换码**（把预付码换成密钥 —— 新发一组，或给现有密钥
-加时间）、**购买密钥**（见下方），以及对服务器做 **健康检查**。为了
-不超出服务器的速率限制，bot 只在真正需要决策时才发出请求 —— 它会先在
-本地判断这一手是否可能有合法动作 —— 而不是每次对手切牌都问一次。
-
-保存后 **立即生效，即使在对局进行中**：bot 每次决策都会重新读取这些
-配置，因此你可以在半庄中途开启云端推理、修正打错的密钥，或切换模型，
-都不必重开对局。若服务器停止响应，bot 会退回本地模型，并在一段逐渐
-拉长的 backoff 窗口内跳过 API，而不是每一巡都等到超时；状态栏的
-**Online API** 指示灯会转红，恢复后再转绿。
-
-这些配置会保存在 `config.toml` 的 `[bot.api]`（`enabled`、`base_url`、
-`key`、`model_4p`、`model_3p`）。
-
-> **你的 API 密钥以明文存储** 在 `config.toml` 中，且 Akagi 会将它以
-> bearer token 发往配置的 **服务器地址**。请把该文件视为机密：不要提交
-> 到版本库，分享前（例如反馈问题时）也请先把 `key` 抹掉。
-
-#### 获取密钥
-
-三种方式，都在 **云端推理** 卡片上：
-
-- **购买密钥** — 应用内购买。选择套餐（一次性充值，或按月订阅），
-  Akagi 会在浏览器打开 PayPal。价格由服务器决定，应用只发送商品
-  id。付款完成后，密钥会自动回填并保存 —— 付款期间你可以关闭对话框，
-  状态标签会带你回来。万一回填失败，密钥也会发送到你的 PayPal 邮箱，
-  购买永远不会丢失。唯一的例外是勾选 *把时间加到当前密钥* 购买：
-  那会把买到的天数叠加到你已持有的密钥上，因此发到邮箱的是用来充值的
-  预付 **兑换码**，而不是一组新密钥。
+- **购买密钥** — 应用内购买。
 - **兑换码** — 把预付码换成密钥，或给你已持有的密钥加时间。
 - 到 [Discord 服务器](https://discord.gg/Z2wjXUK8bN) 询问。
 
 ### 按模式切换的 bot
 
 `bot.active_4p` 与 `bot.active_3p` 互相独立。Akagi 会在开
-局时按牌桌人数选用对应的 bot。将某个槽位留空即可在该
-模式下仅使用 **分析功能**（不显示 bot 建议）。
+局时按牌桌人数选用对应的 bot。
 
 除了这两种后端之外，Akagi 也能以子进程运行 **外部 mjai bot**。
 那是给开发者的扩展点，而不是任何人都得走的步骤 ——
@@ -431,14 +322,6 @@ session；点击行可看到原始结构化字段与源位置。
   `capture.chromium.executable`。如果浏览器有启动但没
   帧流入，检查 `--remote-debugging-port` 是否被其他
   扩展拦截。
-- **Bot 卡在 `Loading{SyncingDeps}`。** 首次 `uv sync`
-  会很慢 — 在 Diagnostic 标签页观察 `bot=<name>` 的消息。
-  若一直未完成，删除
-  `mjai_bot/<name>/.akagi/synced.stamp` 后重试。
-- **启用开关变灰 / 手动放入的 bot 无法启用。** 它的 Python 环境还没构建。
-  在 **Bots** 标签页该 bot 行上点击 **安装环境** 按钮（环境未就绪时会出现）
-  以运行 `uv sync`；完成后开关即可启用。修改该 bot 的 `pyproject.toml` 会
-  使环境失效，按钮会再次出现。
 - **Bot 对局途中崩溃。** Inspector 标签页可显示 bot 死前
   看到的最后一帧；附在 bug 报告里。
 - **三麻挑了错的 bot。** 检查设置 → Bot 中的
@@ -462,15 +345,14 @@ alpha.8 已完成：
 - [x] i18n：en / ja / zh-TW / zh-CN，含配置向导语言选择
 - [x] 从 GitHub release 或本地 ZIP 文件安装 bot
 - [x] Chromium 抓包模式（无需信任 CA）
+- [x] **自定义主题**（前端 theming hook）
+- [x] **AutoPlay**（先支持雀魂；由 bot 自主控制牌桌）
 
 计划中：
 
 - [ ] **Amatsuki** 平台支持
-- [ ] **自定义主题**（前端 theming hook）
-- [ ] **AutoPlay**（先支持雀魂；由 bot 自主控制牌桌，
-      类似原版 Akagi 在 Windows 的 AutoPlay）
 - [ ] **前端打磨** — 牌型布局、动画、无障碍
-- [ ] **天凤 autoplay**（目前仅观战）
+- [ ] **天凤 autoplay**
 
 详细的 bug 跟踪请到
 [GitHub Issues](https://github.com/shinkuan/Akagi/issues)。
@@ -499,17 +381,18 @@ alpha.8 已完成：
   game_state::tracker   bot::manager     ipc forwarder
        │                  │                  │
        ▼ PostBus          ▼ BotResponseBus   ▼ app.emit
-  analysis::runner   subprocess (uv)    Tauri webview
-       │
-       ▼ AnalysisBus
+  analysis::runner   内置 NN（进程内）     Tauri webview
+       │             | 云端 API
+       ▼ AnalysisBus  | mjai 子进程
        └──► ipc forwarder ──► app.emit
 ```
 
 [`src/lib.rs`](./src/lib.rs) 在启动时把这些 bus 接起来。
-前端通过六个 push 事件（`mjai-event`、`bot-response`、
-`bot-status`、`proxy-status`、`notify`、`history-recorded`）
-与 backend 通信，pull 命令的列表请见
-[`src/ipc/README.md`](./src/ipc/README.md)。
+前端通过 push 事件（`mjai-event`、`bot-response`、
+`bot-status`…）与 pull 命令和 backend 通信，两者的列表
+都在 [`src/ipc/README.md`](./src/ipc/README.md)。开启
+AutoPlay 时，`autoplay` manager 会取用 bot 的决策，并通过
+Chromium 抓包 backend（CDP）点击牌桌。
 
 ## 技术栈
 
@@ -520,6 +403,8 @@ alpha.8 已完成：
 | MITM | [`hudsucker`](https://crates.io/crates/hudsucker) 0.24（`rcgen-ca`、`rustls-client`） |
 | CDP capture | [`chromiumoxide`](https://crates.io/crates/chromiumoxide) 0.9 |
 | 麻将引擎 | [`riichienv-core`](https://github.com/smly/RiichiEnv) 0.4 |
+| 内置 bot | [`candle`](https://github.com/huggingface/candle) 0.9（纯 Rust NN 推理；权重内嵌） |
+| 云端推理 | [`reqwest`](https://crates.io/crates/reqwest) 0.13（rustls） |
 | Protobuf | `prost` 0.14 + `prost-reflect` 0.16 |
 | 前端 | [React](https://react.dev) 19、TypeScript、[Vite](https://vitejs.dev) 8 |
 | 样式 | [Tailwind CSS](https://tailwindcss.com) v4、[shadcn/ui](https://ui.shadcn.com)（Radix Nova preset） |
@@ -527,7 +412,7 @@ alpha.8 已完成：
 | 图表 | [Recharts](https://recharts.org) |
 | 牌型渲染 | [`<mah-gen>`](https://github.com/eric200203/mahgen) Web Component |
 | i18n | [react-i18next](https://react.i18next.com) |
-| Bot 运行环境 | `python-build-standalone` 3.12 + [`uv`](https://github.com/astral-sh/uv)（按平台打包） |
+| mjai bot 运行环境 | `python-build-standalone` 3.12 + [`uv`](https://github.com/astral-sh/uv)（按平台打包；仅插件 bot 需要 —— 内置 bot 完全用不到） |
 
 ## 项目结构
 
@@ -535,28 +420,33 @@ alpha.8 已完成：
 .
 ├── src/
 │   ├── analysis/      向听 / 听牌 / 和牌率 / 风险 / 切牌搜索
-│   ├── bot/           Registry、Python runtime、JSONL 子进程执行器
+│   ├── autoplay/      bot 决策 → 通过 CDP 点击牌桌（AutoPlay）
+│   ├── bot/           Bot manager：内置 bot、云端 API client、mjai 子进程执行器
 │   ├── bridge/        各平台协议 → MjaiEvent
 │   │   ├── majsoul/   雀魂（liqi protobuf）
+│   │   ├── riichi_city/  Riichi City（仅 MITM）
 │   │   └── tenhou/    天凤（JSON tag stream，仅观战）
 │   ├── capture/       抓包 backend 抽象（mitm | chromium）
 │   ├── config/        AppConfig（TOML）分节与解析
 │   ├── event_bus.rs   子系统间的 broadcast channel
 │   ├── game_state/    riichienv 驱动的镜像、snapshot、mahgen view
+│   ├── github/        GitHub Releases client（bot 安装、自我更新）
 │   ├── history/       对局回放存储与索引
 │   ├── inspector/     帧 / 事件 / bot reaction broadcaster
 │   ├── ipc/           Tauri 命令、app state、capture supervisor
 │   ├── logger/        每 session 日志目录与每 target 文件 appender
 │   ├── proxy/         通过 hudsucker 的 MITM HTTP/HTTPS/WS；CA 位于 ./ca
 │   ├── schema/        MjaiEvent enum 与 IPC payload 类型
+│   ├── updater/       应用内自我更新（检查 + 应用）
 │   └── lib.rs         启动与接线
+├── native_bot/        内置 bot crate：obs/action codec、candle CNN、内嵌权重
 ├── mjai_bot/
 │   └── example/       in-tree 规则型向听优化器
 ├── frontend/          React + Vite + Tailwind + shadcn UI
 │   └── src/
 │       ├── routes/    Overview / GameDashboard / Bots / History / Logs / Settings / Setup / InspectorView / DiagnosticView
 │       ├── tiles/     仪表板磁贴（header、hands、opponents、analysis…）
-│       ├── stores/    Zustand slice（game、analysis、bot、proxy、notify、layout、config）
+│       ├── stores/    Zustand store，一个领域一个（game、bot、config、theme…）
 │       └── i18n/      en / ja / zh-TW / zh-CN
 ├── tests/             集成测试
 ├── capabilities/      Tauri 权限
