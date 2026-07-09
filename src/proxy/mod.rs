@@ -61,7 +61,6 @@ where
         .with_addr(addr)
         .with_ca(ca)
         .with_http_connector(upstream::http_connector(upstream_proxy.clone())?)
-        .with_upstream_proxy(upstream_proxy)
         .with_http_handler(handler.clone())
         .with_websocket_handler(handler)
         .with_websocket_connector(upstream::websocket_connector())
