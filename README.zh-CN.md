@@ -65,8 +65,9 @@
 Akagi 通过本机 Proxy 或内置浏览器监听你在雀魂 / 天凤的对局，
 镜像游戏状态，并在可拖拽的 HUD 中显示 **向听**、**听牌**、
 **和牌率**、**听牌率**、**对各家放铳风险**，以及
-**推荐切牌**。若加入符合 mjai 协议的 bot（例如 Mortal），
-HUD 在每巡也会显示该 bot 的建议。
+**推荐切牌**。可执行文件本身就内置了一个AI模型 —— 无需安装任何东西 ——
+它的建议会在每巡显示；若想要更强的托管模型，可以把它指向
+云端推理 API。
 
 ## 截图
 
@@ -84,7 +85,6 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 - [功能](#功能)
 - [支持的平台](#支持的平台)
 - [快速开始](#快速开始)
-- [配置文件](#配置文件)
 - [Bots](#bots)
 - [对局历史](#对局历史)
 - [日志与诊断](#日志与诊断)
@@ -95,6 +95,7 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 - [架构](#架构)
 - [技术栈](#技术栈)
 - [项目结构](#项目结构)
+- [mjai Bot 插件接口](#mjai-bot-插件接口)
 - [从源码构建](#从源码构建)
 - [测试](#测试)
 - [Releases 与 CI](#releases-与-ci)
@@ -107,36 +108,39 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 ## 功能
 
 - **实时 HUD** — 向听、听牌、和牌率、听牌率、对各家放铳
-  风险、推荐的进攻 / 防守切牌。可拖拽、可缩放的牌格布局
-  会持久化到 local storage。
+  风险、推荐的进攻 / 防守切牌。可拖拽、可缩放的UI布局。
 - **两种抓包模式**
   - **MITM proxy**（默认） — 系统级；需一次性的 CA 信任。
   - **Chromium** — 由 Akagi 启动受控的 Chromium 系列浏览器，
     通过 Chrome DevTools Protocol 拦截 WebSocket 帧。
     无需配置 proxy 或安装证书；直接在启动的窗口中游玩即可。
-- **可插拔的 mjai bot** — 在设置一键安装 Mortal，或将
-  任意 `bot.py` 放入 `mjai_bot/<name>/`。可按模式切换：
-  `bot.active_4p` 与 `bot.active_3p` 会按牌桌人数自动启用。
+- **两种 bot 后端**
+  - **内置 bot**（默认） — 嵌在可执行文件内的纯 Rust 神经网络。
+    不需要 Python、不需要下载、不需要配置；四麻与三麻都能直接开打。
+  - **云端推理**（可选） — 把每一次决策交给通过 HTTP 访问、
+    **更强的托管模型**。内置模型仍保持加载作为自动兜底，因此服务器
+    连不上时也不会让对局卡住。密钥可直接在应用内购买或兑换。
+
+  两者皆可按模式切换：`bot.active_4p` 与 `bot.active_3p`
+  会按牌桌人数自动启用。
 - **对局历史** — 每场结束的对局会自动记录。历史标签页显示
   名次饼图、可选计分规则的累计 PT 折线图（雀魂段位 /
   天凤段位 / 自定义 uma），以及详细统计（和牌率、放铳率、
   立直率、副露率、流局率、平均和牌 / 放铳点数、平均和牌
   巡目、役满 / 流局满贯次数）。
-- **日志查看** — **Diagnostic** 标签页实时 tail 应用日志，
-  可按模块过滤；**Inspector** 标签页显示原始 WebSocket 帧
-  → mjai 事件 → bot 反应，附帧数与 meta 检视。
-- **首次启动设置** — 语言 → 平台 → 抓包模式 →
-  CA 信任 / Chromium 选择 → bot 安装 → 完成。
+- **简单的首次启动设置** — 语言 → 平台 → 抓包模式 →
+  CA 信任 / Chromium 选择 → bot 配置 → 完成。
 - **多语言** — English、日本語、繁體中文、简体中文。
-  可在配置向导或侧栏即时切换，覆盖整个 UI。
-- **三麻** — 完整流程：bridge、tracker、snapshot、
-  分析、按模式 bot 路由、历史统计、3p uma 表。
+  可在配置向导或设置即时切换。
+- **三麻** — 完整支持：AI分析、按模式 bot 路由、历史统计、3p uma 表。
+- **应用内更新** — 启动时自动检查新版本，也可在 *设置 → 更新*
+  手动检查；一键下载、原地更新并重新启动。
 
 ## 支持的平台
 
 | 平台 | 四麻 | 三麻 | AutoPlay |
 |---|:---:|:---:|:---:|
-| **雀魂（Mahjong Soul / Majsoul）** | &check; | &check; | （计划中） |
+| **雀魂（Mahjong Soul / Majsoul）** | &check; | &check; | &check; |
 | **天凤（Tenhou）** | &check; | &check; | &cross; |
 | **Riichi City** | &check; | &check; | &cross; |
 | **Amatsuki** | （计划中） | （计划中） | &cross; |
@@ -150,8 +154,8 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 Akagi 以 portable zip 形式发布 — 每个平台一个自带所需文件的目录。
 从 [Releases](https://github.com/shinkuan/Akagi/releases) 下载
 对应操作系统的 zip,解压到任何你有写入权限的位置(例如
-`~/Apps/`、桌面),然后直接运行里面的 binary 即可。配置文件、
-日志、对局历史、CA 证书以及 bot 都会建立在 binary 旁边,所以
+`~/Apps/`、桌面),然后直接运行里面的`akagi`即可。配置文件、
+日志、对局历史、CA 证书以及 bot 都会建立在旁边,所以
 迁移 / 备份 / 卸载就是迁移 / 复制 / 删除整个目录。
 
 | OS | 文件 | 备注 |
@@ -160,22 +164,13 @@ Akagi 以 portable zip 形式发布 — 每个平台一个自带所需文件的�
 | macOS | `akagi-<version>-macos-arm64.zip` | Apple Silicon。未签名,解压后执行一次 `xattr -cr <解压后目录>`,或第一次右键 → *Open*。 |
 | Linux | `akagi-<version>-linux-x64.zip` | 在 `ubuntu-22.04` 上构建(glibc 2.35+)。需要 WebKit2GTK 4.1(`apt install libwebkit2gtk-4.1-0` / `dnf install webkit2gtk4.1` / `pacman -S webkit2gtk-4.1`)。 |
 
-每个 zip 都将 `python-build-standalone` 3.12 + `uv` 一并放在
-binary 旁边,bot 开箱即用,不需要额外安装系统 Python。
-
-首次启动时,**配置向导** 会引导你完成语言、平台、抓包
-模式、可选的 bot 安装(Mortal)以及 CA 信任(仅 MITM
-模式才需要)。
+首次启动时，**配置向导** 会引导你完成语言、平台、抓包模式、
+bot 配置，以及 CA 信任（仅 MITM 模式才需要）。没有 bot 要安装
+—— 内置的那个本来就在。
 
 ### B. Chromium 模式（无需信任 CA）
 
-最简单的方式。完成配置向导后：
-
-1. 设置 → **Capture** → 将 Mode 设为 **Chromium**。
-2. 点击 **Detect** 自动查找 Chrome / Edge / Brave / Chromium，
-   或手动设置 `capture.chromium.executable`。
-3. Akagi 会以独立的用户配置启动浏览器，目录位于
-   `<config_root>/chrome-profile`。登录雀魂后即可开始游玩。
+最简单的方式。完成配置向导后Akagi会自动查找 Chrome / Edge / Brave / Chromium 然后以独立的用户配置启动浏览器，登录雀魂后即可开始游玩。
 
 帧通过 Chrome DevTools Protocol 拦截 — 不需要系统 proxy、
 不需要证书。
@@ -184,7 +179,7 @@ binary 旁边,bot 开箱即用,不需要额外安装系统 Python。
 
 系统级的 proxy，搭配位于 `./ca/` 的自签根 CA：
 
-1. 在操作系统 / 浏览器的证书库中信任
+1. 信任证书
    `./ca/akagi-ca.crt`（或 `.cer` / `.pem` / `.der`）。
 2. 将游戏客户端的流量导向 `127.0.0.1:23410`。
    健康检查：`GET /ping` → `pong`。
@@ -193,132 +188,41 @@ binary 旁边,bot 开箱即用,不需要额外安装系统 Python。
 
 ---
 
-## 配置文件
-
-配置文件 `config.toml` 位于可执行文件旁（或你以 `--config`
-指向的位置）。通过设置 UI 保存的修改会热重载对应子系统 —
-capture / proxy / bot active 槽位无需重启整个应用即可生效。
-
-```toml
-[general]
-language = "en"
-
-[logging]
-dir       = "./logs"
-level     = "info"
-all_level = "warn"
-
-[platform]
-kind = "Majsoul"
-
-[proxy]
-enabled = true
-addr    = "127.0.0.1:23410"
-ca_dir  = "./ca"
-
-[capture]
-mode = "mitm"               # 或 "chromium"
-
-[capture.chromium]
-executable    = ""          # 留空 = 自动检测
-user_data_dir = ""          # 留空 = <config_root>/chrome-profile
-start_url     = "https://game.maj-soul.com/1/"
-cft_channel   = "stable"
-force_cft     = false
-extra_args    = []
-
-[bot]
-enabled   = true
-active_4p = "mortal"        # 用于四麻
-active_3p = "mortal3p"      # 用于三麻；留空 = 不启用
-auto_sync = true
-dir       = "./mjai_bot"
-```
-
-<details>
-<summary>配置文件位置（解析顺序）</summary>
-
-1. `--config <path>` CLI 参数。
-2. `<exe_dir>/configs/config.toml`。
-3. 当前工作目录下的 `./configs.toml`。
-4. 以上均不存在时，首次启动会将默认值写入
-   `<exe_dir>/configs/config.toml`。
-
-旧版配置（仍使用单一 `active = "..."` 键）加载时会自动
-迁移为 `active_4p`。
-</details>
-
----
-
 ## Bots
 
-### 安装 Bot
+### 内置 bot
 
-配置向导或 **Bots** 标签页可直接从 GitHub release 安装 bot：
+Akagi 内置一个 **纯 Rust 的 bot**，它是两种模式的默认值（`bot.active_4p = "akagi-native"`、
+`bot.active_3p = "akagi-native3p"`），会出现在 **Bots** 标签页最上方，
+状态永远是「就绪」。
 
-- Repo：`shinkuan/Akagi-MjaiBot-Mortal`
-- 4P 资源：`release4p.zip`
-- 3P 资源：`release3p.zip`
+它是一个以行为克隆（behavior cloning）训练出来的小型神经
+网络（权重直接嵌在可执行文件内），因此棋力 **刻意保持在中等水平** ——
+它是个合理的默认值，而不是顶尖引擎。
 
-IPC 命令 `install_bot_from_github(repo, asset_glob?, name?)`
-会拉取最新 release zip，解压到 `mjai_bot/<name>/`，验证
-`bot.py`，并执行一次 `uv sync`。后续启动很快 — sync
-会根据 `mjai_bot/<name>/.akagi/synced.stamp` 戳记决定是否
-跳过。
+### 云端推理
 
-你也可以从**本地 ZIP** 安装 —— 适合离线安装或本地构建的
-bot。在 **Bots** 标签页点击 **从 ZIP 安装**，**浏览…** 选择
-`.zip`（或粘贴其路径）即可安装。它执行与 GitHub 安装完全相同
-的解压 / 验证 / `uv sync` 流程，并且不会改动你的源 `.zip`。
+内置 bot 可以选择把决策交给 **远程推理服务器**，而不是运行内嵌
+的模型 —— 那是一个通过网络访问、更强的托管模型。内嵌的本地模型仍会
+保持加载作为自动 **兜底**：当服务器连不上、被限流，或密钥无效时，bot
+会改用本地模型的着法，让进行中的对局不会卡住。
 
-> [!IMPORTANT]
-> 由于 GitHub 的文件大小限制，release zip 中附带的 Mortal
-> 权重是体积很小、强度很弱的 **占位模型**，仅用于验证安装
-> 是否成功，**不建议实战使用**。
-> **更强的 Mortal 权重** 与 **在线 API 服务器模型**
-> （托管型、强度更高的模型 — 将 bot 指向服务器并提供
-> API 密钥即可，本机不需要 NN）皆通过
-> [Discord 服务器](https://discord.gg/Z2wjXUK8bN) 发放。
-> 请在该处申请访问；4P 与 3P 两个版本都有提供。
+#### 获取云端推理密钥
+
+三种方式：
+
+- **购买密钥** — 应用内购买。
+- **兑换码** — 把预付码换成密钥，或给你已持有的密钥加时间。
+- 到 [Discord 服务器](https://discord.gg/Z2wjXUK8bN) 询问。
 
 ### 按模式切换的 bot
 
 `bot.active_4p` 与 `bot.active_3p` 互相独立。Akagi 会在开
-局时按牌桌人数选用对应的 bot。将某个槽位留空即可在该
-模式下仅使用 **分析功能**（不显示 bot 建议）。
+局时按牌桌人数选用对应的 bot。
 
-### 自行编写 bot
-
-```
-mjai_bot/<name>/
-├── bot.py            # JSONL stdin → JSONL stdout
-├── pyproject.toml    # requires-python = ">=3.12"
-├── manifest.toml     # 可选 — supported_modes、配置 schema
-└── README.md
-```
-
-`bot.py` 从 stdin 每行读取一个 mjai 事件 JSON 数组，并向
-stdout 每行写出一个 mjai 动作对象（无动作时输出
-`{"type":"none"}`）。Akagi 会把 stderr 内容写入应用日志
-中的 `bot=<name>` 条目。
-
-完整协议、manifest schema 以及 secret 字段处理请见
-[`src/bot/README.md`](./src/bot/README.md)。
-[`mjai_bot/example/`](./mjai_bot/example/) 是一个 in-tree、
-可运行的规则型示例 bot。
-
-本地开发时，把 bot 文件夹放到 `mjai_bot/<name>/`，在 **Bots** 标签页该 bot
-行上点击 **安装环境** 即可构建其 venv —— 无需每次改动都重新打包安装。环境
-就绪前启用开关会保持禁用。
-
-### AGPL 边界
-
-Bot 以 Akagi 启动的 **独立 OS 子进程** 运行。通信严格通
-过 stdin / stdout 上的 JSONL 进行 — 没有 in-process 链接、
-没有共享地址空间、没有 FFI。这是有意设计的许可边界：
-AGPL 许可的 bot（例如链接 libriichi 的 Mortal）会留在
-其自己的进程内，因此把它放入 `mjai_bot/<name>/` **不会**
-让 Akagi 成为该 bot 的衍生作品。
+除了这两种后端之外，Akagi 也能以子进程运行 **外部 mjai bot**。
+那是给开发者的扩展点，而不是任何人都得走的步骤 ——
+请见 [mjai Bot 插件接口](#mjai-bot-插件接口)。
 
 ---
 
@@ -418,14 +322,6 @@ session；点击行可看到原始结构化字段与源位置。
   `capture.chromium.executable`。如果浏览器有启动但没
   帧流入，检查 `--remote-debugging-port` 是否被其他
   扩展拦截。
-- **Bot 卡在 `Loading{SyncingDeps}`。** 首次 `uv sync`
-  会很慢 — 在 Diagnostic 标签页观察 `bot=<name>` 的消息。
-  若一直未完成，删除
-  `mjai_bot/<name>/.akagi/synced.stamp` 后重试。
-- **启用开关变灰 / 手动放入的 bot 无法启用。** 它的 Python 环境还没构建。
-  在 **Bots** 标签页该 bot 行上点击 **安装环境** 按钮（环境未就绪时会出现）
-  以运行 `uv sync`；完成后开关即可启用。修改该 bot 的 `pyproject.toml` 会
-  使环境失效，按钮会再次出现。
 - **Bot 对局途中崩溃。** Inspector 标签页可显示 bot 死前
   看到的最后一帧；附在 bug 报告里。
 - **三麻挑了错的 bot。** 检查设置 → Bot 中的
@@ -449,15 +345,14 @@ alpha.8 已完成：
 - [x] i18n：en / ja / zh-TW / zh-CN，含配置向导语言选择
 - [x] 从 GitHub release 或本地 ZIP 文件安装 bot
 - [x] Chromium 抓包模式（无需信任 CA）
+- [x] **自定义主题**（前端 theming hook）
+- [x] **AutoPlay**（先支持雀魂；由 bot 自主控制牌桌）
 
 计划中：
 
 - [ ] **Amatsuki** 平台支持
-- [ ] **自定义主题**（前端 theming hook）
-- [ ] **AutoPlay**（先支持雀魂；由 bot 自主控制牌桌，
-      类似原版 Akagi 在 Windows 的 AutoPlay）
 - [ ] **前端打磨** — 牌型布局、动画、无障碍
-- [ ] **天凤 autoplay**（目前仅观战）
+- [ ] **天凤 autoplay**
 
 详细的 bug 跟踪请到
 [GitHub Issues](https://github.com/shinkuan/Akagi/issues)。
@@ -486,17 +381,18 @@ alpha.8 已完成：
   game_state::tracker   bot::manager     ipc forwarder
        │                  │                  │
        ▼ PostBus          ▼ BotResponseBus   ▼ app.emit
-  analysis::runner   subprocess (uv)    Tauri webview
-       │
-       ▼ AnalysisBus
+  analysis::runner   内置 NN（进程内）     Tauri webview
+       │             | 云端 API
+       ▼ AnalysisBus  | mjai 子进程
        └──► ipc forwarder ──► app.emit
 ```
 
 [`src/lib.rs`](./src/lib.rs) 在启动时把这些 bus 接起来。
-前端通过六个 push 事件（`mjai-event`、`bot-response`、
-`bot-status`、`proxy-status`、`notify`、`history-recorded`）
-与 backend 通信，pull 命令的列表请见
-[`src/ipc/README.md`](./src/ipc/README.md)。
+前端通过 push 事件（`mjai-event`、`bot-response`、
+`bot-status`…）与 pull 命令和 backend 通信，两者的列表
+都在 [`src/ipc/README.md`](./src/ipc/README.md)。开启
+AutoPlay 时，`autoplay` manager 会取用 bot 的决策，并通过
+Chromium 抓包 backend（CDP）点击牌桌。
 
 ## 技术栈
 
@@ -507,6 +403,8 @@ alpha.8 已完成：
 | MITM | [`hudsucker`](https://crates.io/crates/hudsucker) 0.24（`rcgen-ca`、`rustls-client`） |
 | CDP capture | [`chromiumoxide`](https://crates.io/crates/chromiumoxide) 0.9 |
 | 麻将引擎 | [`riichienv-core`](https://github.com/smly/RiichiEnv) 0.4 |
+| 内置 bot | [`candle`](https://github.com/huggingface/candle) 0.9（纯 Rust NN 推理；权重内嵌） |
+| 云端推理 | [`reqwest`](https://crates.io/crates/reqwest) 0.13（rustls） |
 | Protobuf | `prost` 0.14 + `prost-reflect` 0.16 |
 | 前端 | [React](https://react.dev) 19、TypeScript、[Vite](https://vitejs.dev) 8 |
 | 样式 | [Tailwind CSS](https://tailwindcss.com) v4、[shadcn/ui](https://ui.shadcn.com)（Radix Nova preset） |
@@ -514,7 +412,7 @@ alpha.8 已完成：
 | 图表 | [Recharts](https://recharts.org) |
 | 牌型渲染 | [`<mah-gen>`](https://github.com/eric200203/mahgen) Web Component |
 | i18n | [react-i18next](https://react.i18next.com) |
-| Bot 运行环境 | `python-build-standalone` 3.12 + [`uv`](https://github.com/astral-sh/uv)（按平台打包） |
+| mjai bot 运行环境 | `python-build-standalone` 3.12 + [`uv`](https://github.com/astral-sh/uv)（按平台打包；仅插件 bot 需要 —— 内置 bot 完全用不到） |
 
 ## 项目结构
 
@@ -522,28 +420,33 @@ alpha.8 已完成：
 .
 ├── src/
 │   ├── analysis/      向听 / 听牌 / 和牌率 / 风险 / 切牌搜索
-│   ├── bot/           Registry、Python runtime、JSONL 子进程执行器
+│   ├── autoplay/      bot 决策 → 通过 CDP 点击牌桌（AutoPlay）
+│   ├── bot/           Bot manager：内置 bot、云端 API client、mjai 子进程执行器
 │   ├── bridge/        各平台协议 → MjaiEvent
 │   │   ├── majsoul/   雀魂（liqi protobuf）
+│   │   ├── riichi_city/  Riichi City（仅 MITM）
 │   │   └── tenhou/    天凤（JSON tag stream，仅观战）
 │   ├── capture/       抓包 backend 抽象（mitm | chromium）
 │   ├── config/        AppConfig（TOML）分节与解析
 │   ├── event_bus.rs   子系统间的 broadcast channel
 │   ├── game_state/    riichienv 驱动的镜像、snapshot、mahgen view
+│   ├── github/        GitHub Releases client（bot 安装、自我更新）
 │   ├── history/       对局回放存储与索引
 │   ├── inspector/     帧 / 事件 / bot reaction broadcaster
 │   ├── ipc/           Tauri 命令、app state、capture supervisor
 │   ├── logger/        每 session 日志目录与每 target 文件 appender
 │   ├── proxy/         通过 hudsucker 的 MITM HTTP/HTTPS/WS；CA 位于 ./ca
 │   ├── schema/        MjaiEvent enum 与 IPC payload 类型
+│   ├── updater/       应用内自我更新（检查 + 应用）
 │   └── lib.rs         启动与接线
+├── native_bot/        内置 bot crate：obs/action codec、candle CNN、内嵌权重
 ├── mjai_bot/
 │   └── example/       in-tree 规则型向听优化器
 ├── frontend/          React + Vite + Tailwind + shadcn UI
 │   └── src/
 │       ├── routes/    Overview / GameDashboard / Bots / History / Logs / Settings / Setup / InspectorView / DiagnosticView
 │       ├── tiles/     仪表板磁贴（header、hands、opponents、analysis…）
-│       ├── stores/    Zustand slice（game、analysis、bot、proxy、notify、layout、config）
+│       ├── stores/    Zustand store，一个领域一个（game、bot、config、theme…）
 │       └── i18n/      en / ja / zh-TW / zh-CN
 ├── tests/             集成测试
 ├── capabilities/      Tauri 权限
@@ -553,6 +456,60 @@ alpha.8 已完成：
 ```
 
 各模块的开发者指南位于对应的 `src/*/README.md`。
+
+## mjai Bot 插件接口
+
+> 可选功能，主要面向开发者。[内置 bot](#内置-bot) 才是默认值，完全不需要
+> 这一节的任何步骤 —— 只有当你想让 Akagi 驱动 *另一个* 引擎时才会用到。
+
+除了自家的 bot 之外，Akagi 也能驱动任何遵循 **mjai** 协议的引擎。这种 bot
+是一个独立子进程，通过 stdin/stdout 以 JSONL 通信：Akagi 把对局以 mjai
+事件喂给它，它则回复一个动作，以及可选的 HUD 数据。
+
+### 自行编写
+
+```
+mjai_bot/<name>/
+├── bot.py            # JSONL stdin → JSONL stdout
+├── pyproject.toml    # requires-python = ">=3.12"
+├── manifest.toml     # 可选 — supported_modes、配置 schema
+└── README.md
+```
+
+`bot.py` 从 stdin 每行读取一个 mjai 事件 JSON 数组，并向 stdout 每行写出
+一个 mjai 动作对象（无动作时输出 `{"type":"none"}`）。Akagi 会把 stderr
+内容写入应用日志中的 `bot=<name>` 条目。
+
+完整的 I/O 协议、mjai 事件流、reaction 与 `meta` HUD 格式、toast 通知，
+以及 `manifest.toml` 配置，请见
+**[`mjai_bot/README.md`](./mjai_bot/README.md)**。
+[`mjai_bot/example/`](./mjai_bot/example/) 是一个可直接复制、可运行的
+规则型示例 bot。
+
+本地开发时，把 bot 文件夹放到 `mjai_bot/<name>/`，在 **Bots** 标签页该 bot
+行上点击 **安装环境** 即可构建其 venv —— 无需每次改动都重新打包安装。
+环境就绪前，启用开关会保持禁用。
+
+### 安装
+
+**Bots** 标签页可以从 GitHub release 或本地 ZIP 安装 bot。
+
+IPC 命令 `install_bot_from_github(repo, asset_glob?, name?)` 会拉取最新
+release zip，解压到 `mjai_bot/<name>/`，验证 `bot.py`，并执行一次
+`uv sync`。后续启动很快 —— sync 会根据
+`mjai_bot/<name>/.akagi/synced.stamp` 戳记决定是否跳过。
+
+**从 ZIP 安装** 是离线的等价流程：点击 **浏览…** 选择 `.zip`（或粘贴其
+路径）即可。它执行完全相同的解压 / 验证 / `uv sync` 流程，并且不会改动
+你的源 `.zip`。
+
+### AGPL 边界
+
+Bot 以 Akagi 启动的 **独立 OS 子进程** 运行。通信严格通过 stdin / stdout
+上的 JSONL 进行 —— 没有 in-process 链接、没有共享地址空间、没有 FFI。
+这是有意设计的许可边界：AGPL 许可的 bot（例如链接 libriichi 的 Mortal）
+会留在其自己的进程内，因此把它放入 `mjai_bot/<name>/` **不会** 让 Akagi
+成为该 bot 的衍生作品。
 
 ## 从源码构建
 
