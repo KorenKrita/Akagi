@@ -21,12 +21,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use akagi::config::{Platform, ProxyConfig};
+use akagi::event_bus::notify_bus;
 use akagi::logger::Session;
 use akagi::proxy::start_proxy;
+use akagi::schema::NotifyLevel;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{oneshot, Notify};
+use tokio::sync::{broadcast, oneshot, Notify};
 
 /// Generous enough that a slow machine never flakes, short enough that the
 /// pre-fix deadlock (which blocks forever) is still caught by the harness.
@@ -96,12 +98,16 @@ async fn loopback_connect_is_refused_without_blocking() {
         ca_dir: tmp.path().join("ca"),
     };
 
+    let notify = notify_bus();
+    let mut toasts = notify.subscribe();
+
     let (stop_tx, stop_rx) = oneshot::channel::<()>();
     let proxy = tokio::spawn(start_proxy(
         config,
         Platform::Majsoul,
         Arc::new(session),
         None,
+        Some(notify),
         Arc::new(Notify::new()),
         async move {
             stop_rx.await.unwrap_or_default();
@@ -130,6 +136,34 @@ async fn loopback_connect_is_refused_without_blocking() {
         connect_status(port, "192.0.2.1:443").await,
         403,
         "non-loopback CONNECT must not be refused"
+    );
+
+    // The user is staring at a game that never loads, not at the log — so the
+    // refusal must reach them as a toast.
+    let toast = toasts
+        .try_recv()
+        .expect("expected a loopback warning toast");
+    assert_eq!(toast.level, NotifyLevel::Warn);
+    assert!(
+        toast.sticky,
+        "the game stays broken until the redirector is fixed, so the toast must persist"
+    );
+    assert_eq!(toast.id.as_deref(), Some("proxy-loopback-connect"));
+    let body = toast.body.expect("toast must say how to fix it");
+    assert!(
+        body.contains("127.0.0.1"),
+        "body should name what to exclude"
+    );
+
+    // Exactly one, though three loopback CONNECTs were refused: a misconfigured
+    // redirector produces one per socket the game opens, and telling the user
+    // once is enough.
+    assert!(
+        matches!(
+            toasts.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ),
+        "the loopback toast must not repeat per refused connection"
     );
 
     let _ = stop_tx.send(());

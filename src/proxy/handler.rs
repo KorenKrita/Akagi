@@ -1,10 +1,10 @@
 use crate::{
     bridge::{self, Bridge, Direction},
     config::Platform,
-    event_bus::MjaiBus,
+    event_bus::{MjaiBus, NotifyBus},
     inspector::InspectorWriter,
     logger::{BinaryLogger, Session},
-    schema::{FrameDirection, FrameRaw, InspectorEntry},
+    schema::{FrameDirection, FrameRaw, InspectorEntry, Notification},
 };
 use base64::Engine as _;
 use chrono::Local;
@@ -18,7 +18,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex as StdMutex,
     },
 };
@@ -49,6 +49,12 @@ pub struct ProxyHandler {
     /// Optional fan-out for parsed mjai events. `None` keeps the proxy
     /// usable in tests and in standalone "log only" mode.
     mjai_tx: Option<MjaiBus>,
+    /// Optional fan-out for user-facing toasts. `None` in "log only" mode.
+    notify_tx: Option<NotifyBus>,
+    /// Latches on the first refused loopback CONNECT. A misconfigured
+    /// redirector produces one per socket the game opens, and the user only
+    /// needs telling once — the log keeps every occurrence.
+    loopback_notified: Arc<AtomicBool>,
     /// Inspector writer. Cloned from `session.inspector()` at construction.
     /// Cheap to clone (Arc inside).
     inspector: InspectorWriter,
@@ -68,6 +74,7 @@ impl ProxyHandler {
         session: Arc<Session>,
         platform: Platform,
         mjai_tx: Option<MjaiBus>,
+        notify_tx: Option<NotifyBus>,
         force_close: Arc<Notify>,
     ) -> anyhow::Result<Self> {
         let binary = session.binary_logger("proxy")?;
@@ -79,10 +86,40 @@ impl ProxyHandler {
             bridges: Arc::new(StdMutex::new(HashMap::new())),
             next_flow_id: Arc::new(AtomicU64::new(1)),
             mjai_tx,
+            notify_tx,
+            loopback_notified: Arc::new(AtomicBool::new(false)),
             inspector,
             inspector_flow_ids: Arc::new(StdMutex::new(HashMap::new())),
             force_close,
         })
+    }
+
+    /// Tell the user, once, that their redirector is proxying loopback. The
+    /// log line alone is not enough — nobody opens the log while staring at a
+    /// game that never finishes loading.
+    ///
+    /// Returns `true` if this was the first refusal (caller logs at `WARN`;
+    /// later ones are `DEBUG` so a chatty client can't flood the file).
+    fn notify_loopback_refused(&self, authority: &Uri) -> bool {
+        if self.loopback_notified.swap(true, Ordering::Relaxed) {
+            return false;
+        }
+        if let Some(tx) = &self.notify_tx {
+            // Sticky: this blocks play until the user fixes the redirector.
+            let _ = tx.send(
+                Notification::warn("Proxy redirector is sending loopback traffic to Akagi")
+                    .body(format!(
+                        "Refused CONNECT to {authority}. Games talk to themselves over \
+                         loopback, and proxying that hangs them on the loading screen. \
+                         Exclude localhost / 127.0.0.1 / ::1 from the rule that redirects \
+                         the game — in Proxifier, enable the \"Localhost\" rule (action: \
+                         Direct) and move it above the game rule.",
+                    ))
+                    .sticky()
+                    .id("proxy-loopback-connect"),
+            );
+        }
+        true
     }
 
     /// Stable inspector flow id for `client`. Computed once on first
@@ -191,15 +228,24 @@ impl HttpHandler for ProxyHandler {
         // `socketpair()` emulation checks that the address it accepted matches
         // its connecting socket's local address, which a proxied hop breaks.
         if is_loopback_connect(req.method(), req.uri()) {
-            warn!(
-                target: "akagi::proxy::forward",
-                "refusing CONNECT to loopback {} from {}: your proxy redirector is sending the \
-                 game's own internal loopback sockets through Akagi, which would hang the game. \
-                 Exclude localhost / 127.0.0.1 / ::1 from the rule that redirects the game (in \
-                 Proxifier: enable the \"Localhost\" Direct rule and move it above the game rules).",
-                req.uri(),
-                ctx.client_addr,
-            );
+            if self.notify_loopback_refused(req.uri()) {
+                warn!(
+                    target: "akagi::proxy::forward",
+                    "refusing CONNECT to loopback {} from {}: your proxy redirector is sending the \
+                     game's own internal loopback sockets through Akagi, which would hang the game. \
+                     Exclude localhost / 127.0.0.1 / ::1 from the rule that redirects the game (in \
+                     Proxifier: enable the \"Localhost\" Direct rule and move it above the game rules).",
+                    req.uri(),
+                    ctx.client_addr,
+                );
+            } else {
+                debug!(
+                    target: "akagi::proxy::forward",
+                    "refusing CONNECT to loopback {} from {}",
+                    req.uri(),
+                    ctx.client_addr,
+                );
+            }
             return Response::builder()
                 .status(StatusCode::FORBIDDEN)
                 .body(Body::empty())
