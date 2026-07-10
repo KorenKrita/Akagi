@@ -364,8 +364,14 @@ impl NativeBot {
             Ok(resp) => {
                 self.breaker.record_success();
                 self.record_health(true, None);
+                let title = api_show_title(
+                    resp.model.as_deref(),
+                    self.api.as_ref().map(|s| s.model.as_str()),
+                );
                 match resp.reaction {
-                    Some(reaction) => match self.resolve_reaction(reaction, &resp.candidates).await
+                    Some(reaction) => match self
+                        .resolve_reaction(reaction, &resp.candidates, &title)
+                        .await
                     {
                         Some(pair) => pair,
                         None => local_reply(local, self.seat),
@@ -402,6 +408,7 @@ impl NativeBot {
         &mut self,
         reaction: Value,
         candidates: &[Candidate],
+        title: &str,
     ) -> Option<(MjaiEvent, Option<Value>)> {
         let mut ev: MjaiEvent = serde_json::from_value(reaction).ok()?;
         set_actor(&mut ev, self.seat);
@@ -426,7 +433,7 @@ impl NativeBot {
                 None => return None,
             }
         }
-        let meta = build_show_meta_mjai(&ev, candidates);
+        let meta = build_show_meta_mjai(&ev, candidates, title);
         Some((ev, meta))
     }
 
@@ -647,10 +654,35 @@ fn with_lead(lead: &str, rest: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Card title for a decision the embedded local model served. The two title
+/// forms (this and [`api_show_title`]) let the HUD say, per decision, which
+/// inference path actually produced the move — the API silently falls back to
+/// the local model, so the source can flip mid-game.
+const SHOW_TITLE_LOCAL: &str = "Akagi · Local";
+
+/// Card title for a decision the online API served: name the model. The
+/// server's own report (which model actually answered) wins over the
+/// configured id — the config may be empty, meaning "server default".
+fn api_show_title(served: Option<&str>, configured: Option<&str>) -> String {
+    let model = [served, configured]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|m| !m.is_empty());
+    match model {
+        Some(m) => format!("Akagi · {m}"),
+        None => "Akagi · Online".to_string(),
+    }
+}
+
 /// HUD "Bot Show" card for the API path: the first row is the exact chosen move
 /// (precise tiles), the rest are the server's runner-up **candidate** labels,
 /// each with its probability — so the card shows the model's top-N.
-fn build_show_meta_mjai(ev: &MjaiEvent, candidates: &[Candidate]) -> Option<serde_json::Value> {
+fn build_show_meta_mjai(
+    ev: &MjaiEvent,
+    candidates: &[Candidate],
+    title: &str,
+) -> Option<serde_json::Value> {
     let mut items: Vec<Value> = Vec::new();
     // Row 0: the exact reaction (precise tiles), prob from the top candidate.
     if let Some((label, pais)) = label_pais_mjai(ev) {
@@ -664,7 +696,7 @@ fn build_show_meta_mjai(ev: &MjaiEvent, candidates: &[Candidate]) -> Option<serd
             items.push(make_show_item(label, &pais, Some(c.prob)));
         }
     }
-    wrap_show(items)
+    wrap_show(items, title)
 }
 
 /// Label + tiles for a resolved mjai reaction (the exact chosen move).
@@ -729,13 +761,15 @@ fn make_show_item(label: &str, pais: &[String], prob: Option<f64>) -> Value {
 }
 
 /// Wrap `items` in the `{ "show": { title, items } }` envelope, or `None` when
-/// there is nothing to show.
-fn wrap_show(items: Vec<Value>) -> Option<Value> {
+/// there is nothing to show. The title names the inference source (see
+/// [`SHOW_TITLE_LOCAL`] / [`api_show_title`]); the frontend renders it as the
+/// Bot Show tile's header.
+fn wrap_show(items: Vec<Value>, title: &str) -> Option<Value> {
     use serde_json::json;
     if items.is_empty() {
         return None;
     }
-    Some(json!({ "show": { "title": "Akagi", "items": items } }))
+    Some(json!({ "show": { "title": title, "items": items } }))
 }
 
 fn take_n<const N: usize>(v: Vec<String>) -> [String; N] {
@@ -759,7 +793,7 @@ fn build_show_meta(candidates: &[(BotAction, f32)]) -> Option<serde_json::Value>
                 .map(|(label, pais)| make_show_item(label, &pais, Some(*p as f64)))
         })
         .collect();
-    wrap_show(items)
+    wrap_show(items, SHOW_TITLE_LOCAL)
 }
 
 /// Label + tiles for one bot action, or `None` for a pass (not shown as a row).
@@ -1149,7 +1183,8 @@ mod tests {
         let (base, served) = mock_http(vec![(
             "200 OK",
             r#"{"reaction":{"type":"dahai","actor":0,"pai":"1m","tsumogiri":false},
-                "candidates":[{"action":"dahai:1m","prob":0.9}]}"#
+                "candidates":[{"action":"dahai:1m","prob":0.9}],
+                "model":"4p-mock"}"#
                 .into(),
         )]);
         let config = cfg_off();
@@ -1165,6 +1200,11 @@ mod tests {
             first.action
         );
         assert!(bot.api.is_none());
+        // ...and the HUD card says the local model played it.
+        assert_eq!(
+            first.meta.as_ref().unwrap()["show"]["title"],
+            SHOW_TITLE_LOCAL
+        );
 
         // The user enables cloud inference mid-kyoku.
         config.write().await.bot.api = api_on(&base, &"k".repeat(32));
@@ -1191,6 +1231,11 @@ mod tests {
             "the server's move must be played"
         );
         assert_eq!(served.join().unwrap().len(), 1, "exactly one API call");
+        // The card title now names the model the server says answered.
+        assert_eq!(
+            second.meta.as_ref().unwrap()["show"]["title"],
+            "Akagi · 4p-mock"
+        );
 
         // ...and the user is told, on the same channel the status LED listens to.
         let n = rx.try_recv().expect("a toast confirming the switch");
@@ -1385,11 +1430,24 @@ mod tests {
             action: "dahai:W".into(),
             prob: 0.83,
         }];
-        let meta = build_show_meta_mjai(&ev, &cands).unwrap();
+        let meta = build_show_meta_mjai(&ev, &cands, "Akagi · 4p-x").unwrap();
+        assert_eq!(meta["show"]["title"], "Akagi · 4p-x");
         let item = &meta["show"]["items"][0];
         assert_eq!(item["label"], "Discard");
         assert_eq!(item["pais"][0], "W");
         assert_eq!(item["value"], "83%");
+    }
+
+    /// The card title names the API model that served the decision: the
+    /// server's report wins, then the configured id, then a generic "Online".
+    /// Blanks don't count as a model id.
+    #[test]
+    fn api_show_title_prefers_served_then_configured_then_online() {
+        assert_eq!(api_show_title(Some("4p-x"), Some("4p-cfg")), "Akagi · 4p-x");
+        assert_eq!(api_show_title(None, Some("4p-cfg")), "Akagi · 4p-cfg");
+        assert_eq!(api_show_title(Some(""), Some(" ")), "Akagi · Online");
+        assert_eq!(api_show_title(None, None), "Akagi · Online");
+        assert_eq!(api_show_title(Some(" 4p-x "), None), "Akagi · 4p-x");
     }
 
     #[test]
@@ -1412,6 +1470,10 @@ mod tests {
             ),
         ];
         let meta = build_show_meta(&cands).unwrap();
+        assert_eq!(
+            meta["show"]["title"], SHOW_TITLE_LOCAL,
+            "a local decision must be titled as such"
+        );
         let items = meta["show"]["items"].as_array().unwrap();
         assert_eq!(items.len(), 3, "should surface all three candidates");
         assert_eq!(items[0]["label"], "Discard");
@@ -1464,7 +1526,8 @@ mod tests {
                 prob: 0.1,
             },
         ];
-        let meta = build_show_meta_mjai(&ev, &cands).unwrap();
+        let meta = build_show_meta_mjai(&ev, &cands, "Akagi · Online").unwrap();
+        assert_eq!(meta["show"]["title"], "Akagi · Online");
         let items = meta["show"]["items"].as_array().unwrap();
         assert_eq!(items.len(), 3);
         // Row 0 = exact chosen move; rows 1..= coarse candidate labels.
@@ -1494,7 +1557,7 @@ mod tests {
                 prob: 0.35,
             },
         ];
-        let meta = build_show_meta_mjai(&MjaiEvent::None, &cands).unwrap();
+        let meta = build_show_meta_mjai(&MjaiEvent::None, &cands, "Akagi · Online").unwrap();
         let items = meta["show"]["items"].as_array().unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["label"], "None");
@@ -1519,7 +1582,7 @@ mod tests {
                 prob: 0.45,
             },
         ];
-        let meta = build_show_meta_mjai(&ev, &cands).unwrap();
+        let meta = build_show_meta_mjai(&ev, &cands, "Akagi · Online").unwrap();
         let items = meta["show"]["items"].as_array().unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["label"], "Pon");
