@@ -174,6 +174,18 @@ export function Settings() {
               </SelectContent>
             </Select>
           </Field>
+          <div className="grid gap-1.5">
+            <Toggle
+              label={t('settings.developer_mode')}
+              value={draft.general.developer_mode}
+              onChange={(v) =>
+                setDraft({ ...draft, general: { ...draft.general, developer_mode: v } })
+              }
+            />
+            <span className="text-xs text-muted-foreground">
+              {t('settings.developer_mode_hint')}
+            </span>
+          </div>
         </CardContent>
       </Card>
 
