@@ -157,7 +157,9 @@
   "sidebar": {
     "collapse": "收起側欄",
     "expand": "展開側欄",
-    "pin": "釘選側欄"
+    "pin": "釘選側欄",
+    "openMenu": "開啟導覽",
+    "closeMenu": "關閉導覽"
   },
   "tile": {
     "header": "對局",

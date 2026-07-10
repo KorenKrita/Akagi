@@ -17,23 +17,36 @@ export type SidebarSettings = { disabled: boolean; isHoverOpen: boolean }
 type SidebarStore = {
   isOpen: boolean
   isHover: boolean
+  /**
+   * Overlay-drawer visibility, used only below the `lg` breakpoint where the
+   * sidebar can't be docked. Independent of `isOpen`, which is the *pinned*
+   * width of the docked sidebar.
+   */
+  isDrawerOpen: boolean
   settings: SidebarSettings
   toggleOpen: () => void
   setIsOpen: (isOpen: boolean) => void
   setIsHover: (isHover: boolean) => void
+  setDrawerOpen: (isDrawerOpen: boolean) => void
   getOpenState: () => boolean
   setSettings: (settings: Partial<SidebarSettings>) => void
 }
 
+// `isHover` and `isDrawerOpen` are transient view state, not preferences.
+// Persisting the drawer would reopen it — backdrop and all — on every launch.
+type PersistedSidebar = Pick<SidebarStore, 'isOpen' | 'settings'>
+
 export const useSidebar = create(
-  persist<SidebarStore>(
+  persist<SidebarStore, [], [], PersistedSidebar>(
     (set, get) => ({
       isOpen: true,
       isHover: false,
+      isDrawerOpen: false,
       settings: { disabled: false, isHoverOpen: true },
       toggleOpen: () => set({ isOpen: !get().isOpen }),
       setIsOpen: (isOpen) => set({ isOpen }),
       setIsHover: (isHover) => set({ isHover }),
+      setDrawerOpen: (isDrawerOpen) => set({ isDrawerOpen }),
       getOpenState: () => {
         const s = get()
         return s.isOpen || (s.settings.isHoverOpen && s.isHover)
@@ -44,6 +57,7 @@ export const useSidebar = create(
     {
       name: 'akagi.sidebar',
       storage: createJSONStorage(() => localStorage),
+      partialize: (s) => ({ isOpen: s.isOpen, settings: s.settings }),
     },
   ),
 )
