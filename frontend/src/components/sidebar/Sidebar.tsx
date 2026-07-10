@@ -24,7 +24,7 @@ import { Menu } from './Menu'
 // Fallback used in the browser dev preview (no Tauri runtime → no
 // app.getVersion). Lines up with Cargo.toml so devs see a sensible
 // string until the real version resolves.
-const VERSION_FALLBACK = '3.3.0'
+const VERSION_FALLBACK = '3.3.1'
 
 export function Sidebar() {
   const { t, i18n } = useTranslation()

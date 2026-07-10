@@ -185,6 +185,20 @@ Akagi 以 portable zip 發佈 — 每個平台一個自帶所需檔案的資料�
    健康檢查：`GET /ping` → `pong`。
 3. Windows 上常用 [Proxifier](https://www.proxifier.com/)
    把指定應用程式導向 proxy。
+4. **把 loopback 排除在重導之外。** `localhost`、`127.0.0.1`、`::1`
+   一律走 Direct，不要經過 Akagi。
+
+> [!IMPORTANT]
+> 第 4 步不是可選的。遊戲會透過 loopback 跟自己通訊來處理內部事務，
+> 而「比對遊戲程式、目標為任意 host」的重導規則會把這些 socket
+> 一併掃進 Akagi。Akagi 會拒絕它們（紀錄裡會出現
+> `refusing CONNECT to loopback` 警告），但遊戲仍可能出問題 —
+> 所以請從源頭排除 loopback。
+>
+> Proxifier 的做法：**Profile → Proxification Rules**，啟用內建的
+> **Localhost** 規則（Action: *Direct*），並把它拖到遊戲規則的**上面**。
+> 順序很重要 — Proxifier 只採用第一條命中的規則，Localhost
+> 規則排在遊戲規則下面就永遠不會生效。
 
 ---
 
@@ -317,6 +331,9 @@ session；點選列可看到原始結構化欄位與來源位置。
   `curl http://127.0.0.1:23410/ping` 應回應 `pong`。
   確認你的 proxy 重導工具（Proxifier / 系統 proxy）
   正把遊戲客戶端送到正確的 host:port。
+- **MITM 模式下遊戲卡在加載畫面。** 多半是重導工具把遊戲的 loopback
+  流量也送進了 proxy。在紀錄裡找 `refusing CONNECT to loopback`，
+  然後排除 `localhost`、`127.0.0.1`、`::1` — 見上方 MITM 設定第 4 步。
 - **Chromium 模式抓不到封包。** Detect 沒找到瀏覽器。
   在設定或 `config.toml` 裡手動設定
   `capture.chromium.executable`。如果瀏覽器有啟動但沒

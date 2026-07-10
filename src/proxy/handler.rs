@@ -1,16 +1,16 @@
 use crate::{
     bridge::{self, Bridge, Direction},
     config::Platform,
-    event_bus::MjaiBus,
+    event_bus::{MjaiBus, NotifyBus},
     inspector::InspectorWriter,
     logger::{BinaryLogger, Session},
-    schema::{FrameDirection, FrameRaw, InspectorEntry},
+    schema::{FrameDirection, FrameRaw, InspectorEntry, Notification},
 };
 use base64::Engine as _;
 use chrono::Local;
 use hudsucker::{
     futures::{Sink, SinkExt, Stream, StreamExt},
-    hyper::{self, Request, Response, StatusCode, Uri},
+    hyper::{self, Method, Request, Response, StatusCode, Uri},
     tokio_tungstenite::tungstenite::{self, Message},
     Body, HttpContext, HttpHandler, RequestOrResponse, WebSocketContext, WebSocketHandler,
 };
@@ -18,7 +18,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex as StdMutex,
     },
 };
@@ -49,6 +49,12 @@ pub struct ProxyHandler {
     /// Optional fan-out for parsed mjai events. `None` keeps the proxy
     /// usable in tests and in standalone "log only" mode.
     mjai_tx: Option<MjaiBus>,
+    /// Optional fan-out for user-facing toasts. `None` in "log only" mode.
+    notify_tx: Option<NotifyBus>,
+    /// Latches on the first refused loopback CONNECT. A misconfigured
+    /// redirector produces one per socket the game opens, and the user only
+    /// needs telling once — the log keeps every occurrence.
+    loopback_notified: Arc<AtomicBool>,
     /// Inspector writer. Cloned from `session.inspector()` at construction.
     /// Cheap to clone (Arc inside).
     inspector: InspectorWriter,
@@ -68,6 +74,7 @@ impl ProxyHandler {
         session: Arc<Session>,
         platform: Platform,
         mjai_tx: Option<MjaiBus>,
+        notify_tx: Option<NotifyBus>,
         force_close: Arc<Notify>,
     ) -> anyhow::Result<Self> {
         let binary = session.binary_logger("proxy")?;
@@ -79,10 +86,40 @@ impl ProxyHandler {
             bridges: Arc::new(StdMutex::new(HashMap::new())),
             next_flow_id: Arc::new(AtomicU64::new(1)),
             mjai_tx,
+            notify_tx,
+            loopback_notified: Arc::new(AtomicBool::new(false)),
             inspector,
             inspector_flow_ids: Arc::new(StdMutex::new(HashMap::new())),
             force_close,
         })
+    }
+
+    /// Tell the user, once, that their redirector is proxying loopback. The
+    /// log line alone is not enough — nobody opens the log while staring at a
+    /// game that never finishes loading.
+    ///
+    /// Returns `true` if this was the first refusal (caller logs at `WARN`;
+    /// later ones are `DEBUG` so a chatty client can't flood the file).
+    fn notify_loopback_refused(&self, authority: &Uri) -> bool {
+        if self.loopback_notified.swap(true, Ordering::Relaxed) {
+            return false;
+        }
+        if let Some(tx) = &self.notify_tx {
+            // Sticky: this blocks play until the user fixes the redirector.
+            let _ = tx.send(
+                Notification::warn("Proxy redirector is sending loopback traffic to Akagi")
+                    .body(format!(
+                        "Refused CONNECT to {authority}. Games talk to themselves over \
+                         loopback, and proxying that hangs them on the loading screen. \
+                         Exclude localhost / 127.0.0.1 / ::1 from the rule that redirects \
+                         the game — in Proxifier, enable the \"Localhost\" rule (action: \
+                         Direct) and move it above the game rule.",
+                    ))
+                    .sticky()
+                    .id("proxy-loopback-connect"),
+            );
+        }
+        true
     }
 
     /// Stable inspector flow id for `client`. Computed once on first
@@ -173,6 +210,49 @@ impl HttpHandler for ProxyHandler {
             req.version(),
             ctx.client_addr,
         );
+
+        // A game client never legitimately CONNECTs to loopback — the proxy
+        // itself lives there. Seeing one means the user's redirector
+        // (Proxifier &c.) matched the game for *any* target host and swept up
+        // the game's own internal `socketpair()` self-connect.
+        //
+        // Refusing here rather than tunneling it is load-bearing. hudsucker's
+        // `process_connect` answers 200 and then blocks reading the client's
+        // first 4 bytes *before* it opens the upstream socket; a self-connect's
+        // client side never speaks first (it is waiting on its own `accept()`),
+        // so the tunnel deadlocks and the game wedges on its loading screen.
+        // Returning a `Response` short-circuits hudsucker's `proxy()` before
+        // that blocking read is ever reached.
+        //
+        // Tunneling it correctly is not an option either: libcurl's
+        // `socketpair()` emulation checks that the address it accepted matches
+        // its connecting socket's local address, which a proxied hop breaks.
+        if is_loopback_connect(req.method(), req.uri()) {
+            if self.notify_loopback_refused(req.uri()) {
+                warn!(
+                    target: "akagi::proxy::forward",
+                    "refusing CONNECT to loopback {} from {}: your proxy redirector is sending the \
+                     game's own internal loopback sockets through Akagi, which would hang the game. \
+                     Exclude localhost / 127.0.0.1 / ::1 from the rule that redirects the game (in \
+                     Proxifier: enable the \"Localhost\" Direct rule and move it above the game rules).",
+                    req.uri(),
+                    ctx.client_addr,
+                );
+            } else {
+                debug!(
+                    target: "akagi::proxy::forward",
+                    "refusing CONNECT to loopback {} from {}",
+                    req.uri(),
+                    ctx.client_addr,
+                );
+            }
+            return Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Body::empty())
+                .expect("Failed to build loopback CONNECT refusal")
+                .into();
+        }
+
         req.into()
     }
 
@@ -465,22 +545,115 @@ fn should_raw_tunnel(platform: Platform, host: &str, port: u16) -> bool {
     platform == Platform::Majsoul && port == 443 && is_ip_literal_host(host)
 }
 
-/// `true` when `host` (as returned by `Uri::host`) is a literal IPv4 or
-/// IPv6 address. IPv6 hosts come back from `Uri::host` wrapped in `[…]`
-/// per RFC 3986; `IpAddr::from_str` rejects the brackets so we strip them
-/// before parsing.
-fn is_ip_literal_host(host: &str) -> bool {
-    let stripped = host
-        .strip_prefix('[')
+/// IPv6 hosts come back from `Uri::host` wrapped in `[…]` per RFC 3986;
+/// `IpAddr::from_str` rejects the brackets, so strip them before parsing.
+fn strip_brackets(host: &str) -> &str {
+    host.strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
-        .unwrap_or(host);
-    stripped.parse::<std::net::IpAddr>().is_ok()
+        .unwrap_or(host)
+}
+
+/// `true` when `host` (as returned by `Uri::host`) is a literal IPv4 or
+/// IPv6 address.
+fn is_ip_literal_host(host: &str) -> bool {
+    strip_brackets(host).parse::<std::net::IpAddr>().is_ok()
+}
+
+/// `true` when `host` names the loopback interface: any address in
+/// `127.0.0.0/8`, `::1`, or the reserved name `localhost`.
+fn is_loopback_host(host: &str) -> bool {
+    let host = strip_brackets(host);
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => host.eq_ignore_ascii_case("localhost"),
+    }
+}
+
+/// `true` for a `CONNECT` whose authority names the loopback interface — the
+/// signature of a redirector that is proxying the game's own internal sockets.
+/// See the refusal in [`ProxyHandler::handle_request`] for why these must not
+/// be tunneled.
+fn is_loopback_connect(method: &Method, uri: &Uri) -> bool {
+    method == Method::CONNECT && uri.host().is_some_and(is_loopback_host)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_ip_literal_host, should_raw_tunnel};
+    use super::{is_ip_literal_host, is_loopback_connect, is_loopback_host, should_raw_tunnel};
     use crate::config::Platform;
+    use hudsucker::hyper::{Method, Uri};
+
+    /// Regression: a redirector matching the game for *any* target host sweeps
+    /// up its internal `socketpair()` self-connect. Tunneling that deadlocks —
+    /// hudsucker blocks reading the client's first bytes before it dials
+    /// upstream, and a self-connect's client side never speaks first — which
+    /// hung the Mahjong Soul Steam client on its loading screen forever.
+    #[test]
+    fn loopback_connect_is_refused() {
+        let connect = Method::CONNECT;
+        // The exact shape seen in the wild: game's own ephemeral listener.
+        assert!(is_loopback_connect(
+            &connect,
+            &"127.0.0.1:65423".parse::<Uri>().unwrap()
+        ));
+        // The whole 127.0.0.0/8 block, IPv6 loopback, and the reserved name.
+        assert!(is_loopback_connect(
+            &connect,
+            &"127.9.9.9:1234".parse::<Uri>().unwrap()
+        ));
+        assert!(is_loopback_connect(
+            &connect,
+            &"[::1]:8080".parse::<Uri>().unwrap()
+        ));
+        assert!(is_loopback_connect(
+            &connect,
+            &"localhost:23410".parse::<Uri>().unwrap()
+        ));
+    }
+
+    /// The refusal must not touch real game traffic, nor non-`CONNECT` methods
+    /// (Akagi's own `GET /ping` health probe arrives on loopback).
+    #[test]
+    fn non_loopback_connect_and_other_methods_pass_through() {
+        assert!(!is_loopback_connect(
+            &Method::CONNECT,
+            &"156.238.128.63:443".parse::<Uri>().unwrap()
+        ));
+        assert!(!is_loopback_connect(
+            &Method::CONNECT,
+            &"game.maj-soul.com:443".parse::<Uri>().unwrap()
+        ));
+        assert!(!is_loopback_connect(
+            &Method::GET,
+            &"http://127.0.0.1:23410/ping".parse::<Uri>().unwrap()
+        ));
+        // No authority at all (origin-form request URI).
+        assert!(!is_loopback_connect(
+            &Method::GET,
+            &"/ping".parse::<Uri>().unwrap()
+        ));
+    }
+
+    #[test]
+    fn loopback_hosts_are_detected() {
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("127.255.255.254"));
+        assert!(is_loopback_host("[::1]"));
+        assert!(is_loopback_host("::1"));
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("LocalHost"));
+    }
+
+    #[test]
+    fn non_loopback_hosts_are_not_detected() {
+        assert!(!is_loopback_host("0.0.0.0"));
+        assert!(!is_loopback_host("156.238.128.63"));
+        assert!(!is_loopback_host("[2001:db8::1]"));
+        assert!(!is_loopback_host("game.maj-soul.com"));
+        // Hostname that merely starts with the loopback label.
+        assert!(!is_loopback_host("localhost.example.com"));
+        assert!(!is_loopback_host(""));
+    }
 
     /// Mahjong Soul Steam build: IP-literal CONNECT on 443 is raw-tunneled so
     /// the multi-tenant CDN keeps the client's own SNI.
