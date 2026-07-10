@@ -10,6 +10,7 @@ import {
   ShoppingCart,
   AlertTriangle,
   XCircle,
+  Lock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,6 +26,7 @@ import {
 import { invoke } from '@/lib/tauri'
 import { toast } from '@/components/ui/sonner'
 import { PurchaseDialog } from '@/components/PurchaseDialog'
+import { useConfigStore } from '@/stores/configStore'
 import { usePurchaseStore, type PurchasePhase } from '@/stores/purchaseStore'
 import type { KeyStatus, ModelInfo, NativeApiConfig, RedeemResponse } from '@/types'
 
@@ -69,6 +71,13 @@ export function NativeApiFields({
 
   const set = (patch: Partial<NativeApiConfig>) => onChange({ ...value, ...patch })
   const hasUrlKey = value.base_url.trim() !== '' && value.key.trim() !== ''
+
+  // The server URL is a developer-only field: pointing a novice at a rogue
+  // server is the obvious scam vector, so the input stays locked unless
+  // developer mode (Settings → General) is on. Read from the *saved* config,
+  // not the edited draft — flipping the toggle must be deliberate and saved,
+  // never part of the same unsaved edit that changes the URL.
+  const devMode = useConfigStore((s) => s.config?.general.developer_mode ?? false)
 
   // Latest `value` as of the last committed render. Async handlers (the model
   // auto-fill in `toggleEnabled`) resolve against this instead of the snapshot
@@ -214,14 +223,21 @@ export function NativeApiFields({
         </div>
       </div>
 
-      <div className="grid gap-1.5">
-        <Label>{t('bots.api.base_url')}</Label>
+      {/* The locked explanation is a hover tooltip on the wrapper (not text
+          under the field) — the disabled input itself swallows pointer events,
+          so the title has to live on an enabled ancestor. */}
+      <div className="grid gap-1.5" title={devMode ? undefined : t('bots.api.base_url_locked')}>
+        <Label className="flex items-center gap-1.5">
+          {t('bots.api.base_url')}
+          {!devMode && <Lock className="h-3 w-3 text-muted-foreground" />}
+        </Label>
         <Input
           value={value.base_url}
           onChange={(e) => set({ base_url: e.target.value })}
           placeholder="https://mjapi.shinkuan.me"
           autoComplete="off"
           spellCheck={false}
+          disabled={!devMode}
         />
       </div>
 
