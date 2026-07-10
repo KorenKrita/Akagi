@@ -131,6 +131,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(crate::ipc_handlers!())
         .setup({
             // AppState constructed *inside* setup() so the python+uv
