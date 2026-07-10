@@ -44,6 +44,7 @@ impl CaptureBackend for HudsuckerBackend {
             ctx.platform,
             ctx.session,
             Some(ctx.mjai_bus),
+            Some(ctx.notify_bus),
             self.force_close,
             shutdown_fut,
         )
