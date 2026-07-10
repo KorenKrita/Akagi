@@ -37,7 +37,10 @@ export function Sidebar() {
   const isDrawerOpen = useSidebar((s) => s.isDrawerOpen)
   const setDrawerOpen = useSidebar((s) => s.setDrawerOpen)
   const isNarrow = useIsNarrow()
-  const { pathname } = useLocation()
+  // `key`, not `pathname`: clicking the nav item for the route you're already
+  // on pushes a new history entry without changing the path, and the drawer
+  // still has to get out of the way.
+  const { key: locationKey } = useLocation()
   const hasUpdate = useUpdaterStore(selectHasNotifiableUpdate)
   const openUpdateDialog = useUpdaterStore((s) => s.openDialog)
   const [version, setVersion] = useState(VERSION_FALLBACK)
@@ -50,7 +53,7 @@ export function Sidebar() {
   // page the user just asked for.
   useEffect(() => {
     setDrawerOpen(false)
-  }, [pathname, setDrawerOpen])
+  }, [locationKey, setDrawerOpen])
 
   // Growing back past `lg` re-docks the sidebar. Drop the drawer state so the
   // backdrop can't linger, and so shrinking again starts from closed.

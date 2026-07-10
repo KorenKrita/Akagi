@@ -5,6 +5,15 @@ import { cleanup } from '@testing-library/react'
 // hooks a global `afterEach`) never registers. Do it explicitly.
 afterEach(cleanup)
 
+// jsdom ships no ResizeObserver, which Radix's ScrollArea constructs on mount.
+if (!('ResizeObserver' in globalThis)) {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+}
+
 /**
  * jsdom implements no `matchMedia`. Install a stub whose match state the test
  * controls, so components using `useIsNarrow` can be driven across the `lg`
