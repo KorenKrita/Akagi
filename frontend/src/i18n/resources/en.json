@@ -157,7 +157,9 @@
   "sidebar": {
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar",
-    "pin": "Pin sidebar"
+    "pin": "Pin sidebar",
+    "openMenu": "Open navigation",
+    "closeMenu": "Close navigation"
   },
   "tile": {
     "header": "Game",
