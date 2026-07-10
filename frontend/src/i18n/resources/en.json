@@ -473,7 +473,7 @@
       "enable": "Use cloud inference API",
       "enable_hint": "When on, the built-in bot asks the server for each move; it falls back to the local model on any error.",
       "base_url": "Server URL",
-      "base_url_locked": "Locked to the official server. To change it, turn on Developer mode in Settings → General.",
+      "base_url_locked": "The Online API server URL is locked. Do not change it unless you know exactly what you are doing.",
       "key": "API key",
       "show_key": "Show key",
       "hide_key": "Hide key",

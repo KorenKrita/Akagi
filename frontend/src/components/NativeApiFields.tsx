@@ -223,7 +223,10 @@ export function NativeApiFields({
         </div>
       </div>
 
-      <div className="grid gap-1.5">
+      {/* The locked explanation is a hover tooltip on the wrapper (not text
+          under the field) — the disabled input itself swallows pointer events,
+          so the title has to live on an enabled ancestor. */}
+      <div className="grid gap-1.5" title={devMode ? undefined : t('bots.api.base_url_locked')}>
         <Label className="flex items-center gap-1.5">
           {t('bots.api.base_url')}
           {!devMode && <Lock className="h-3 w-3 text-muted-foreground" />}
@@ -236,9 +239,6 @@ export function NativeApiFields({
           spellCheck={false}
           disabled={!devMode}
         />
-        {!devMode && (
-          <span className="text-xs text-muted-foreground">{t('bots.api.base_url_locked')}</span>
-        )}
       </div>
 
       <div className="grid gap-1.5">

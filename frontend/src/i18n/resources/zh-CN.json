@@ -473,7 +473,7 @@
       "enable": "使用云端推理 API",
       "enable_hint": "开启后，内建 Bot 每步都会向服务器询问;发生错误时会回退到本地模型。",
       "base_url": "服务器地址",
-      "base_url_locked": "已锁定为官方服务器。若要修改，请在“设置 → 通用”开启开发者模式。",
+      "base_url_locked": "已锁定 Online API 服务器地址，不要修改，除非你知道你在干什么。",
       "key": "API 密钥",
       "show_key": "显示密钥",
       "hide_key": "隐藏密钥",
