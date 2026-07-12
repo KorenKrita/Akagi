@@ -263,12 +263,25 @@ mod tests {
     /// actually exercise the first-turn path.)
     fn chiitoitsu_state(actor: u8, oya: u8) -> GameState {
         let rule = riichienv_core::rule::GameRule::default_tenhou();
-        let mut s = GameState::new(0, true, None, 0, rule);
+        // Seeded, like `chiitoitsu_state_3p`: `GameState::new` runs
+        // `_initialize_round`, which shuffles a wall and flips dora — none of
+        // which these tests want a say in.
+        let mut s = GameState::new(0, true, Some(42), 0, rule);
         s.oya = oya;
         s.round_wind = 0; // East
         s.honba = 0;
         s.riichi_sticks = 0;
         s.is_first_turn = false;
+
+        // `_initialize_round` also *deals*, which leaves the dealer's first draw
+        // sitting in `drawn_tile`. Every test below supplies its own winning
+        // tile, so that stray one is never wanted — and it is actively harmful:
+        // `evaluate_hora_4p` reads `drawn_tile` as the winning tile, so a dealt
+        // tile that happened to be an 8s completed this fixture's chiitoitsu
+        // wait and made `evaluate_hora_4p_returns_none_when_no_win_tile` fail.
+        // Unseeded, that was a ~3%-per-run coin flip in CI (#194).
+        s.drawn_tile = None;
+        s.last_discard = None;
 
         // 11m 22m 33p 44p 66s 77s + tenpai-on-8s (13 tiles).
         let hand = vec![
@@ -419,6 +432,14 @@ mod tests {
         // Winning shape in hand but `drawn_tile` is None and `last_discard`
         // is None — we can't infer the winning tile.
         let s = chiitoitsu_state(0, 0);
+        // Pin the premise, don't just assume it. This test spent its whole life
+        // asserting a conclusion that rested on a fixture which quietly handed
+        // it a dealt `drawn_tile`; the assertion below only held while that tile
+        // happened not to complete the hand (#194).
+        assert!(
+            s.drawn_tile.is_none() && s.last_discard.is_none(),
+            "the fixture must carry no winning tile, or this test proves nothing"
+        );
         assert!(evaluate_hora_4p(&s, 0, true).is_none());
         assert!(evaluate_hora_4p(&s, 0, false).is_none());
     }
@@ -666,6 +687,13 @@ mod tests {
         s.riichi_sticks = 0;
         s.is_first_turn = false;
         s.wall.dora_indicators.clear();
+
+        // Same trap as the 4p fixture: the deal leaves a tile in `drawn_tile`
+        // that `evaluate_hora_3p` would read as the winning tile. The seed makes
+        // it deterministic rather than harmless — clear it, so a future test can
+        // assert "no win tile" without silently depending on what seed 42 dealt.
+        s.drawn_tile = None;
+        s.last_discard = None;
 
         // 1p 1p 2p 2p 3p 3p 4p 4p 1s 1s S S + 8p (lone — chiitoitsu wait).
         // South pair (not round wind, not the actor's seat wind for any
