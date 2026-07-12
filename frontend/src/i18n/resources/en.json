@@ -570,7 +570,22 @@
   },
   "game": {
     "bot_disabled_title": "Bot is disabled",
-    "bot_disabled_desc": "Enable bots in Settings to receive recommendations."
+    "bot_disabled_desc": "Enable bots in Settings to receive recommendations.",
+    "onboarding": {
+      "title": "Customize your board",
+      "intro": "Every panel is a movable tile. Here's how to arrange them the way you like.",
+      "drag_title": "Move a tile",
+      "drag_desc": "Drag it by its title bar to reposition.",
+      "resize_title": "Resize a tile",
+      "resize_desc": "Drag the bottom-right corner to make it bigger or smaller.",
+      "delete_title": "Remove a tile",
+      "delete_desc": "Click the ✕ in a tile's top-right corner to hide it.",
+      "add_title": "Add a tile back",
+      "add_desc": "Use \"Add tile\" in the toolbar to bring hidden tiles back.",
+      "reset_hint": "Changed your mind? \"Reset Layout\" restores the default arrangement anytime.",
+      "got_it": "Got it",
+      "help_aria": "Show board tips"
+    }
   },
   "mahjong": {
     "riichi": "Riichi",

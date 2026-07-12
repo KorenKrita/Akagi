@@ -570,7 +570,22 @@
   },
   "game": {
     "bot_disabled_title": "Bot 已停用",
-    "bot_disabled_desc": "请至「设置」启用 Bot 才能获得实时建议。"
+    "bot_disabled_desc": "请至「设置」启用 Bot 才能获得实时建议。",
+    "onboarding": {
+      "title": "自定义你的面板",
+      "intro": "每个面板都是可移动的区块，这里教你把它们排成喜欢的样子。",
+      "drag_title": "移动区块",
+      "drag_desc": "拖动区块的标题栏即可调整位置。",
+      "resize_title": "调整大小",
+      "resize_desc": "拖动区块右下角即可放大或缩小。",
+      "delete_title": "移除区块",
+      "delete_desc": "点击区块右上角的 ✕ 即可隐藏它。",
+      "add_title": "加回区块",
+      "add_desc": "用工具栏的“添加区块”把隐藏的区块加回来。",
+      "reset_hint": "改变主意了？随时可用“重置布局”还原为默认排列。",
+      "got_it": "我知道了",
+      "help_aria": "显示面板操作提示"
+    }
   },
   "mahjong": {
     "riichi": "立直",
