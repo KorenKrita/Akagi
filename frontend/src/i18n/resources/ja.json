@@ -345,7 +345,14 @@
       "click_hold": "ボタン押下保持 (ms)",
       "dealer_first_discard_extra_delay": "親の初打追加待機 (ms)",
       "dealer_first_discard_extra_delay_hint": "雀魂は親に14枚配られた後に手牌整列アニメーションを再生し、その間のクリックは無視されます。2000ms前後でほぼ吸収できます。"
-    }
+    },
+    "overlay": "推奨オーバーレイ",
+    "overlay_enabled": "オーバーレイウィンドウを表示",
+    "overlay_enabled_hint": "ゲーム画面の上に常に最前面で浮かぶ小さなウィンドウで、AI の推奨打牌を表示します。ドラッグで移動、端をつかんでサイズ変更できます。",
+    "overlay_top_n": "表示する候補数",
+    "overlay_opacity": "不透明度",
+    "overlay_always_on_top": "常に最前面に表示",
+    "overlay_always_on_top_hint": "サブモニターに置く場合はオフにしてください。なお、ゲームが排他的フルスクリーンの場合は最前面ウィンドウがすべて隠れるため、ボーダーレスまたはウィンドウモードをご利用ください。"
   },
   "setup": {
     "title": "Akagi セットアップ",
@@ -585,7 +592,11 @@
       "reset_hint": "元に戻したいときは「レイアウトをリセット」でいつでも初期配置に戻せます。",
       "got_it": "OK",
       "help_aria": "ボードのヒントを表示"
-    }
+    },
+    "overlay": "オーバーレイ",
+    "overlay_show": "推奨オーバーレイを表示",
+    "overlay_hide": "推奨オーバーレイを非表示",
+    "overlay_toggle_failed": "オーバーレイを切り替えられませんでした"
   },
   "mahjong": {
     "riichi": "リーチ",
@@ -690,5 +701,9 @@
   "install_overlay": {
     "title": "インストール中…",
     "warning": "インストールが完了するまで、アプリを閉じたり対局を開始しないでください。"
+  },
+  "overlay": {
+    "close": "オーバーレイを閉じる",
+    "empty": "AI の判断を待っています…"
   }
 }

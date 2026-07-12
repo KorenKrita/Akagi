@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { TileFrame } from '@/components/TileFrame'
 import { Mahgen } from '@/components/Mahgen'
 import { useNotifyStore } from '@/stores/notifyStore'
+import { hexToRgba } from '@/lib/botShow'
 import { useBotHoraScore } from '@/lib/botHoraScore'
 import { mjaiToMahgen } from '@/lib/tileIdx'
 import type { Breakpoint } from '@/tiles/defaults'
@@ -164,15 +165,6 @@ function describe(r: BotResponse, t: (k: string, opts?: Record<string, unknown>)
     default:
       return null
   }
-}
-
-// "#aabbcc" → "rgba(170,187,204,a)". Returns null when input isn't a valid hex.
-function hexToRgba(hex: string | null, alpha: number): string | undefined {
-  if (!hex) return undefined
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
-  if (!m) return undefined
-  const n = parseInt(m[1], 16)
-  return `rgba(${(n >> 16) & 0xff}, ${(n >> 8) & 0xff}, ${n & 0xff}, ${alpha})`
 }
 
 export function BotActionTile({ bp }: { bp: Breakpoint }) {

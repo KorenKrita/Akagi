@@ -6,6 +6,7 @@
 
 export type MahgenKind =
   | 'river' | 'hand' | 'melds' | 'dora' | 'rec' | 'bot-action' | 'bot-show'
+  | 'overlay-show'
   | 'board-hand' | 'board-river' | 'board-meld' | 'hand-risk'
 
 type SizeCtx =
@@ -13,6 +14,12 @@ type SizeCtx =
   | { mode: 'fit'; min?: number; max?: number }
   | { mode: 'fixed'; base: number }
   | { mode: 'linear'; base: number; ref: number; min: number; max: number }
+  // The only height-driven mode. Every other one reads the container's *width*,
+  // which is right inside a scrolling dashboard tile but wrong for a small
+  // free-floating window: there, the height is the scarce axis, and a tile that
+  // ignores it leaves a dead band under the last row no matter how tall the user
+  // drags the window. `pad` is the breathing room left inside the row.
+  | { mode: 'fill-height'; pad: number; min: number; max: number }
 
 const SIZE_CTX: Record<MahgenKind, SizeCtx> = {
   river: { mode: 'river', maxScale: 0.65, minScale: 0.18 },
@@ -28,6 +35,14 @@ const SIZE_CTX: Record<MahgenKind, SizeCtx> = {
   // bot-action so the label/value columns stay readable; cap higher than
   // 'rec' for chi/pon melds.
   'bot-show': { mode: 'linear', base: 30, ref: 260, min: 22, max: 64 },
+  // overlay-show: the same rows in the always-on-top overlay window. The
+  // container here is the row itself (not the list), and the rows split the
+  // window's height between them — so the tile grows with the window and the
+  // list always reaches the bottom edge. `max` is generous on purpose: someone
+  // who drags the overlay large wants big, legible tiles.
+  // `min` is low enough that 5 rows in a window shrunk to `MIN_HEIGHT` still fit
+  // rather than getting cropped by the row's overflow.
+  'overlay-show': { mode: 'fill-height', pad: 8, min: 20, max: 120 },
   // board-*: compact tiles for the 2D table tile (BoardTile). Each seat's
   // mahgen container is a fraction of the square board, so these scale down
   // when the tile is small. `board-hand` uses linear so each tile keeps a
@@ -141,6 +156,12 @@ export function applyMahgenSize(el: MahgenEl): void {
   } else if (cfg.mode === 'fixed') {
     h = cfg.base
     w = aspectKnown ? (h * nw) / nh : cfg.base
+  } else if (cfg.mode === 'fill-height') {
+    // The row's height is set by the flex layout, not by this tile, so growing
+    // the tile can't feed back into the measurement.
+    const ch = entry.container?.clientHeight ?? cfg.min + cfg.pad
+    h = Math.max(cfg.min, Math.min(cfg.max, ch - cfg.pad))
+    w = aspectKnown ? (h * nw) / nh : h * 0.75
   } else {
     h = cfg.base * (cw / cfg.ref)
     h = Math.max(cfg.min, Math.min(cfg.max, h))
