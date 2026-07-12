@@ -11,7 +11,15 @@ tauri-build = { version = "2", features = [] }
 prost-build = "0.14"
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `macos-private-api`: the suggestion overlay is a transparent window, and on
+# macOS `WebviewWindowBuilder::transparent` does not exist without this feature
+# — it is `#[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]`.
+# Must stay in step with `app.macOSPrivateApi` in tauri.conf.json; the feature
+# is what makes the call compile, the config flag is what makes it take effect.
+# The catch is that it uses private Apple APIs, so a build with it cannot be
+# accepted into the Mac App Store. Akagi ships as an unsigned portable zip from
+# GitHub Releases, so that costs us nothing.
+tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
