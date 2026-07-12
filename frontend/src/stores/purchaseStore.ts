@@ -62,6 +62,7 @@ export type PurchasePhase =
 
 type StartOpts = {
   baseUrl: string
+  useSystemProxy: boolean
   product: Product
   /** One-time purchases: stack the bought time onto this existing key. */
   renewKey?: string
@@ -71,6 +72,7 @@ type PurchaseStore = {
   phase: PurchasePhase
   product: Product | null
   baseUrl: string
+  useSystemProxy: boolean
   approveUrl: string | null
   /** One-time: the prepaid redeem code once `ready` (also emailed). */
   code: string | null
@@ -123,6 +125,7 @@ const initial = {
   phase: 'idle' as PurchasePhase,
   product: null,
   baseUrl: '',
+  useSystemProxy: false,
   approveUrl: null,
   code: null,
   key: null,
@@ -179,6 +182,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
         baseUrl: s.baseUrl,
         code,
         renewKey: s.renewKey ?? undefined,
+        useSystemProxy: s.useSystemProxy,
       })
       if (gen !== generation) return
       if (resp.key) {
@@ -211,6 +215,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
       const st = await invoke<KeyStatus>('native_api_key_status', {
         baseUrl: get().baseUrl,
         key,
+        useSystemProxy: get().useSystemProxy,
       })
       if (gen !== generation) return
       if (st.expires_at) set({ until: st.expires_at })
@@ -282,6 +287,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
           baseUrl: get().baseUrl,
           orderId: ids.orderId,
           claim: ids.claim,
+          useSystemProxy: get().useSystemProxy,
         })
         if (gen !== generation) return
         pollDelay = POLL_MS
@@ -291,6 +297,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
           baseUrl: get().baseUrl,
           subscriptionId: ids.subscriptionId,
           claim: ids.claim,
+          useSystemProxy: get().useSystemProxy,
         })
         if (gen !== generation) return
         pollDelay = POLL_MS
@@ -336,6 +343,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
         phase: 'creating',
         product: opts.product,
         baseUrl: opts.baseUrl,
+        useSystemProxy: opts.useSystemProxy,
         renewKey,
       })
       void (async () => {
@@ -348,6 +356,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
               // /v3/redeem at an existing key. Server-side redeem is what puts
               // the KEY in the buyer's backup email instead of a spent code.
               redeem: renewKey === null,
+              useSystemProxy: opts.useSystemProxy,
             })
             if (gen !== generation) return
             activeIds = { orderId: o.order_id, claim: o.claim_secret }
@@ -357,6 +366,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
             const o = await invoke<CreatedSubscription>('native_api_create_subscription', {
               baseUrl: opts.baseUrl,
               product: opts.product.id,
+              useSystemProxy: opts.useSystemProxy,
             })
             if (gen !== generation) return
             activeIds = { subscriptionId: o.subscription_id, claim: o.claim_secret }

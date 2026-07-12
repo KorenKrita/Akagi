@@ -36,7 +36,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use super::api::{check, normalize_base};
+use super::api::{check, configure_proxy, normalize_base};
 
 /// `create-*` calls block on PayPal upstream (the server creates the order /
 /// subscription there before answering), so give them more headroom than the
@@ -141,9 +141,18 @@ struct SubscriptionResultRequest<'a> {
 /// the caller must exchange. Pass `false` only when the code is needed as a
 /// code, i.e. to renew an existing key through `/v3/redeem`'s `renew_key`.
 pub async fn create_order(base_url: &str, product: &str, redeem: bool) -> Result<CreatedOrder> {
+    create_order_with_proxy(base_url, product, redeem, false).await
+}
+
+pub async fn create_order_with_proxy(
+    base_url: &str,
+    product: &str,
+    redeem: bool,
+    use_system_proxy: bool,
+) -> Result<CreatedOrder> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/create-order");
-    let resp = build_http()?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&CreateOrderRequest {
             product: product.trim(),
@@ -166,9 +175,18 @@ pub async fn create_order(base_url: &str, product: &str, redeem: bool) -> Result
 /// A wrong `claim` is a `404` and counts toward the per-IP failure guard, so
 /// never retry with guessed secrets.
 pub async fn order_result(base_url: &str, order_id: &str, claim: &str) -> Result<OrderResult> {
+    order_result_with_proxy(base_url, order_id, claim, false).await
+}
+
+pub async fn order_result_with_proxy(
+    base_url: &str,
+    order_id: &str,
+    claim: &str,
+    use_system_proxy: bool,
+) -> Result<OrderResult> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/order-result");
-    let resp = build_http()?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&OrderResultRequest { order_id, claim })
         .send()
@@ -184,9 +202,17 @@ pub async fn order_result(base_url: &str, order_id: &str, claim: &str) -> Result
 /// subscription for `product` (e.g. `pro-monthly`). Same non-idempotency
 /// caveat as [`create_order`].
 pub async fn create_subscription(base_url: &str, product: &str) -> Result<CreatedSubscription> {
+    create_subscription_with_proxy(base_url, product, false).await
+}
+
+pub async fn create_subscription_with_proxy(
+    base_url: &str,
+    product: &str,
+    use_system_proxy: bool,
+) -> Result<CreatedSubscription> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/create-subscription");
-    let resp = build_http()?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&CreateSubscriptionRequest {
             product: product.trim(),
@@ -207,9 +233,18 @@ pub async fn subscription_result(
     subscription_id: &str,
     claim: &str,
 ) -> Result<SubscriptionResult> {
+    subscription_result_with_proxy(base_url, subscription_id, claim, false).await
+}
+
+pub async fn subscription_result_with_proxy(
+    base_url: &str,
+    subscription_id: &str,
+    claim: &str,
+    use_system_proxy: bool,
+) -> Result<SubscriptionResult> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/subscription-result");
-    let resp = build_http()?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&SubscriptionResultRequest {
             subscription_id,
@@ -224,11 +259,10 @@ pub async fn subscription_result(
         .context("parse /paypal/subscription-result response")
 }
 
-fn build_http() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(PURCHASE_TIMEOUT)
-        .build()
-        .context("build purchase http client")
+fn build_http(use_system_proxy: bool) -> Result<reqwest::Client> {
+    let builder = reqwest::Client::builder().timeout(PURCHASE_TIMEOUT);
+    let builder = configure_proxy(builder, use_system_proxy)?;
+    builder.build().context("build purchase http client")
 }
 
 #[cfg(test)]

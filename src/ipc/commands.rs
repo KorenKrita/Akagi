@@ -1487,8 +1487,15 @@ pub async fn native_api_redeem(
     code: String,
     email: Option<String>,
     renew_key: Option<String>,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::api::RedeemResponse> {
-    crate::bot::api::redeem(&base_url, &code, email.as_deref(), renew_key.as_deref())
+    crate::bot::api::redeem_with_proxy(
+        &base_url,
+        &code,
+        email.as_deref(),
+        renew_key.as_deref(),
+        use_system_proxy.unwrap_or(false),
+    )
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1498,8 +1505,9 @@ pub async fn native_api_redeem(
 pub async fn native_api_key_status(
     base_url: String,
     key: String,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::api::KeyStatus> {
-    crate::bot::api::ApiClient::new(&base_url, &key)
+    crate::bot::api::ApiClient::new_with_proxy(&base_url, &key, use_system_proxy.unwrap_or(false))
         .map_err(|e| format!("{e:#}"))?
         .key_status()
         .await
@@ -1511,8 +1519,9 @@ pub async fn native_api_key_status(
 pub async fn native_api_models(
     base_url: String,
     key: String,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<Vec<crate::bot::api::ModelInfo>> {
-    crate::bot::api::ApiClient::new(&base_url, &key)
+    crate::bot::api::ApiClient::new_with_proxy(&base_url, &key, use_system_proxy.unwrap_or(false))
         .map_err(|e| format!("{e:#}"))?
         .models()
         .await
@@ -1521,8 +1530,11 @@ pub async fn native_api_models(
 
 /// Liveness + per-model queue depth (`GET /healthz`, no auth).
 #[tauri::command]
-pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::Health> {
-    crate::bot::api::health(&base_url)
+pub async fn native_api_health(
+    base_url: String,
+    use_system_proxy: Option<bool>,
+) -> CmdResult<crate::bot::api::Health> {
+    crate::bot::api::health_with_proxy(&base_url, use_system_proxy.unwrap_or(false))
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1547,8 +1559,14 @@ pub async fn native_api_create_order(
     base_url: String,
     product: String,
     redeem: bool,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::purchase::CreatedOrder> {
-    crate::bot::purchase::create_order(&base_url, &product, redeem)
+    crate::bot::purchase::create_order_with_proxy(
+        &base_url,
+        &product,
+        redeem,
+        use_system_proxy.unwrap_or(false),
+    )
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1561,8 +1579,14 @@ pub async fn native_api_order_result(
     base_url: String,
     order_id: String,
     claim: String,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::purchase::OrderResult> {
-    crate::bot::purchase::order_result(&base_url, &order_id, &claim)
+    crate::bot::purchase::order_result_with_proxy(
+        &base_url,
+        &order_id,
+        &claim,
+        use_system_proxy.unwrap_or(false),
+    )
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1573,8 +1597,13 @@ pub async fn native_api_order_result(
 pub async fn native_api_create_subscription(
     base_url: String,
     product: String,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::purchase::CreatedSubscription> {
-    crate::bot::purchase::create_subscription(&base_url, &product)
+    crate::bot::purchase::create_subscription_with_proxy(
+        &base_url,
+        &product,
+        use_system_proxy.unwrap_or(false),
+    )
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1586,8 +1615,14 @@ pub async fn native_api_subscription_result(
     base_url: String,
     subscription_id: String,
     claim: String,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::purchase::SubscriptionResult> {
-    crate::bot::purchase::subscription_result(&base_url, &subscription_id, &claim)
+    crate::bot::purchase::subscription_result_with_proxy(
+        &base_url,
+        &subscription_id,
+        &claim,
+        use_system_proxy.unwrap_or(false),
+    )
         .await
         .map_err(|e| format!("{e:#}"))
 }

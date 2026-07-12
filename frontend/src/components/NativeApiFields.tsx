@@ -83,6 +83,7 @@ export function NativeApiFields({
     const list = await invoke<ModelInfo[]>('native_api_models', {
       baseUrl: v.base_url,
       key: v.key,
+      useSystemProxy: v.use_system_proxy,
     })
     setModels(list)
     return list
@@ -134,6 +135,7 @@ export function NativeApiFields({
         await invoke<KeyStatus>('native_api_key_status', {
           baseUrl: value.base_url,
           key: value.key,
+          useSystemProxy: value.use_system_proxy,
         }),
       )
     } catch (e) {
@@ -187,6 +189,7 @@ export function NativeApiFields({
     try {
       const h = await invoke<{ status: string; models: string[] }>('native_api_health', {
         baseUrl: value.base_url,
+        useSystemProxy: value.use_system_proxy,
       })
       toast.success(t('bots.api.health_ok', { status: h.status }), {
         description: h.models.join(', '),
@@ -222,6 +225,17 @@ export function NativeApiFields({
           placeholder="https://mjapi.shinkuan.me"
           autoComplete="off"
           spellCheck={false}
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col">
+          <Label>{t('bots.api.use_system_proxy')}</Label>
+          <span className="text-xs text-muted-foreground">{t('bots.api.use_system_proxy_hint')}</span>
+        </div>
+        <Switch
+          checked={value.use_system_proxy}
+          onCheckedChange={(v) => set({ use_system_proxy: v })}
         />
       </div>
 
@@ -352,6 +366,7 @@ export function NativeApiFields({
       {redeemOpen && (
         <RedeemDialog
           baseUrl={value.base_url}
+          useSystemProxy={value.use_system_proxy}
           currentKey={value.key}
           onClose={() => setRedeemOpen(false)}
           onNewKey={(key) => void adoptNewKey(key)}
@@ -361,6 +376,7 @@ export function NativeApiFields({
       {buyOpen && (
         <PurchaseDialog
           baseUrl={value.base_url}
+          useSystemProxy={value.use_system_proxy}
           currentKey={value.key}
           onClose={() => setBuyOpen(false)}
           onNewKey={(key) => void adoptNewKey(key)}
@@ -410,11 +426,13 @@ function Kv({ label, value }: { label: string; value: string }) {
 
 function RedeemDialog({
   baseUrl,
+  useSystemProxy,
   currentKey,
   onClose,
   onNewKey,
 }: {
   baseUrl: string
+  useSystemProxy: boolean
   currentKey: string
   onClose: () => void
   onNewKey: (key: string) => void
@@ -445,6 +463,7 @@ function RedeemDialog({
         code: code.trim(),
         email: email.trim() || undefined,
         renewKey: renew ? currentKey : undefined,
+        useSystemProxy,
       })
       if (resp.key) {
         onNewKey(resp.key)

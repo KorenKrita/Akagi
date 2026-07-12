@@ -57,6 +57,7 @@ tower-service = "0.3"
 # so no crate is needed there.
 [target.'cfg(windows)'.dependencies]
 sysinfo = { version = "0.39.5", default-features = false, features = ["system"] }
+winreg = "0.55"
 
 [patch.crates-io]
 hudsucker = { path = "vendor/hudsucker-0.24.0" }

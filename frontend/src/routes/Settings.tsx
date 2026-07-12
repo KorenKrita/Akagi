@@ -50,7 +50,7 @@ import {
   isKnownDefaultStartUrl,
   platformInfo,
 } from '@/lib/platforms'
-import type { AppConfig, CaptureMode, DetectedBrowser, KitaDebugResponse, PlatformKind } from '@/types'
+import type { AppConfig, CaptureMode, DetectedBrowser, PlatformKind } from '@/types'
 
 export function Settings() {
   const { t, i18n } = useTranslation()
@@ -649,36 +649,6 @@ function AutoplayCard({
       ...draft,
       autoplay: { ...ap, majsoul: { ...ap.majsoul, ...patch } },
     })
-  const showKitaDebug = (info: KitaDebugResponse) => {
-    const detail = [
-      info.reason,
-      `can=${info.canKita}`,
-      `sent=${info.sent}`,
-      `seat=${info.ourSeat ?? '-'}`,
-      `np=${info.numPlayers ?? '-'}`,
-      `legal=${info.legalHasKita}`,
-      `north=${info.handHasNorth}`,
-      `drawn=${info.drawnTile ?? '-'}`,
-      `bridge=${info.hasPacketBridge}`,
-      `page=${info.hasPage}`,
-    ].join(' | ')
-    if (info.sent || info.canKita) toast.success(detail)
-    else toast.warning(detail)
-  }
-  const checkKita = async () => {
-    try {
-      showKitaDebug(await invoke<KitaDebugResponse>('debug_kita_status'))
-    } catch (err) {
-      toast.error(String(err))
-    }
-  }
-  const sendKita = async () => {
-    try {
-      showKitaDebug(await invoke<KitaDebugResponse>('debug_send_kita_packet'))
-    } catch (err) {
-      toast.error(String(err))
-    }
-  }
   return (
     <Card>
       <CardHeader>
@@ -723,14 +693,6 @@ function AutoplayCard({
             </SelectContent>
           </Select>
         </Field>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={checkKita}>
-            {t('settings.autoplay.kita_check')}
-          </Button>
-          <Button type="button" variant="outline" onClick={sendKita}>
-            {t('settings.autoplay.kita_send')}
-          </Button>
-        </div>
         <Field label={t('settings.autoplay.pre_click_delay_min')}>
           <Input
             type="number"

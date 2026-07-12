@@ -120,19 +120,7 @@ export type NativeApiConfig = {
   key: string
   model_4p: string
   model_3p: string
-}
-
-export type KitaDebugResponse = {
-  canKita: boolean
-  sent: boolean
-  hasPage: boolean
-  hasPacketBridge: boolean
-  ourSeat?: number | null
-  numPlayers?: number | null
-  legalHasKita: boolean
-  handHasNorth: boolean
-  drawnTile?: string | null
-  reason: string
+  use_system_proxy: boolean
 }
 
 export type AppConfig = {

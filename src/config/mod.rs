@@ -271,6 +271,7 @@ mod tests {
         cfg.bot.api.key = "test-key-not-real".into();
         cfg.bot.api.model_4p = "4p-model".into();
         cfg.bot.api.model_3p = "3p-model".into();
+        cfg.bot.api.use_system_proxy = true;
 
         let body = toml::to_string_pretty(&cfg).unwrap();
         assert!(
@@ -284,6 +285,7 @@ mod tests {
         assert_eq!(back.bot.api.key, "test-key-not-real");
         assert_eq!(back.bot.api.model_4p, "4p-model");
         assert_eq!(back.bot.api.model_3p, "3p-model");
+        assert!(back.bot.api.use_system_proxy);
         assert!(back.bot.api.is_active());
         assert_eq!(back.bot.api.model_for(3), "3p-model");
         assert_eq!(back.bot.api.model_for(4), "4p-model");

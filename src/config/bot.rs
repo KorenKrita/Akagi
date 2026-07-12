@@ -30,6 +30,8 @@ pub struct NativeApiConfig {
     pub model_4p: String,
     /// Model id for 3-player games. Empty ⇒ server default 3p model.
     pub model_3p: String,
+    /// Use the operating system proxy for online API and key-purchase traffic.
+    pub use_system_proxy: bool,
 }
 
 /// Default inference server. Pre-filled so users don't have to type it; the API
@@ -44,6 +46,7 @@ impl Default for NativeApiConfig {
             key: String::new(),
             model_4p: String::new(),
             model_3p: String::new(),
+            use_system_proxy: false,
         }
     }
 }

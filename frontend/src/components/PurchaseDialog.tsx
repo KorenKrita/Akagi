@@ -31,11 +31,13 @@ import { usePurchaseStore } from '@/stores/purchaseStore'
  */
 export function PurchaseDialog({
   baseUrl,
+  useSystemProxy,
   currentKey,
   onClose,
   onNewKey,
 }: {
   baseUrl: string
+  useSystemProxy: boolean
   currentKey: string
   onClose: () => void
   onNewKey: (key: string) => void
@@ -76,6 +78,7 @@ export function PurchaseDialog({
     setErr(null)
     usePurchaseStore.getState().start({
       baseUrl,
+      useSystemProxy,
       product: selected,
       renewKey: renew && selected.kind === 'onetime' ? currentKey : undefined,
     })

@@ -151,10 +151,15 @@ impl ApiClient {
     /// Build a client for `base_url` authenticating with `key`. A trailing
     /// slash on the URL is tolerated.
     pub fn new(base_url: &str, key: &str) -> Result<Self> {
+        Self::new_with_proxy(base_url, key, false)
+    }
+
+    /// Build a client, optionally honoring the operating system proxy.
+    pub fn new_with_proxy(base_url: &str, key: &str, use_system_proxy: bool) -> Result<Self> {
         Ok(Self {
             base: normalize_base(base_url),
             key: key.trim().to_string(),
-            http: build_http()?,
+            http: build_http(use_system_proxy)?,
         })
     }
 
@@ -239,8 +244,18 @@ pub async fn redeem(
     email: Option<&str>,
     renew_key: Option<&str>,
 ) -> Result<RedeemResponse> {
+    redeem_with_proxy(base_url, code, email, renew_key, false).await
+}
+
+pub async fn redeem_with_proxy(
+    base_url: &str,
+    code: &str,
+    email: Option<&str>,
+    renew_key: Option<&str>,
+    use_system_proxy: bool,
+) -> Result<RedeemResponse> {
     let base = normalize_base(base_url);
-    let http = build_http()?;
+    let http = build_http(use_system_proxy)?;
     let url = format!("{base}/v3/redeem");
     let body = RedeemRequest {
         code: code.trim(),
@@ -261,8 +276,12 @@ pub async fn redeem(
 
 /// `GET /healthz` (no auth) — liveness + per-model queue depth.
 pub async fn health(base_url: &str) -> Result<Health> {
+    health_with_proxy(base_url, false).await
+}
+
+pub async fn health_with_proxy(base_url: &str, use_system_proxy: bool) -> Result<Health> {
     let base = normalize_base(base_url);
-    let http = build_http()?;
+    let http = build_http(use_system_proxy)?;
     let url = format!("{base}/healthz");
     let resp = http.get(&url).send().await.context("GET /healthz")?;
     let resp = check(resp, "health").await?;
@@ -271,11 +290,91 @@ pub async fn health(base_url: &str) -> Result<Health> {
         .context("parse /healthz response")
 }
 
-fn build_http() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .context("build inference-API http client")
+fn build_http(use_system_proxy: bool) -> Result<reqwest::Client> {
+    let builder = reqwest::Client::builder().timeout(REQUEST_TIMEOUT);
+    let builder = configure_proxy(builder, use_system_proxy)?;
+    builder.build().context("build inference-API http client")
+}
+
+pub(crate) fn configure_proxy(
+    builder: reqwest::ClientBuilder,
+    use_system_proxy: bool,
+) -> Result<reqwest::ClientBuilder> {
+    if !use_system_proxy {
+        return Ok(builder.no_proxy());
+    }
+    let Some(proxy) = system_proxy_endpoint() else {
+        return Ok(builder.no_proxy());
+    };
+    Ok(builder.proxy(reqwest::Proxy::all(&proxy).with_context(|| {
+        format!("invalid system proxy endpoint `{proxy}`")
+    })?))
+}
+
+fn system_proxy_endpoint() -> Option<String> {
+    #[cfg(windows)]
+    if let Some(proxy) = windows_system_proxy_endpoint() {
+        return Some(proxy);
+    }
+
+    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+        .into_iter()
+        .find_map(|key| std::env::var(key).ok())
+        .and_then(|v| normalize_proxy_endpoint(&v))
+}
+
+#[cfg(windows)]
+fn windows_system_proxy_endpoint() -> Option<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let settings = hkcu
+        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+        .ok()?;
+    let enabled = settings.get_value::<u32, _>("ProxyEnable").ok()? != 0;
+    if !enabled {
+        return None;
+    }
+    let raw = settings.get_value::<String, _>("ProxyServer").ok()?;
+    parse_windows_proxy_server(&raw).and_then(|v| normalize_proxy_endpoint(&v))
+}
+
+#[cfg(windows)]
+fn parse_windows_proxy_server(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !trimmed.contains(';') && !trimmed.contains('=') {
+        return Some(trimmed.to_string());
+    }
+    let mut fallback = None;
+    for part in trimmed.split(';') {
+        let (scheme, value) = part.split_once('=')?;
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        match scheme.trim().to_ascii_lowercase().as_str() {
+            "https" => return Some(value.to_string()),
+            "http" => fallback = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    fallback
+}
+
+fn normalize_proxy_endpoint(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains("://") {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("http://{trimmed}"))
+    }
 }
 
 pub(crate) fn normalize_base(base_url: &str) -> String {

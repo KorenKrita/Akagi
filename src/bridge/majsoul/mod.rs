@@ -22,7 +22,6 @@ use anyhow::{bail, Context, Result};
 use chrono::Local;
 use parser::{LiqiParser, MessageType, ParsedMessage};
 use prost::Message;
-use rand::Rng;
 use serde_json::{json, Value as JsonValue};
 use std::{collections::HashMap, sync::Arc};
 use tile::{compare_pai, mjai_to_ms, ms_to_mjai};
@@ -1344,7 +1343,7 @@ impl Default for MajsoulBridge {
 }
 
 fn random_timeuse() -> u32 {
-    rand::rng().random_range(6..=32)
+    1
 }
 
 fn self_operation(

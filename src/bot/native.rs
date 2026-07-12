@@ -166,6 +166,7 @@ struct ApiSession {
     client: ApiClient,
     base_url: String,
     key: String,
+    use_system_proxy: bool,
     /// Model id to request; empty ⇒ let the server pick its game default.
     model: String,
 }
@@ -237,22 +238,29 @@ impl NativeBot {
 
         let base_url = cfg.base_url.trim();
         let key = cfg.key.trim();
+        let use_system_proxy = cfg.use_system_proxy;
         let model = cfg.model_for(self.num_players).trim().to_string();
         let unchanged = self
             .api
             .as_ref()
-            .is_some_and(|s| s.base_url == base_url && s.key == key && s.model == model);
+            .is_some_and(|s| {
+                s.base_url == base_url
+                    && s.key == key
+                    && s.use_system_proxy == use_system_proxy
+                    && s.model == model
+            });
         if unchanged {
             return;
         }
 
         let was_off = self.api.is_none();
-        match ApiClient::new(base_url, key) {
+        match ApiClient::new_with_proxy(base_url, key, use_system_proxy) {
             Ok(client) => {
                 self.api = Some(ApiSession {
                     client,
                     base_url: base_url.to_string(),
                     key: key.to_string(),
+                    use_system_proxy,
                     model: model.clone(),
                 });
                 self.breaker.reset();
@@ -877,6 +885,7 @@ mod tests {
             key: key.to_string(),
             model_4p: String::new(),
             model_3p: String::new(),
+            use_system_proxy: false,
         }
     }
 
