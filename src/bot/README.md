@@ -91,6 +91,36 @@ bridge to them.
   `purchase` and `native` tests, so they can assert on the raw request
   (path, `Authorization` header, body) and script the response.
 
+## The `meta.show` card (built-in bot)
+
+The built-in bot attaches a `meta.show` card — the ranked candidates with their
+policy probabilities — to its `BotResponse`. The frontend renders it in the Bot
+Show tile and the suggestion overlay. One rule governs it, and everything in
+`native.rs` that touches `meta` exists to keep it true:
+
+> **The card changes exactly when the bot chose something, and never otherwise.**
+
+Both halves matter, and getting either wrong is invisible in tests but obvious in
+a game.
+
+*Never otherwise*: most events reaching the bot are not decisions — an opponent's
+discard we cannot call, a draw that isn't ours. Those reply `MjaiEvent::None` with
+`meta: None`, and the frontend leaves the card up. If they carried a card, the tile
+would flicker through the whole hand.
+
+*Exactly when it chose*: **declining a call is a choice**, and it must refresh the
+card. `is_decision_point` is the gate — a legal set that is empty, or that contains
+nothing but `Pass`, is not a decision. Anything else is, including a call window
+where the bot passes, and there the pass is ranked as a row of its own against the
+pon/chi/kan it turned down ("Pass 87% / Pon 13%"). That comparison is the most
+useful thing on screen at that moment.
+
+This was got wrong once (#190): the local path suppressed the card whenever the
+top candidate was a pass, so declining a call left the *previous turn's* discard
+advice on screen, reading as live advice for a decision that was already over. The
+cloud-inference path had it right. Both now share the `PASS_LABEL` row, so the card
+reads the same whichever one answered.
+
 ## Adding a new bot
 
 Drop a folder under `mjai_bot/`:

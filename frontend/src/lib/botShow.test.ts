@@ -57,6 +57,20 @@ describe('visibleItems', () => {
     ])
   })
 
+  // The bot's "Pass" row (#190) carries a label and a probability but no tiles —
+  // drawing the declined tile there would read as a discard suggestion. If the
+  // empty-row filter dropped it, a declined call would render as *only* the call
+  // it turned down, i.e. as a recommendation to make it.
+  it('keeps a tile-less row that still has a label', () => {
+    const declined: ShowMeta = {
+      items: [
+        { label: 'Pass', value: '87%' },
+        { label: 'Pon', pais: ['2p', '2p'], value: '13%' },
+      ],
+    }
+    expect(visibleItems(declined).map((i) => i.label)).toEqual(['Pass', 'Pon'])
+  })
+
   it('is unbounded when no limit is given, and safe at the edges', () => {
     expect(visibleItems(show)).toHaveLength(4)
     expect(visibleItems(show, 99)).toHaveLength(4)
