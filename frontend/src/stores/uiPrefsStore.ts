@@ -2,9 +2,13 @@ import { create } from 'zustand'
 
 // Frontend-only UI preferences kept out of the Tauri-owned `AppConfig` since
 // they don't affect any backend behavior. Sidebar collapsed/hover state lives
-// in `useSidebar` (own zustand+persist store ported from shadcn-ui-sidebar);
-// this store is now scale-only.
+// in `useSidebar` (own zustand+persist store ported from shadcn-ui-sidebar).
 const SCALE_KEY = 'akagi.ui.scale'
+
+// One-time flag: has the user seen the dashboard onboarding hint (drag /
+// resize / remove / add tiles)? Deliberately NOT reset by "Reset Layout" —
+// this tracks "has seen the tutorial", not layout state.
+const ONBOARDED_KEY = 'akagi.dashboard.onboarded'
 
 export const SCALE_MIN = 0.7
 export const SCALE_MAX = 1.5
@@ -27,10 +31,22 @@ function loadScale(): number {
   }
 }
 
+function loadOnboarded(): boolean {
+  if (typeof localStorage === 'undefined') return false
+  try {
+    return localStorage.getItem(ONBOARDED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 type UiPrefsStore = {
   scale: number
   setScale: (v: number) => void
   resetScale: () => void
+  /** Whether the dashboard onboarding hint has been dismissed at least once. */
+  dashboardOnboarded: boolean
+  markDashboardOnboarded: () => void
 }
 
 export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
@@ -51,5 +67,14 @@ export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
       /* quota — ignore */
     }
     set({ scale: SCALE_DEFAULT })
+  },
+  dashboardOnboarded: loadOnboarded(),
+  markDashboardOnboarded: () => {
+    try {
+      localStorage.setItem(ONBOARDED_KEY, '1')
+    } catch {
+      /* quota — ignore */
+    }
+    set({ dashboardOnboarded: true })
   },
 }))

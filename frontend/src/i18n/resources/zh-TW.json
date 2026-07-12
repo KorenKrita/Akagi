@@ -570,7 +570,22 @@
   },
   "game": {
     "bot_disabled_title": "Bot 已停用",
-    "bot_disabled_desc": "請至「設定」啟用 Bot 才能取得即時建議。"
+    "bot_disabled_desc": "請至「設定」啟用 Bot 才能取得即時建議。",
+    "onboarding": {
+      "title": "自訂你的版面",
+      "intro": "每個面板都是可移動的區塊，這裡教你把它們排成喜歡的樣子。",
+      "drag_title": "移動區塊",
+      "drag_desc": "拖曳區塊的標題列即可調整位置。",
+      "resize_title": "調整大小",
+      "resize_desc": "拖曳區塊右下角就能放大或縮小。",
+      "delete_title": "移除區塊",
+      "delete_desc": "點區塊右上角的 ✕ 即可隱藏它。",
+      "add_title": "加回區塊",
+      "add_desc": "用工具列的「新增區塊」把隱藏的區塊加回來。",
+      "reset_hint": "改變主意了？隨時可用「重設版面」還原成預設排列。",
+      "got_it": "我知道了",
+      "help_aria": "顯示版面操作提示"
+    }
   },
   "mahjong": {
     "riichi": "立直",
