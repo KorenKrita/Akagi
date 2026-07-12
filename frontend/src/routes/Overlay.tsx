@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
 import { BotShowList } from '@/components/BotShowList'
@@ -29,7 +29,6 @@ export function Overlay() {
   const { t } = useTranslation()
   const [show, setShow] = useState<ShowMeta | null>(null)
   const [cfg, setCfg] = useState<OverlayConfig>(FALLBACK)
-  const rowRef = useRef<HTMLOListElement>(null)
 
   useEffect(() => {
     const unlistens: Array<() => void> = []
@@ -97,11 +96,14 @@ export function Overlay() {
           </button>
         </header>
 
+        {/* min-h-0 is what gives this a definite height to hand down: without it
+            a flex child refuses to shrink below its content, the rows never get
+            a height to split, and the list collapses to hugging its content. */}
         <div className="min-h-0 flex-1 overflow-hidden px-1.5 pb-1.5">
           {items.length === 0 ? (
             <span className="px-1 text-xs text-muted-foreground">{t('overlay.empty')}</span>
           ) : (
-            <BotShowList items={items} containerRef={rowRef} dense />
+            <BotShowList items={items} variant="overlay" />
           )}
         </div>
       </div>

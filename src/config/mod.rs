@@ -12,7 +12,7 @@ pub use bot::{BotConfig, NativeApiConfig};
 pub use capture::{CaptureConfig, CaptureMode, ChromiumConfig};
 pub use general::GeneralConfig;
 pub use logging::LoggingConfig;
-pub use overlay::OverlayConfig;
+pub use overlay::{OverlayConfig, TOP_N_MAX, TOP_N_MIN};
 pub use platform::{Platform, PlatformConfig};
 pub use proxy::ProxyConfig;
 
