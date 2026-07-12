@@ -50,7 +50,19 @@ import {
   isKnownDefaultStartUrl,
   platformInfo,
 } from '@/lib/platforms'
-import type { AppConfig, CaptureMode, DetectedBrowser, PlatformKind } from '@/types'
+import {
+  OVERLAY_OPACITY_MAX,
+  OVERLAY_OPACITY_MIN,
+  OVERLAY_TOP_N_MAX,
+  OVERLAY_TOP_N_MIN,
+} from '@/types'
+import type {
+  AppConfig,
+  CaptureMode,
+  DetectedBrowser,
+  OverlayConfig,
+  PlatformKind,
+} from '@/types'
 
 export function Settings() {
   const { t, i18n } = useTranslation()
@@ -191,6 +203,8 @@ export function Settings() {
 
       <AppearanceCard />
 
+      <OverlayCard draft={draft} setDraft={setDraft} />
+
       <PlatformCard draft={draft} setDraft={setDraft} />
 
       <CaptureCard draft={draft} setDraft={setDraft} />
@@ -292,6 +306,88 @@ export function Settings() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+/** The always-on-top suggestion overlay. Applied on save, like every other
+ *  card here — `update_config` opens, closes, or retunes the window. */
+function OverlayCard({
+  draft,
+  setDraft,
+}: {
+  draft: AppConfig
+  setDraft: (c: AppConfig) => void
+}) {
+  const { t } = useTranslation()
+  const o = draft.overlay
+  const patch = (p: Partial<OverlayConfig>) =>
+    setDraft({ ...draft, overlay: { ...o, ...p } })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('settings.overlay')}</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid gap-1.5">
+          <Toggle
+            label={t('settings.overlay_enabled')}
+            value={o.enabled}
+            onChange={(v) => patch({ enabled: v })}
+          />
+          <span className="text-xs text-muted-foreground">
+            {t('settings.overlay_enabled_hint')}
+          </span>
+        </div>
+
+        <div className="grid gap-1.5">
+          <div className="flex items-center justify-between">
+            <Label>{t('settings.overlay_top_n')}</Label>
+            <span className="w-12 text-right font-mono text-sm tabular-nums">{o.top_n}</span>
+          </div>
+          <input
+            type="range"
+            min={OVERLAY_TOP_N_MIN}
+            max={OVERLAY_TOP_N_MAX}
+            step={1}
+            value={o.top_n}
+            onChange={(e) => patch({ top_n: parseInt(e.target.value, 10) })}
+            className="w-full accent-primary"
+            aria-label={t('settings.overlay_top_n')}
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <div className="flex items-center justify-between">
+            <Label>{t('settings.overlay_opacity')}</Label>
+            <span className="w-12 text-right font-mono text-sm tabular-nums">
+              {Math.round(o.opacity * 100)}%
+            </span>
+          </div>
+          <input
+            type="range"
+            min={OVERLAY_OPACITY_MIN}
+            max={OVERLAY_OPACITY_MAX}
+            step={0.05}
+            value={o.opacity}
+            onChange={(e) => patch({ opacity: parseFloat(e.target.value) })}
+            className="w-full accent-primary"
+            aria-label={t('settings.overlay_opacity')}
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <Toggle
+            label={t('settings.overlay_always_on_top')}
+            value={o.always_on_top}
+            onChange={(v) => patch({ always_on_top: v })}
+          />
+          <span className="text-xs text-muted-foreground">
+            {t('settings.overlay_always_on_top_hint')}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

@@ -13,7 +13,9 @@ import { History } from '@/routes/History'
 import { Logs } from '@/routes/Logs'
 import { Settings } from '@/routes/Settings'
 import { Setup } from '@/routes/Setup'
+import { Overlay } from '@/routes/Overlay'
 import { HAS_TAURI, invoke } from '@/lib/tauri'
+import { isOverlayWindow } from '@/lib/window'
 import type { AppConfig } from '@/types'
 
 // Loader on the protected branch: bounce to /setup when first_run_completed
@@ -48,8 +50,24 @@ const router = createHashRouter([
   },
 ])
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <RouterProvider router={router} />
-  </StrictMode>,
-)
+// Both windows load this same bundle; the window label decides which root gets
+// mounted. The overlay skips the router entirely — it has exactly one screen,
+// and a hash route would only invite the sidebar/statusbar layout to tag along.
+const root = createRoot(document.getElementById('root')!)
+
+if (isOverlayWindow()) {
+  // Lets index.css punch the page background out to transparent, so only the
+  // overlay's own card is drawn over the game.
+  document.documentElement.classList.add('overlay-window')
+  root.render(
+    <StrictMode>
+      <Overlay />
+    </StrictMode>,
+  )
+} else {
+  root.render(
+    <StrictMode>
+      <RouterProvider router={router} />
+    </StrictMode>,
+  )
+}

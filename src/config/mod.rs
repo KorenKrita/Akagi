@@ -3,6 +3,7 @@ mod bot;
 mod capture;
 mod general;
 mod logging;
+mod overlay;
 mod platform;
 mod proxy;
 
@@ -11,6 +12,7 @@ pub use bot::{BotConfig, NativeApiConfig};
 pub use capture::{CaptureConfig, CaptureMode, ChromiumConfig};
 pub use general::GeneralConfig;
 pub use logging::LoggingConfig;
+pub use overlay::OverlayConfig;
 pub use platform::{Platform, PlatformConfig};
 pub use proxy::ProxyConfig;
 
@@ -27,6 +29,7 @@ pub struct AppConfig {
     pub bot: BotConfig,
     pub capture: CaptureConfig,
     pub autoplay: AutoplayConfig,
+    pub overlay: OverlayConfig,
 }
 
 enum ResolvedPath {

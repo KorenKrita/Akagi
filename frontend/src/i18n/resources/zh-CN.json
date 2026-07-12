@@ -345,7 +345,14 @@
       "click_hold": "按住时间 (ms)",
       "dealer_first_discard_extra_delay": "庄家首打额外延迟 (ms)",
       "dealer_first_discard_extra_delay_hint": "庄家被发 14 张牌时雀魂会播放整理手牌动画，期间的点击会被吃掉。约 2000ms 可覆盖大多数设备。"
-    }
+    },
+    "overlay": "建议悬浮窗",
+    "overlay_enabled": "显示悬浮窗",
+    "overlay_enabled_hint": "一个始终置顶的小窗口，浮在游戏画面上显示 AI 的建议打牌。可以拖动到任意位置，也可以从边缘调整大小。",
+    "overlay_top_n": "显示几个建议",
+    "overlay_opacity": "不透明度",
+    "overlay_always_on_top": "保持在其他窗口之上",
+    "overlay_always_on_top_hint": "如果想把悬浮窗放到第二个显示器，可以关掉这个选项。另请注意：游戏若使用“独占全屏”，会盖住所有置顶窗口，请改用无边框或窗口模式。"
   },
   "setup": {
     "title": "Akagi 设置",
@@ -690,5 +697,9 @@
   "install_overlay": {
     "title": "安装中…",
     "warning": "安装完成前，请勿关闭程序或前往对局。"
+  },
+  "overlay": {
+    "close": "关闭悬浮窗",
+    "empty": "等待 AI 建议…"
   }
 }

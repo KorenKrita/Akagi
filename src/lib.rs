@@ -111,6 +111,7 @@ pub fn run() {
     let bot_enabled = cfg.bot.enabled;
     let proxy_enabled = cfg.proxy.enabled;
     let autoplay_enabled = cfg.autoplay.enabled;
+    let overlay_cfg = cfg.overlay.clone();
 
     // Game-state tracker handle is built up front so AppState can carry
     // the Arc, but the consumer task is spawned inside `.setup()` once
@@ -131,7 +132,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // The overlay's geometry is still saved and restored, but not
+                // by the plugin's automatic pass: that restores `StateFlags::all()`,
+                // which would put decorations back on a deliberately frameless
+                // window. `ipc::overlay::open` restores position+size itself.
+                .skip_initial_state(ipc::overlay::LABEL)
+                .build(),
+        )
         .invoke_handler(crate::ipc_handlers!())
         .setup({
             // AppState constructed *inside* setup() so the python+uv
@@ -175,6 +184,11 @@ pub fn run() {
                 );
 
                 ipc::install(app.handle(), state.clone())?;
+
+                // Reopen the suggestion overlay if it was left enabled. Safe
+                // before any game data exists — it renders its empty state and
+                // fills in on the first `bot-response`.
+                ipc::overlay::reconcile(app.handle(), &overlay_cfg);
 
                 // Spawn tracker + analysis loops inside the Tauri Tokio
                 // runtime — `lib::run` itself is sync.

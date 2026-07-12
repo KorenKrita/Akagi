@@ -345,7 +345,14 @@
       "click_hold": "Click hold (ms)",
       "dealer_first_discard_extra_delay": "Dealer first-discard extra delay (ms)",
       "dealer_first_discard_extra_delay_hint": "Mahjong Soul plays a hand-sort animation when the dealer is dealt all 14 tiles. Clicks during the animation are dropped. ~2000ms covers most devices."
-    }
+    },
+    "overlay": "Suggestion overlay",
+    "overlay_enabled": "Show overlay window",
+    "overlay_enabled_hint": "A small always-on-top window that floats over the game and shows the bot's top suggestions. Drag it anywhere; resize it from its edges.",
+    "overlay_top_n": "Suggestions shown",
+    "overlay_opacity": "Opacity",
+    "overlay_always_on_top": "Keep above other windows",
+    "overlay_always_on_top_hint": "Turn this off to park the overlay on a second monitor. Note that a game running in exclusive fullscreen draws over every always-on-top window — use borderless or windowed mode."
   },
   "setup": {
     "title": "Akagi Setup",
@@ -690,5 +697,9 @@
   "install_overlay": {
     "title": "Installing…",
     "warning": "Please don’t close the app or start a game until the installation finishes."
+  },
+  "overlay": {
+    "close": "Close overlay",
+    "empty": "Waiting for the bot…"
   }
 }

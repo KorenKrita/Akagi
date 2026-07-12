@@ -323,6 +323,20 @@
     }
 }
 
+/* ---- overlay window ----
+ * The suggestion overlay is a transparent, frameless window: the only surface
+ * that may be painted is its own rounded card, so the page behind it has to be
+ * punched out. `main.tsx` stamps `.overlay-window` on <html> for that window
+ * only. Unlayered, so it beats the `@layer base` body background above.
+ */
+html.overlay-window,
+html.overlay-window body,
+html.overlay-window #root {
+  background: transparent;
+  /* Never let the overlay's own scrollbars appear over the game. */
+  overflow: hidden;
+}
+
 /* ---- react-grid-layout placeholder + handle skin ----
  * Uses var(--primary) so palette + light/dark swaps cascade automatically.
  */

@@ -17,6 +17,7 @@ use crate::game_state::snapshot::GameStateSnapshot;
 use crate::ipc::capture_supervisor::{
     restart_capture as restart_capture_inner, spawn_capture_supervisor,
 };
+use crate::ipc::overlay;
 use crate::ipc::state::AppState;
 use crate::schema::{
     BotInfo, BotSettings, GameRecord, HistoryEvent, HistoryEventLog, HistoryFilter, HoraScoreInfo,
@@ -26,7 +27,7 @@ use crate::schema::{
 use crate::util::resolve_dir;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 /// Returns `true` exactly once per process the first time `bot_enabled`
 /// is observed as `true` here. Side-effect on success: flips `flag`
@@ -82,7 +83,11 @@ pub async fn get_config(state: State<'_, AppState>) -> CmdResult<AppConfig> {
 /// `bot.enabled` back to false still requires a relaunch to actually
 /// stop it).
 #[tauri::command]
-pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn update_config(
+    new_config: AppConfig,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<()> {
     persist_config(&new_config, &state.config_path).map_err(|e| e.to_string())?;
 
     // Snapshot the *previous* capture-relevant fields before we overwrite,
@@ -97,7 +102,11 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
     let new_platform = new_config.platform.kind;
     let bot_now_enabled = new_config.bot.enabled;
     let autoplay_now_enabled = new_config.autoplay.enabled;
+    let new_overlay = new_config.overlay.clone();
     *state.config.write().await = new_config;
+
+    // Open / close / retune the overlay window to match what was just saved.
+    overlay::reconcile(&app, &new_overlay);
 
     // Sync the history recorder's platform tag immediately. Subsequent
     // finalised games are stamped with the new tag; the in-flight buffer
@@ -185,6 +194,29 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
             }
         });
     }
+    Ok(())
+}
+
+/// Flip `overlay.enabled` and apply it, without going through the Settings
+/// page's whole-config save.
+///
+/// The overlay's own close button is the reason this exists: closing the
+/// window has to *stay* closed across restarts, and the overlay webview has no
+/// business round-tripping (and re-persisting) an entire `AppConfig` it never
+/// loaded.
+#[tauri::command]
+pub async fn set_overlay_enabled(
+    enabled: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<()> {
+    let cfg = {
+        let mut cfg = state.config.write().await;
+        cfg.overlay.enabled = enabled;
+        cfg.clone()
+    };
+    persist_config(&cfg, &state.config_path).map_err(|e| e.to_string())?;
+    overlay::reconcile(&app, &cfg.overlay);
     Ok(())
 }
 
@@ -1451,6 +1483,7 @@ macro_rules! ipc_handlers {
         ::tauri::generate_handler![
             $crate::ipc::commands::get_config,
             $crate::ipc::commands::update_config,
+            $crate::ipc::commands::set_overlay_enabled,
             $crate::ipc::commands::list_bots,
             $crate::ipc::commands::set_active_bot,
             $crate::ipc::commands::get_bot_settings,
