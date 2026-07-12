@@ -14,8 +14,10 @@ pub const OPACITY_MAX: f64 = 1.0;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OverlayConfig {
-    /// Open the overlay window. Persisted, so an overlay left open is
-    /// reopened on the next launch.
+    /// Open the overlay window. On by default — the suggestions are the point
+    /// of the app, and having to go find a setting to see them over the game is
+    /// a worse first run than one extra window you can close with its × button.
+    /// Persisted, so both the closing and the leaving-open stick.
     pub enabled: bool,
     /// How many Bot Show rows to render.
     pub top_n: usize,
@@ -30,7 +32,7 @@ pub struct OverlayConfig {
 impl Default for OverlayConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             top_n: 3,
             opacity: 0.95,
             always_on_top: true,
@@ -63,13 +65,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_a_closed_three_row_overlay() {
+    fn defaults_are_an_open_three_row_overlay() {
         let c = OverlayConfig::default();
-        assert!(!c.enabled, "overlay must be opt-in");
+        assert!(c.enabled, "overlay is on out of the box");
         assert_eq!(c.top_n, 3);
         assert!(c.always_on_top);
         assert_eq!(c.clamped_top_n(), 3);
         assert_eq!(c.clamped_opacity(), 0.95);
+    }
+
+    /// Upgrading users have a `config.toml` with no `[overlay]` section, so the
+    /// default is what they get — and it has to be the same "on" the docs and
+    /// the Settings toggle promise, not a silent opt-out.
+    #[test]
+    fn legacy_config_gets_the_overlay_switched_on() {
+        let cfg: crate::config::AppConfig = toml::from_str("[bot]\nenabled = true\n").unwrap();
+        assert!(cfg.overlay.enabled);
     }
 
     /// A hand-edited `config.toml` must not be able to produce a zero-row or

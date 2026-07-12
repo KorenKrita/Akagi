@@ -592,7 +592,11 @@
       "reset_hint": "改变主意了？随时可用“重置布局”还原为默认排列。",
       "got_it": "我知道了",
       "help_aria": "显示面板操作提示"
-    }
+    },
+    "overlay": "悬浮窗",
+    "overlay_show": "显示建议悬浮窗",
+    "overlay_hide": "隐藏建议悬浮窗",
+    "overlay_toggle_failed": "无法切换悬浮窗"
   },
   "mahjong": {
     "riichi": "立直",

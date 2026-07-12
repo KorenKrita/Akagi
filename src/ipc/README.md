@@ -35,12 +35,13 @@ via `tauri::State<AppState>`) and spawns one forwarder task per bus.
 | `bot-status`    | `schema::BotStatus`                | `BotManager` → `BotStatusBus`      |
 | `proxy-status`  | `schema::ProxyStatus`              | `proxy_supervisor` → `ProxyStatusBus` |
 | `notify`        | `schema::Notification`             | any subsystem → `NotifyBus`        |
-| `overlay-config`| `config::OverlayConfig`            | `overlay::reconcile` → the `overlay` window only |
+| `overlay-config`| `config::OverlayConfig`            | `overlay::reconcile` → every webview |
 
 Every event above is broadcast to **all** webviews, not just the main one.
 That is what lets the overlay window (see below) render suggestions off
-`bot-response` without any plumbing of its own. `overlay-config` is the lone
-exception: it is `emit_to`'d the overlay label.
+`bot-response` without any plumbing of its own — and what lets the main
+window's Game-page toggle stay in sync with an overlay that was closed from
+its own × button.
 
 Frontend subscribes once at app start:
 
@@ -83,8 +84,17 @@ into a toast.
 always-on-top card that floats over the game client and renders the bot's
 top-N suggestions.
 
-Three things are worth knowing before touching it:
+Four things are worth knowing before touching it:
 
+- **Window creation must happen on the main thread.** On Windows,
+  `WebviewWindowBuilder::build()` called from a Tokio worker — which is where
+  every `#[tauri::command] async fn` body runs — **deadlocks the GUI**: it asks
+  the event loop to create the window, then blocks the caller waiting for a
+  reply the main thread cannot deliver. There is no panic, no error, and no log
+  line; background tasks keep running, so the logs look healthy while the UI is
+  frozen solid. `overlay::reconcile` therefore posts its work through
+  `run_on_main_thread` and returns immediately. Anything you add that touches
+  the window belongs inside `overlay::apply`, not in the command.
 - **Both windows load the same `index.html`.** The frontend branches on
   `getCurrentWindow().label` (see `frontend/src/main.tsx`) to decide whether to
   mount the router or the overlay root. Window identity therefore lives in
@@ -99,9 +109,10 @@ Three things are worth knowing before touching it:
   registers the plugin with `.skip_initial_state(ipc::overlay::LABEL)` and
   `overlay::open` restores position + size itself.
 
-Lifecycle is driven entirely by `config.overlay.enabled` through
-`overlay::reconcile`, which is idempotent and called from three places: app
-startup, `update_config`, and `set_overlay_enabled`.
+Lifecycle is driven entirely by `config.overlay.enabled` (default: **on**)
+through `overlay::reconcile`, which is idempotent and called from three places:
+app startup, `update_config`, and `set_overlay_enabled`. The last is what the
+Game page's toolbar toggle and the overlay's own × button both call.
 
 ## Adding a new event
 

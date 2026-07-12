@@ -592,7 +592,11 @@
       "reset_hint": "元に戻したいときは「レイアウトをリセット」でいつでも初期配置に戻せます。",
       "got_it": "OK",
       "help_aria": "ボードのヒントを表示"
-    }
+    },
+    "overlay": "オーバーレイ",
+    "overlay_show": "推奨オーバーレイを表示",
+    "overlay_hide": "推奨オーバーレイを非表示",
+    "overlay_toggle_failed": "オーバーレイを切り替えられませんでした"
   },
   "mahjong": {
     "riichi": "リーチ",

@@ -592,7 +592,11 @@
       "reset_hint": "Changed your mind? \"Reset Layout\" restores the default arrangement anytime.",
       "got_it": "Got it",
       "help_aria": "Show board tips"
-    }
+    },
+    "overlay": "Overlay",
+    "overlay_show": "Show the suggestion overlay",
+    "overlay_hide": "Hide the suggestion overlay",
+    "overlay_toggle_failed": "Could not toggle the overlay"
   },
   "mahjong": {
     "riichi": "Riichi",

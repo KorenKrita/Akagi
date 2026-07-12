@@ -91,7 +91,6 @@ https://github.com/user-attachments/assets/d5bc6ff6-6560-4365-ae55-660c9a522790
 - [Supported Platforms](#supported-platforms)
 - [Quick Start](#quick-start)
 - [Bots](#bots)
-- [Suggestion Overlay](#suggestion-overlay)
 - [Game History](#game-history)
 - [Logs &amp; Diagnostics](#logs--diagnostics)
 - [Troubleshooting](#troubleshooting)
@@ -116,10 +115,6 @@ https://github.com/user-attachments/assets/d5bc6ff6-6560-4365-ae55-660c9a522790
 - **Live HUD** — shanten, waits, agari rate, tenpai rate, per-opponent
   deal-in risk, suggested attack/defence discard. Draggable, resizable
   UI layout.
-- **Suggestion overlay** — a small always-on-top window that floats over
-  the game and lists the bot's top discards, so you never have to
-  alt-tab away from the table to read them. Drag it anywhere, resize it,
-  and it comes back where you left it.
 - **Two capture modes**
   - **MITM proxy** (default) — system-wide; needs a one-time CA trust.
   - **Chromium** — Akagi launches a controlled Chromium-family browser
@@ -259,40 +254,6 @@ right one when the game starts, based on the table's player count.
 Beyond these two backends, Akagi can also run **external mjai bots** as
 subprocesses. That's an extension point for developers rather than a step
 anyone needs — see [mjai Bots (plugin interface)](#mjai-bots-plugin-interface).
-
----
-
-## Suggestion Overlay
-
-Akagi's suggestions normally live in its main window — which the game
-covers up the moment you start playing. The **suggestion overlay** is a
-small window that floats *on top of the game* and lists the bot's top
-discards, so you never have to alt-tab away from the table.
-
-Turn it on in **Settings → Suggestion overlay → Show overlay window**,
-then press **Save**. It appears immediately.
-
-- **Move it** — drag it with the mouse, anywhere on screen.
-- **Resize it** — drag its edges.
-- **Close it** — click the **×** in its top-right corner. To bring it
-  back, re-enable it in Settings.
-
-Akagi remembers where you put it and how big you made it, and reopens it
-there the next time you start the app.
-
-Three settings tune it:
-
-| Setting | What it does |
-|---|---|
-| **Suggestions shown** | How many candidate discards to list (1–5). |
-| **Opacity** | How see-through the overlay is, so you can still read the table underneath it. |
-| **Keep above other windows** | On by default. Turn it off if you'd rather park the overlay on a second monitor, where being topmost only gets in the way. |
-
-> **The overlay doesn't appear over my game.**
-> Your game is almost certainly running in *exclusive fullscreen*, which
-> draws over every always-on-top window on Windows — this is an OS-level
-> rule, not something Akagi can work around. Switch the game to
-> **borderless** or **windowed** mode and the overlay will show up.
 
 ---
 

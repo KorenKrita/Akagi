@@ -16,6 +16,8 @@ import type { AppConfig, BotResponse, OverlayConfig, ShowMeta } from '@/types'
 // a mousedown anywhere lands on the drag region and moves the window — except
 // the close button, which opts back in.
 
+// Only used if `get_config` fails — a blank overlay would be worse than a
+// default-looking one. Mirrors `OverlayConfig::default()`.
 const FALLBACK: OverlayConfig = {
   enabled: true,
   top_n: 3,

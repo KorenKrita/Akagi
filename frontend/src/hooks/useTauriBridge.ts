@@ -11,6 +11,7 @@ import type {
   MahgenView,
   MjaiEvent,
   Notification,
+  OverlayConfig,
   Snapshot,
 } from '@/types'
 import { useGameStore } from '@/stores/gameStore'
@@ -115,6 +116,13 @@ export function useTauriBridge() {
 
     listen<BotResponse>('bot-response', (r) => {
       useNotifyStore.getState().pushResponse(r)
+    }).then((u) => unlistens.push(u))
+
+    // The overlay window can turn itself off (its × button). Mirror that back
+    // into the config store so the Game page's toggle doesn't keep claiming the
+    // overlay is open.
+    listen<OverlayConfig>('overlay-config', (o) => {
+      useConfigStore.getState().setOverlay(o)
     }).then((u) => unlistens.push(u))
 
     listen<HistoryEvent>('history-recorded', (ev) => {

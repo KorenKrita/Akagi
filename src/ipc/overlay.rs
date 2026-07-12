@@ -28,8 +28,9 @@ use tracing::{info, warn};
 /// with no permission to `listen()`, i.e. permanently blank.
 pub const LABEL: &str = "overlay";
 
-/// Event carrying a fresh [`OverlayConfig`] to the overlay webview, so
-/// top-N / opacity edits in Settings apply without a reopen.
+/// Event carrying a fresh [`OverlayConfig`] to every webview: the overlay reads
+/// top-N / opacity off it, and the main window uses it to keep its own toggles
+/// in sync when the overlay is closed from the overlay's own × button.
 pub const CONFIG_EVENT: &str = "overlay-config";
 
 /// Position and size are the only state worth restoring. The plugin's default
@@ -91,7 +92,26 @@ pub fn close<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
 /// Bring the live window in line with `cfg`: open it, close it, or leave it
 /// alone. Idempotent — safe to call on every config save.
+///
+/// **This must run on the main thread, and it does not block.** On Windows,
+/// `WebviewWindowBuilder::build()` called from a Tokio worker — which is where
+/// every `#[tauri::command] async fn` runs — deadlocks: it asks the event loop
+/// to create the window and then blocks the caller waiting for a reply the main
+/// thread cannot deliver. The whole GUI freezes, with no error and no log line,
+/// while background tasks carry on as if nothing happened. So the work is
+/// posted to the event loop and `reconcile` returns immediately.
+///
+/// Startup goes through here too even though `lib::run`'s `setup` closure is
+/// already on the main thread: one path, one set of rules.
 pub fn reconcile<R: Runtime>(app: &AppHandle<R>, cfg: &OverlayConfig) {
+    let handle = app.clone();
+    let cfg = cfg.clone();
+    if let Err(e) = app.run_on_main_thread(move || apply(&handle, &cfg)) {
+        warn!("overlay: could not schedule reconcile on the main thread: {e}");
+    }
+}
+
+fn apply<R: Runtime>(app: &AppHandle<R>, cfg: &OverlayConfig) {
     let result = if cfg.enabled {
         open(app, cfg)
     } else {
@@ -101,9 +121,10 @@ pub fn reconcile<R: Runtime>(app: &AppHandle<R>, cfg: &OverlayConfig) {
         warn!("overlay: reconcile failed: {e}");
         return;
     }
-    // Push the (possibly edited) top-N / opacity to a window that is staying
-    // open. Emitting to a closed label is a no-op, so this needs no guard.
-    if let Err(e) = app.emit_to(LABEL, CONFIG_EVENT, cfg) {
+    // Broadcast, not `emit_to(LABEL, …)`: the overlay needs the new top-N /
+    // opacity, and the main window needs it to keep its toggles in sync with an
+    // overlay that was closed from its own × button.
+    if let Err(e) = app.emit(CONFIG_EVENT, cfg) {
         warn!("overlay: could not emit {CONFIG_EVENT}: {e}");
     }
 }

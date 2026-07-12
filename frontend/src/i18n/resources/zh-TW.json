@@ -592,7 +592,11 @@
       "reset_hint": "改變主意了？隨時可用「重設版面」還原成預設排列。",
       "got_it": "我知道了",
       "help_aria": "顯示版面操作提示"
-    }
+    },
+    "overlay": "懸浮視窗",
+    "overlay_show": "顯示建議懸浮視窗",
+    "overlay_hide": "隱藏建議懸浮視窗",
+    "overlay_toggle_failed": "無法切換懸浮視窗"
   },
   "mahjong": {
     "riichi": "立直",
