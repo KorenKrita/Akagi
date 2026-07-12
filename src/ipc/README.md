@@ -114,6 +114,20 @@ through `overlay::reconcile`, which is idempotent and called from three places:
 app startup, `update_config`, and `set_overlay_enabled`. The last is what the
 Game page's toolbar toggle and the overlay's own × button both call.
 
+**The overlay must never outlive the app.** Tauri exits when *all* windows
+close, and the overlay counts as one — so `lib.rs` hooks the main window's
+`CloseRequested` and closes the overlay there, letting Tauri exit on its own
+once no windows remain (rather than `exit(0)`, which would skip the
+window-state save and the rest of the shutdown path). Skipping this is not a
+cosmetic bug: the overlay is `skip_taskbar` and undecorated, so a lingering one
+is a card floating over the desktop with no taskbar entry, no title bar, and
+nothing that leads back to the headless process still running behind it (#192).
+
+Note the asymmetry that closing implies: closing the overlay's *window* on
+shutdown must **not** touch `overlay.enabled`, or quitting Akagi would silently
+disable the feature. Only a deliberate × (which routes through
+`set_overlay_enabled`) does that.
+
 ## Adding a new event
 
 1. Define the payload in `crate::schema::ipc` (Serialize + Deserialize).
