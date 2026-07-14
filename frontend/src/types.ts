@@ -123,8 +123,23 @@ export type NativeApiConfig = {
   use_system_proxy: boolean
 }
 
+/** The always-on-top suggestion overlay. Mirrors `crate::config::OverlayConfig`. */
+export type OverlayConfig = {
+  enabled: boolean
+  top_n: number
+  opacity: number
+  always_on_top: boolean
+}
+
+/** Bounds enforced by `crate::config::overlay` — mirrored so the UI can't
+ *  offer a value the backend would silently clamp. */
+export const OVERLAY_TOP_N_MIN = 1
+export const OVERLAY_TOP_N_MAX = 5
+export const OVERLAY_OPACITY_MIN = 0.3
+export const OVERLAY_OPACITY_MAX = 1.0
+
 export type AppConfig = {
-  general: { first_run_completed: boolean }
+  general: { first_run_completed: boolean; developer_mode: boolean }
   logging: { dir: string; level: string; all_level: string }
   platform: { kind: PlatformKind }
   proxy: {
@@ -145,6 +160,7 @@ export type AppConfig = {
   }
   capture: CaptureConfig
   autoplay: AutoplayConfig
+  overlay: OverlayConfig
 }
 
 // ---------- Built-in bot cloud inference (native API) ----------

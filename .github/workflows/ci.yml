@@ -1,10 +1,18 @@
 name: CI
 
-# Fast PR gate: lint + test on Linux only. The full cross-platform build
-# and packaging lives in release.yml (tag-triggered). The goal here is to
-# catch fmt / clippy / compile / test / frontend breakage before merge —
-# `cargo test --lib` alone misses integration-test compile breaks, so we
-# also compile every test target.
+# Fast PR gate: lint + test on Linux, plus a compile-only check on the other
+# two release targets. The full cross-platform build and packaging still lives
+# in release.yml (tag-triggered). The goal here is to catch fmt / clippy /
+# compile / test / frontend breakage before merge — `cargo test --lib` alone
+# misses integration-test compile breaks, so we also compile every test target.
+#
+# The macOS/Windows check exists because Linux alone is not enough to prove the
+# code compiles: an API can be `cfg`'d out on another platform and still build
+# clean here. That is not hypothetical — `WebviewWindowBuilder::transparent` is
+# gated behind Tauri's `macos-private-api` feature on macOS, so the overlay
+# window compiled fine on Linux, passed every PR, and only blew up when the
+# v3.3.2 tag reached release.yml, which is the first thing that ever compiles
+# for macOS.
 
 on:
   pull_request:
@@ -68,6 +76,37 @@ jobs:
       # spawn_with_command arity break in tests/example_bot.rs.
       - name: build all test targets
         run: cargo test --no-run --all-targets
+
+  # Compile-only on the other two release targets. No tests, no packaging — the
+  # point is purely "does this platform's cfg path still build", which is the
+  # one thing the Linux gate above structurally cannot tell us. `macos-14` is
+  # arm64, matching release.yml's `aarch64-apple-darwin`.
+  compile:
+    name: Compile (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # build.rs runs prost-build on liqi.proto and needs protoc on PATH.
+      - name: Setup protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # --all-targets so the bin (and its `generate_context!`) is compiled too,
+      # not just the lib.
+      - name: cargo check
+        run: cargo check --all-targets --locked
 
   frontend:
     name: Frontend (lint + build)

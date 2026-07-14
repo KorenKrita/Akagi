@@ -35,6 +35,13 @@ via `tauri::State<AppState>`) and spawns one forwarder task per bus.
 | `bot-status`    | `schema::BotStatus`                | `BotManager` → `BotStatusBus`      |
 | `proxy-status`  | `schema::ProxyStatus`              | `proxy_supervisor` → `ProxyStatusBus` |
 | `notify`        | `schema::Notification`             | any subsystem → `NotifyBus`        |
+| `overlay-config`| `config::OverlayConfig`            | `overlay::reconcile` → every webview |
+
+Every event above is broadcast to **all** webviews, not just the main one.
+That is what lets the overlay window (see below) render suggestions off
+`bot-response` without any plumbing of its own — and what lets the main
+window's Game-page toggle stay in sync with an overlay that was closed from
+its own × button.
 
 Frontend subscribes once at app start:
 
@@ -54,7 +61,8 @@ without waiting for the next event.
 | Command          | Args                  | Returns                  | Notes                        |
 |------------------|-----------------------|--------------------------|------------------------------|
 | `get_config`     | —                     | `AppConfig`              | Live read of in-memory config|
-| `update_config`  | `new_config`          | `()`                     | Persists to TOML; subsystems do **not** auto-restart |
+| `update_config`  | `new_config`          | `()`                     | Persists to TOML; subsystems do **not** auto-restart. Does reconcile the overlay window against `overlay.*` |
+| `set_overlay_enabled` | `enabled`        | `()`                     | Flips + persists `overlay.enabled` and opens/closes the window. Exists so the overlay's own close button doesn't have to round-trip a whole `AppConfig` |
 | `list_bots`      | —                     | `Vec<BotInfo>`           | Re-scans `cfg.bot.dir`       |
 | `set_active_bot` | `mode, name`          | `()`                     | Updates + persists `bot.active_4p` or `bot.active_3p` (`mode` ∈ `"4p"` / `"3p"`); empty `name` clears the slot |
 | `install_bot_from_github` | `repo, asset_glob?, name?` | `BotInfo`     | Download + extract; runs `uv sync` post-install if a runtime is available |
@@ -69,6 +77,56 @@ without waiting for the next event.
 
 Errors are returned as `String` so the frontend can put them straight
 into a toast.
+
+## Windows
+
+`overlay.rs` owns the app's second window: a frameless, transparent,
+always-on-top card that floats over the game client and renders the bot's
+top-N suggestions.
+
+Four things are worth knowing before touching it:
+
+- **Window creation must happen on the main thread.** On Windows,
+  `WebviewWindowBuilder::build()` called from a Tokio worker — which is where
+  every `#[tauri::command] async fn` body runs — **deadlocks the GUI**: it asks
+  the event loop to create the window, then blocks the caller waiting for a
+  reply the main thread cannot deliver. There is no panic, no error, and no log
+  line; background tasks keep running, so the logs look healthy while the UI is
+  frozen solid. `overlay::reconcile` therefore posts its work through
+  `run_on_main_thread` and returns immediately. Anything you add that touches
+  the window belongs inside `overlay::apply`, not in the command.
+- **Both windows load the same `index.html`.** The frontend branches on
+  `getCurrentWindow().label` (see `frontend/src/main.tsx`) to decide whether to
+  mount the router or the overlay root. Window identity therefore lives in
+  `overlay::LABEL` and nowhere else — no magic URLs to keep in sync.
+- **The label needs a capability.** `capabilities/overlay.json` is scoped to
+  `windows: ["overlay"]`. Rename `overlay::LABEL` without renaming that and the
+  overlay webview silently loses permission to `listen()`, i.e. renders blank
+  forever with no error.
+- **`tauri-plugin-window-state` must skip it.** The plugin's automatic restore
+  applies `StateFlags::all()`, which includes `DECORATIONS` — it would put a
+  title bar back onto a deliberately frameless window. `lib.rs` therefore
+  registers the plugin with `.skip_initial_state(ipc::overlay::LABEL)` and
+  `overlay::open` restores position + size itself.
+
+Lifecycle is driven entirely by `config.overlay.enabled` (default: **on**)
+through `overlay::reconcile`, which is idempotent and called from three places:
+app startup, `update_config`, and `set_overlay_enabled`. The last is what the
+Game page's toolbar toggle and the overlay's own × button both call.
+
+**The overlay must never outlive the app.** Tauri exits when *all* windows
+close, and the overlay counts as one — so `lib.rs` hooks the main window's
+`CloseRequested` and closes the overlay there, letting Tauri exit on its own
+once no windows remain (rather than `exit(0)`, which would skip the
+window-state save and the rest of the shutdown path). Skipping this is not a
+cosmetic bug: the overlay is `skip_taskbar` and undecorated, so a lingering one
+is a card floating over the desktop with no taskbar entry, no title bar, and
+nothing that leads back to the headless process still running behind it (#192).
+
+Note the asymmetry that closing implies: closing the overlay's *window* on
+shutdown must **not** touch `overlay.enabled`, or quitting Akagi would silently
+disable the feature. Only a deliberate × (which routes through
+`set_overlay_enabled`) does that.
 
 ## Adding a new event
 

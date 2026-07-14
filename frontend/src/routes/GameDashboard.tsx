@@ -11,11 +11,14 @@ import {
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 
+import { HelpCircle } from 'lucide-react'
+
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/sonner'
 import { useLayoutStore, visibleTilesFor } from '@/stores/layoutStore'
 import { useNumPlayers } from '@/stores/gameStore'
 import { useConfigStore } from '@/stores/configStore'
+import { useUiPrefsStore } from '@/stores/uiPrefsStore'
 import {
   BREAKPOINTS,
   COLS,
@@ -24,6 +27,8 @@ import {
 } from '@/tiles/defaults'
 import { renderTile } from '@/tiles/registry'
 import { AddTileMenu } from '@/components/AddTileMenu'
+import { DashboardOnboardingDialog } from '@/components/DashboardOnboardingDialog'
+import { OverlayToggle } from '@/components/OverlayToggle'
 
 const BOT_DISABLED_TOAST_ID = 'bot-disabled-warning'
 
@@ -37,7 +42,14 @@ export function GameDashboard() {
   const reset = useLayoutStore((s) => s.reset)
   const numPlayers = useNumPlayers()
   const botEnabled = useConfigStore((s) => s.config?.bot.enabled)
+  const markOnboarded = useUiPrefsStore((s) => s.markDashboardOnboarded)
   const { width, containerRef, mounted } = useContainerWidth()
+  // Auto-open once on the very first visit. Derived from the persisted flag at
+  // mount (read synchronously from localStorage at store init), so no effect is
+  // needed and it never reappears after being dismissed.
+  const [helpOpen, setHelpOpen] = useState(
+    () => !useUiPrefsStore.getState().dashboardOnboarded,
+  )
 
   // Sync layout mode with active game's player count.
   useEffect(() => {
@@ -61,6 +73,11 @@ export function GameDashboard() {
     }
   }, [botEnabled, t])
 
+  const handleHelpOpenChange = (open: boolean) => {
+    setHelpOpen(open)
+    if (!open) markOnboarded()
+  }
+
   const [bp, setBp] = useState<Breakpoint>('lg')
   const visibleIds = visibleTilesFor(bp, hidden, mode)
 
@@ -77,12 +94,24 @@ export function GameDashboard() {
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-muted/20">
         <h1 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">{t('nav.game')}</h1>
         <div className="ml-auto flex items-center gap-2">
+          <OverlayToggle />
           <AddTileMenu bp={bp} />
           <Button variant="ghost" size="sm" onClick={reset} className="text-xs">
             {t('common.reset_layout')}
           </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setHelpOpen(true)}
+            aria-label={t('game.onboarding.help_aria')}
+            title={t('game.onboarding.help_aria')}
+          >
+            <HelpCircle className="size-4" />
+          </Button>
         </div>
       </div>
+
+      <DashboardOnboardingDialog open={helpOpen} onOpenChange={handleHelpOpenChange} />
 
       <div ref={containerRef} className="flex-1 overflow-auto">
         {mounted && (

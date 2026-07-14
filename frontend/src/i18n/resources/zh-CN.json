@@ -127,8 +127,6 @@
     "kind_ws_frame": "封包",
     "kind_mjai_event": "MJAI",
     "kind_bot_reaction": "机器人",
-    "direction": "方向",
-    "direction_all": "全部",
     "actor": "玩家",
     "actor_all": "全部",
     "search_placeholder": "搜索封包、事件、动作…",
@@ -138,10 +136,9 @@
     "detail_title": "条目详情",
     "detail_time": "时间",
     "detail_direction": "方向",
-    "detail_flow": "流 ID",
+    "detail_flow": "Flow",
     "detail_size": "长度",
     "detail_emitted": "产生的 MJAI 事件",
-    "detail_injected": "Akagi 发包",
     "detail_method": "Method",
     "detail_args": "参数",
     "detail_raw_text": "原始内容(文本)",
@@ -160,7 +157,9 @@
   "sidebar": {
     "collapse": "收起侧栏",
     "expand": "展开侧栏",
-    "pin": "钉住侧栏"
+    "pin": "钉住侧栏",
+    "openMenu": "打开导航",
+    "closeMenu": "关闭导航"
   },
   "tile": {
     "header": "对局",
@@ -252,6 +251,8 @@
     "title": "设置",
     "general": "通用",
     "language": "语言",
+    "developer_mode": "开发者模式",
+    "developer_mode_hint": "解锁开发者专用字段（例如云端推理服务器地址）。除非你清楚知道自己在做什么，请保持关闭——千万不要因为别人叫你开就开。",
     "proxy": "代理",
     "enabled": "启用",
     "address": "地址",
@@ -333,13 +334,9 @@
     "autoplay": {
       "title": "自动打牌",
       "enable": "启用自动打牌",
-      "enable_help": "启用后 Akagi 会按所选模式自动执行 bot 选定的动作。需要 Chromium 抓包模式以及打开的游戏标签页。",
+      "enable_help": "启用后 Akagi 会自动在雀魂界面上点击 bot 选定的动作。需要 Chromium 抓包模式以及打开的游戏标签页。",
       "platform_note": "目前仅支持雀魂。",
       "requires_chromium": "自动打牌需要使用 Chromium 抓包模式。",
-      "mode": "打牌模式",
-      "mode_packet_with_click_fallback": "封包优先，失败后点击",
-      "mode_packet": "仅封包",
-      "mode_click": "仅点击",
       "pre_click_delay_min": "点击前延迟 (最小, ms)",
       "pre_click_delay_max": "点击前延迟 (最大, ms)",
       "inter_click_delay": "连续点击间延迟 (ms)",
@@ -349,11 +346,13 @@
       "dealer_first_discard_extra_delay": "庄家首打额外延迟 (ms)",
       "dealer_first_discard_extra_delay_hint": "庄家被发 14 张牌时雀魂会播放整理手牌动画，期间的点击会被吃掉。约 2000ms 可覆盖大多数设备。"
     },
-    "upstream_proxy": "上游代理",
-    "upstream_proxy_hint": "用于 MITM 上游流量的 HTTP 代理地址。只有开启上游代理开关时才会使用。",
-    "force_mitm_all": "强制所有流量经过 MITM",
-    "force_mitm_all_hint": "禁用 IP CONNECT 的原始透传。仅在需要拦截所有可读 HTTP/TLS 流量时开启；部分 CDN 客户端可能会断。",
-    "upstream_proxy_enabled": "启用上游代理"
+    "overlay": "建议悬浮窗",
+    "overlay_enabled": "显示悬浮窗",
+    "overlay_enabled_hint": "一个始终置顶的小窗口，浮在游戏画面上显示 AI 的建议打牌。可以拖动到任意位置，也可以从边缘调整大小。",
+    "overlay_top_n": "显示几个建议",
+    "overlay_opacity": "不透明度",
+    "overlay_always_on_top": "保持在其他窗口之上",
+    "overlay_always_on_top_hint": "如果想把悬浮窗放到第二个显示器，可以关掉这个选项。另请注意：游戏若使用“独占全屏”，会盖住所有置顶窗口，请改用无边框或窗口模式。"
   },
   "setup": {
     "title": "Akagi 设置",
@@ -430,10 +429,7 @@
       "bots_none": "无 — 将无法进行分析",
       "click_finish_pre": "点击 ",
       "click_finish_btn": "完成",
-      "click_finish_post": " 以保存设置。Capture 后端会自动启动。日后可至「设置 → 封包捕获」变更，或从那里重新运行此向导。",
-      "upstream_label": "上游代理：",
-      "force_mitm_all_label": "强制 MITM：",
-      "upstream_enabled_label": "启用上游代理："
+      "click_finish_post": " 以保存设置。Capture 后端会自动启动。日后可至「设置 → 封包捕获」变更，或从那里重新运行此向导。"
     }
   },
   "bots": {
@@ -486,8 +482,7 @@
       "enable": "使用云端推理 API",
       "enable_hint": "开启后，内建 Bot 每步都会向服务器询问;发生错误时会回退到本地模型。",
       "base_url": "服务器地址",
-      "use_system_proxy": "使用系统代理",
-      "use_system_proxy_hint": "购买、兑换、模型列表和在线推理请求会读取操作系统代理设置。",
+      "base_url_locked": "已锁定 Online API 服务器地址，不要修改，除非你知道你在干什么。",
       "key": "API 密钥",
       "show_key": "显示密钥",
       "hide_key": "隐藏密钥",
@@ -582,7 +577,26 @@
   },
   "game": {
     "bot_disabled_title": "Bot 已停用",
-    "bot_disabled_desc": "请至「设置」启用 Bot 才能获得实时建议。"
+    "bot_disabled_desc": "请至「设置」启用 Bot 才能获得实时建议。",
+    "onboarding": {
+      "title": "自定义你的面板",
+      "intro": "每个面板都是可移动的区块，这里教你把它们排成喜欢的样子。",
+      "drag_title": "移动区块",
+      "drag_desc": "拖动区块的标题栏即可调整位置。",
+      "resize_title": "调整大小",
+      "resize_desc": "拖动区块右下角即可放大或缩小。",
+      "delete_title": "移除区块",
+      "delete_desc": "点击区块右上角的 ✕ 即可隐藏它。",
+      "add_title": "加回区块",
+      "add_desc": "用工具栏的“添加区块”把隐藏的区块加回来。",
+      "reset_hint": "改变主意了？随时可用“重置布局”还原为默认排列。",
+      "got_it": "我知道了",
+      "help_aria": "显示面板操作提示"
+    },
+    "overlay": "悬浮窗",
+    "overlay_show": "显示建议悬浮窗",
+    "overlay_hide": "隐藏建议悬浮窗",
+    "overlay_toggle_failed": "无法切换悬浮窗"
   },
   "mahjong": {
     "riichi": "立直",
@@ -687,5 +701,9 @@
   "install_overlay": {
     "title": "安装中…",
     "warning": "安装完成前，请勿关闭程序或前往对局。"
+  },
+  "overlay": {
+    "close": "关闭悬浮窗",
+    "empty": "等待 AI 建议…"
   }
 }

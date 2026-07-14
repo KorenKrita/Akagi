@@ -17,6 +17,7 @@ use crate::game_state::snapshot::GameStateSnapshot;
 use crate::ipc::capture_supervisor::{
     restart_capture as restart_capture_inner, spawn_capture_supervisor,
 };
+use crate::ipc::overlay;
 use crate::ipc::state::AppState;
 use crate::schema::{
     BotInfo, BotSettings, GameRecord, HistoryEvent, HistoryEventLog, HistoryFilter, HoraScoreInfo,
@@ -24,12 +25,9 @@ use crate::schema::{
     ReadInspectorResponse, ReadLogRequest, ReadLogResponse, Snapshot,
 };
 use crate::util::resolve_dir;
-use riichienv_core::action::ActionType;
-use riichienv_core::state_3p::legal_actions::GameState3PLegalActions;
-use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 /// Returns `true` exactly once per process the first time `bot_enabled`
 /// is observed as `true` here. Side-effect on success: flips `flag`
@@ -70,143 +68,9 @@ fn entry_to_info(e: &BotEntry) -> BotInfo {
 
 type CmdResult<T> = Result<T, String>;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KitaDebugResponse {
-    pub can_kita: bool,
-    pub sent: bool,
-    pub has_page: bool,
-    pub has_packet_bridge: bool,
-    pub our_seat: Option<u8>,
-    pub num_players: Option<u8>,
-    pub legal_has_kita: bool,
-    pub hand_has_north: bool,
-    pub drawn_tile: Option<String>,
-    pub reason: String,
-}
-
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> CmdResult<AppConfig> {
     Ok(state.config.read().await.clone())
-}
-
-async fn kita_debug_state(state: &AppState) -> KitaDebugResponse {
-    let has_page = state.autoplay_context.page.read().await.is_some();
-    let has_packet_bridge = state.autoplay_context.packet_bridge.read().await.is_some();
-
-    let tracker = state.game_tracker.lock().await;
-    let our_seat = tracker.our_seat();
-    let snapshot = tracker.snapshot();
-    let num_players = snapshot.as_ref().map(|s| s.num_players);
-    let mut legal_has_kita = false;
-    if let (Some(seat), Some(s3p)) = (our_seat, tracker.state_3p()) {
-        legal_has_kita = s3p
-            ._get_legal_actions_internal(seat)
-            .iter()
-            .any(|a| a.action_type == ActionType::Kita);
-    }
-    drop(tracker);
-
-    let (hand_has_north, drawn_tile) = match (our_seat, snapshot.as_ref()) {
-        (Some(seat), Some(snapshot)) => snapshot
-            .players
-            .get(seat as usize)
-            .map(|p| {
-                (
-                    p.tehai.iter().any(|t| t == "N") || p.drawn_tile.as_deref() == Some("N"),
-                    p.drawn_tile.clone(),
-                )
-            })
-            .unwrap_or((false, None)),
-        _ => (false, None),
-    };
-
-    let can_kita = matches!(num_players, Some(3)) && legal_has_kita;
-    let reason = if our_seat.is_none() {
-        "No player seat is resolved yet.".to_string()
-    } else if num_players != Some(3) {
-        format!("Current game is not 3-player: {num_players:?}.")
-    } else if !hand_has_north {
-        "No North tile is visible in our hand/drawn tile snapshot.".to_string()
-    } else if !legal_has_kita {
-        "North is present, but riichienv legal actions do not include Kita right now.".to_string()
-    } else if !has_packet_bridge {
-        "Kita is legal, but no packet bridge is bound to the current WebSocket.".to_string()
-    } else if !has_page {
-        "Kita is legal, but no Chromium page handle is bound.".to_string()
-    } else {
-        "Kita appears legal and packet dispatch is available.".to_string()
-    };
-
-    KitaDebugResponse {
-        can_kita,
-        sent: false,
-        has_page,
-        has_packet_bridge,
-        our_seat,
-        num_players,
-        legal_has_kita,
-        hand_has_north,
-        drawn_tile,
-        reason,
-    }
-}
-
-#[tauri::command]
-pub async fn debug_kita_status(state: State<'_, AppState>) -> CmdResult<KitaDebugResponse> {
-    Ok(kita_debug_state(&state).await)
-}
-
-#[tauri::command]
-pub async fn debug_send_kita_packet(state: State<'_, AppState>) -> CmdResult<KitaDebugResponse> {
-    let mut info = kita_debug_state(&state).await;
-    let Some(actor) = info.our_seat else {
-        return Ok(info);
-    };
-    if !info.can_kita {
-        return Ok(info);
-    }
-
-    let bridge = { state.autoplay_context.packet_bridge.read().await.clone() };
-    let page = { state.autoplay_context.page.read().await.clone() };
-    let target_url = { state.autoplay_context.packet_ws_url.read().await.clone() };
-    let (Some(bridge), Some(page), Some(target_url)) = (bridge, page, target_url) else {
-        return Ok(info);
-    };
-
-    let frame = {
-        let mut bridge = bridge.lock().expect("packet bridge mutex poisoned");
-        bridge.build_with_hints(
-            &crate::schema::MjaiEvent::Kita {
-                actor,
-                pai: Some("N".into()),
-            },
-            &crate::bridge::BuildHints {
-                our_seat: Some(actor),
-                self_operation_index: Some(0),
-                self_operation_tile: Some("4z".into()),
-                self_operation_moqie: Some(false),
-            },
-        )
-    };
-    let Some(frame) = frame else {
-        info.reason = "Bridge refused to build a Kita packet for the current seat.".into();
-        return Ok(info);
-    };
-
-    match crate::autoplay::cdp_input::dispatch_ws_binary(&page, &target_url, &frame).await {
-        Ok(true) => {
-            info.sent = true;
-            info.reason = "Kita packet sent.".into();
-        }
-        Ok(false) => {
-            info.reason = "WebSocket hook did not find an open socket.".into();
-        }
-        Err(e) => {
-            info.reason = format!("Packet dispatch failed: {e:#}");
-        }
-    }
-    Ok(info)
 }
 
 /// Replace the entire config and persist it to the same file the app
@@ -219,7 +83,11 @@ pub async fn debug_send_kita_packet(state: State<'_, AppState>) -> CmdResult<Kit
 /// `bot.enabled` back to false still requires a relaunch to actually
 /// stop it).
 #[tauri::command]
-pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) -> CmdResult<()> {
+pub async fn update_config(
+    new_config: AppConfig,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<()> {
     persist_config(&new_config, &state.config_path).map_err(|e| e.to_string())?;
 
     // Snapshot the *previous* capture-relevant fields before we overwrite,
@@ -234,7 +102,11 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
     let new_platform = new_config.platform.kind;
     let bot_now_enabled = new_config.bot.enabled;
     let autoplay_now_enabled = new_config.autoplay.enabled;
+    let new_overlay = new_config.overlay.clone();
     *state.config.write().await = new_config;
+
+    // Open / close / retune the overlay window to match what was just saved.
+    overlay::reconcile(&app, &new_overlay);
 
     // Sync the history recorder's platform tag immediately. Subsequent
     // finalised games are stamped with the new tag; the in-flight buffer
@@ -322,6 +194,29 @@ pub async fn update_config(new_config: AppConfig, state: State<'_, AppState>) ->
             }
         });
     }
+    Ok(())
+}
+
+/// Flip `overlay.enabled` and apply it, without going through the Settings
+/// page's whole-config save.
+///
+/// The overlay's own close button is the reason this exists: closing the
+/// window has to *stay* closed across restarts, and the overlay webview has no
+/// business round-tripping (and re-persisting) an entire `AppConfig` it never
+/// loaded.
+#[tauri::command]
+pub async fn set_overlay_enabled(
+    enabled: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<()> {
+    let cfg = {
+        let mut cfg = state.config.write().await;
+        cfg.overlay.enabled = enabled;
+        cfg.clone()
+    };
+    persist_config(&cfg, &state.config_path).map_err(|e| e.to_string())?;
+    overlay::reconcile(&app, &cfg.overlay);
     Ok(())
 }
 
@@ -1040,10 +935,6 @@ pub async fn read_inspector(
 
         let kind_set: Option<std::collections::HashSet<String>> =
             req.kinds.as_ref().map(|v| v.iter().cloned().collect());
-        let direction_set: Option<std::collections::HashSet<String>> = req
-            .directions
-            .as_ref()
-            .map(|v| v.iter().map(|d| d.to_lowercase()).collect());
         let actor = req.actor;
         let search_lc = req.search.as_deref().map(|s| s.to_lowercase());
         let limit = if req.limit == 0 {
@@ -1072,13 +963,7 @@ pub async fn read_inspector(
                     continue;
                 }
             };
-            if !inspector_matches(
-                &entry,
-                kind_set.as_ref(),
-                direction_set.as_ref(),
-                actor,
-                search_lc.as_deref(),
-            ) {
+            if !inspector_matches(&entry, kind_set.as_ref(), actor, search_lc.as_deref()) {
                 continue;
             }
             total_match += 1;
@@ -1107,7 +992,6 @@ pub async fn read_inspector(
 fn inspector_matches(
     entry: &InspectorEntry,
     kind_set: Option<&std::collections::HashSet<String>>,
-    direction_set: Option<&std::collections::HashSet<String>>,
     actor: Option<u8>,
     search_lc: Option<&str>,
 ) -> bool {
@@ -1119,17 +1003,6 @@ fn inspector_matches(
     if let Some(ks) = kind_set {
         if !ks.contains(kind) {
             return false;
-        }
-    }
-    if let Some(ds) = direction_set {
-        if let InspectorEntry::WsFrame { direction, .. } = entry {
-            let direction = match direction {
-                crate::schema::FrameDirection::Up => "up",
-                crate::schema::FrameDirection::Down => "down",
-            };
-            if !ds.contains(direction) {
-                return false;
-            }
         }
     }
     if let Some(a) = actor {
@@ -1487,15 +1360,8 @@ pub async fn native_api_redeem(
     code: String,
     email: Option<String>,
     renew_key: Option<String>,
-    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::api::RedeemResponse> {
-    crate::bot::api::redeem_with_proxy(
-        &base_url,
-        &code,
-        email.as_deref(),
-        renew_key.as_deref(),
-        use_system_proxy.unwrap_or(false),
-    )
+    crate::bot::api::redeem(&base_url, &code, email.as_deref(), renew_key.as_deref())
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1505,9 +1371,8 @@ pub async fn native_api_redeem(
 pub async fn native_api_key_status(
     base_url: String,
     key: String,
-    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::api::KeyStatus> {
-    crate::bot::api::ApiClient::new_with_proxy(&base_url, &key, use_system_proxy.unwrap_or(false))
+    crate::bot::api::ApiClient::new(&base_url, &key)
         .map_err(|e| format!("{e:#}"))?
         .key_status()
         .await
@@ -1519,9 +1384,8 @@ pub async fn native_api_key_status(
 pub async fn native_api_models(
     base_url: String,
     key: String,
-    use_system_proxy: Option<bool>,
 ) -> CmdResult<Vec<crate::bot::api::ModelInfo>> {
-    crate::bot::api::ApiClient::new_with_proxy(&base_url, &key, use_system_proxy.unwrap_or(false))
+    crate::bot::api::ApiClient::new(&base_url, &key)
         .map_err(|e| format!("{e:#}"))?
         .models()
         .await
@@ -1530,11 +1394,8 @@ pub async fn native_api_models(
 
 /// Liveness + per-model queue depth (`GET /healthz`, no auth).
 #[tauri::command]
-pub async fn native_api_health(
-    base_url: String,
-    use_system_proxy: Option<bool>,
-) -> CmdResult<crate::bot::api::Health> {
-    crate::bot::api::health_with_proxy(&base_url, use_system_proxy.unwrap_or(false))
+pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::Health> {
+    crate::bot::api::health(&base_url)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1559,14 +1420,8 @@ pub async fn native_api_create_order(
     base_url: String,
     product: String,
     redeem: bool,
-    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::purchase::CreatedOrder> {
-    crate::bot::purchase::create_order_with_proxy(
-        &base_url,
-        &product,
-        redeem,
-        use_system_proxy.unwrap_or(false),
-    )
+    crate::bot::purchase::create_order(&base_url, &product, redeem)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1579,14 +1434,8 @@ pub async fn native_api_order_result(
     base_url: String,
     order_id: String,
     claim: String,
-    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::purchase::OrderResult> {
-    crate::bot::purchase::order_result_with_proxy(
-        &base_url,
-        &order_id,
-        &claim,
-        use_system_proxy.unwrap_or(false),
-    )
+    crate::bot::purchase::order_result(&base_url, &order_id, &claim)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1597,13 +1446,8 @@ pub async fn native_api_order_result(
 pub async fn native_api_create_subscription(
     base_url: String,
     product: String,
-    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::purchase::CreatedSubscription> {
-    crate::bot::purchase::create_subscription_with_proxy(
-        &base_url,
-        &product,
-        use_system_proxy.unwrap_or(false),
-    )
+    crate::bot::purchase::create_subscription(&base_url, &product)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1615,14 +1459,8 @@ pub async fn native_api_subscription_result(
     base_url: String,
     subscription_id: String,
     claim: String,
-    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::purchase::SubscriptionResult> {
-    crate::bot::purchase::subscription_result_with_proxy(
-        &base_url,
-        &subscription_id,
-        &claim,
-        use_system_proxy.unwrap_or(false),
-    )
+    crate::bot::purchase::subscription_result(&base_url, &subscription_id, &claim)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1645,8 +1483,7 @@ macro_rules! ipc_handlers {
         ::tauri::generate_handler![
             $crate::ipc::commands::get_config,
             $crate::ipc::commands::update_config,
-            $crate::ipc::commands::debug_kita_status,
-            $crate::ipc::commands::debug_send_kita_packet,
+            $crate::ipc::commands::set_overlay_enabled,
             $crate::ipc::commands::list_bots,
             $crate::ipc::commands::set_active_bot,
             $crate::ipc::commands::get_bot_settings,

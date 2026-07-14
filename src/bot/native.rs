@@ -372,8 +372,14 @@ impl NativeBot {
             Ok(resp) => {
                 self.breaker.record_success();
                 self.record_health(true, None);
+                let title = api_show_title(
+                    resp.model.as_deref(),
+                    self.api.as_ref().map(|s| s.model.as_str()),
+                );
                 match resp.reaction {
-                    Some(reaction) => match self.resolve_reaction(reaction, &resp.candidates).await
+                    Some(reaction) => match self
+                        .resolve_reaction(reaction, &resp.candidates, &title)
+                        .await
                     {
                         Some(pair) => pair,
                         None => local_reply(local, self.seat),
@@ -410,6 +416,7 @@ impl NativeBot {
         &mut self,
         reaction: Value,
         candidates: &[Candidate],
+        title: &str,
     ) -> Option<(MjaiEvent, Option<Value>)> {
         let mut ev: MjaiEvent = serde_json::from_value(reaction).ok()?;
         set_actor(&mut ev, self.seat);
@@ -434,7 +441,7 @@ impl NativeBot {
                 None => return None,
             }
         }
-        let meta = build_show_meta_mjai(&ev, candidates);
+        let meta = build_show_meta_mjai(&ev, candidates, title);
         Some((ev, meta))
     }
 
@@ -497,11 +504,11 @@ impl BotRunner for NativeBot {
             }
         }
 
-        // Local gate: no legal action ⇒ don't spend an API call (and don't
-        // pester the server with the opponent-discard windows we can't act on).
+        // Local gate: nothing to decide ⇒ reply `none`, spend no API call, and
+        // leave whatever card is on screen alone.
         let local = match self.engine.decide()? {
-            Some(d) => d,
-            None => {
+            Some(d) if is_decision_point(&d.candidates) => d,
+            _ => {
                 return Ok(BotResponse {
                     action: MjaiEvent::None,
                     meta: None,
@@ -529,6 +536,29 @@ impl BotRunner for NativeBot {
         self.breaker.reset();
         Ok(())
     }
+}
+
+/// Did the bot actually choose anything here?
+///
+/// This is the precondition for touching the HUD card: it must change when the
+/// bot made a choice, and *only* then. A real decision has something to choose
+/// between — our own turn (a discard, riichi, kan, tsumo…), or a call window
+/// where a pon / chi / kan / ron sits next to the pass.
+///
+/// Two things are not decisions. An empty legal set, obviously. And a legal set
+/// of exactly `[Pass]`: the engine offers `Pass` unconditionally in its response
+/// phase, so a seat standing in someone *else's* call window still gets one
+/// handed back. Rendering that as "Pass 100%" would replace real advice with a
+/// choice the bot never had.
+///
+/// The bare-`[Pass]` case is not reachable in live play today — the bridge feeds
+/// opponents' hands as `?`, so the engine can only ever see *our* claims, and it
+/// only opens a response window when a claim exists, which means the pass always
+/// arrives next to the call it was weighed against. But that is a fact about
+/// what the engine currently knows, not about what the card promises. Encode the
+/// promise.
+fn is_decision_point(candidates: &[(BotAction, f32)]) -> bool {
+    !matches!(candidates, [] | [(BotAction::Pass, _)])
 }
 
 /// Build the reply pair (mjai action + HUD card) from the local model's
@@ -655,10 +685,41 @@ fn with_lead(lead: &str, rest: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Card title for a decision the embedded local model served. The two title
+/// forms (this and [`api_show_title`]) let the HUD say, per decision, which
+/// inference path actually produced the move — the API silently falls back to
+/// the local model, so the source can flip mid-game.
+const SHOW_TITLE_LOCAL: &str = "Akagi · Local";
+
+/// Row label for declining a call. Both inference paths use it, so the card
+/// reads the same whichever one answered. "None" — the mjai wire word — is
+/// accurate and useless: on a call window what the player wants to read is
+/// "Pass 87%" against "Pon 13%", not "None 87%".
+const PASS_LABEL: &str = "Pass";
+
+/// Card title for a decision the online API served: name the model. The
+/// server's own report (which model actually answered) wins over the
+/// configured id — the config may be empty, meaning "server default".
+fn api_show_title(served: Option<&str>, configured: Option<&str>) -> String {
+    let model = [served, configured]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|m| !m.is_empty());
+    match model {
+        Some(m) => format!("Akagi · {m}"),
+        None => "Akagi · Online".to_string(),
+    }
+}
+
 /// HUD "Bot Show" card for the API path: the first row is the exact chosen move
 /// (precise tiles), the rest are the server's runner-up **candidate** labels,
 /// each with its probability — so the card shows the model's top-N.
-fn build_show_meta_mjai(ev: &MjaiEvent, candidates: &[Candidate]) -> Option<serde_json::Value> {
+fn build_show_meta_mjai(
+    ev: &MjaiEvent,
+    candidates: &[Candidate],
+    title: &str,
+) -> Option<serde_json::Value> {
     let mut items: Vec<Value> = Vec::new();
     // Row 0: the exact reaction (precise tiles), prob from the top candidate.
     if let Some((label, pais)) = label_pais_mjai(ev) {
@@ -672,7 +733,7 @@ fn build_show_meta_mjai(ev: &MjaiEvent, candidates: &[Candidate]) -> Option<serd
             items.push(make_show_item(label, &pais, Some(c.prob)));
         }
     }
-    wrap_show(items)
+    wrap_show(items, title)
 }
 
 /// Label + tiles for a resolved mjai reaction (the exact chosen move).
@@ -691,7 +752,7 @@ fn label_pais_mjai(ev: &MjaiEvent) -> Option<(&'static str, Vec<String>)> {
         // Passing IS the chosen move on a call window (pon/chi/kan/ron
         // offered, model declines) — show it, or the card would render only
         // the runner-ups and read as recommending the call it just declined.
-        MjaiEvent::None => ("None", vec![]),
+        MjaiEvent::None => (PASS_LABEL, vec![]),
         _ => return None,
     };
     Some(out)
@@ -713,8 +774,8 @@ fn label_pais_candidate(action: &str) -> Option<(&'static str, Vec<String>)> {
         "ryukyoku" => ("Ryukyoku", vec![]),
         "nukidora" => ("Kita", vec!["N".into()]),
         // On a call window the pass option is half the decision (e.g. pon 55%
-        // vs none 45%) — a real ranked row, not noise.
-        "none" => ("None", vec![]),
+        // vs pass 45%) — a real ranked row, not noise.
+        "none" => (PASS_LABEL, vec![]),
         // Unknown future labels are not shown as a row.
         _ => return None,
     };
@@ -737,13 +798,15 @@ fn make_show_item(label: &str, pais: &[String], prob: Option<f64>) -> Value {
 }
 
 /// Wrap `items` in the `{ "show": { title, items } }` envelope, or `None` when
-/// there is nothing to show.
-fn wrap_show(items: Vec<Value>) -> Option<Value> {
+/// there is nothing to show. The title names the inference source (see
+/// [`SHOW_TITLE_LOCAL`] / [`api_show_title`]); the frontend renders it as the
+/// Bot Show tile's header.
+fn wrap_show(items: Vec<Value>, title: &str) -> Option<Value> {
     use serde_json::json;
     if items.is_empty() {
         return None;
     }
-    Some(json!({ "show": { "title": "Akagi", "items": items } }))
+    Some(json!({ "show": { "title": title, "items": items } }))
 }
 
 fn take_n<const N: usize>(v: Vec<String>) -> [String; N] {
@@ -753,26 +816,30 @@ fn take_n<const N: usize>(v: Vec<String>) -> [String; N] {
 
 /// Build the HUD "Bot Show" recommendation card (`meta.show`) from the ranked
 /// candidates, so the built-in bot surfaces its **top-N** suggestions (each with
-/// its policy probability) like other bots. `None` when the top choice is a pass
-/// (nothing to recommend — the previous card stays).
+/// its policy probability) like other bots.
+///
+/// Every candidate becomes a row, the pass included. Declining a call *is* the
+/// decision on a call window, and its probability is the most interesting number
+/// on screen at that moment — "Pass 87% / Pon 13%" is the answer to "should I
+/// have ponned?". Suppressing it left the previous turn's discard advice sitting
+/// there, reading as live advice for a decision that was already over.
+///
+/// Callers must have established a decision point first ([`is_decision_point`]);
+/// a lone pass is not one, and must not reach here.
 fn build_show_meta(candidates: &[(BotAction, f32)]) -> Option<serde_json::Value> {
-    // A leading pass means "no action this turn": leave the previous card up.
-    if matches!(candidates.first(), None | Some((BotAction::Pass, _))) {
-        return None;
-    }
     let items: Vec<Value> = candidates
         .iter()
-        .filter_map(|(a, p)| {
-            label_pais_bot_action(a)
-                .map(|(label, pais)| make_show_item(label, &pais, Some(*p as f64)))
+        .map(|(a, p)| {
+            let (label, pais) = label_pais_bot_action(a);
+            make_show_item(label, &pais, Some(*p as f64))
         })
         .collect();
-    wrap_show(items)
+    wrap_show(items, SHOW_TITLE_LOCAL)
 }
 
-/// Label + tiles for one bot action, or `None` for a pass (not shown as a row).
-fn label_pais_bot_action(a: &BotAction) -> Option<(&'static str, Vec<String>)> {
-    let out = match a {
+/// Label + tiles for one bot action.
+fn label_pais_bot_action(a: &BotAction) -> (&'static str, Vec<String>) {
+    match a {
         BotAction::Dahai { pai, .. } => ("Discard", vec![pai.clone()]),
         BotAction::Reach { pai } => (
             "Riichi",
@@ -790,9 +857,10 @@ fn label_pais_bot_action(a: &BotAction) -> Option<(&'static str, Vec<String>)> {
         BotAction::Hora { .. } => ("Hora", vec![]),
         BotAction::Kyushu => ("Ryukyoku", vec![]),
         BotAction::Kita => ("Kita", vec!["N".into()]),
-        BotAction::Pass => return None,
-    };
-    Some(out)
+        // No tiles: the row is about *declining* the discard on the table, and
+        // drawing that tile here would read as a recommendation to play it.
+        BotAction::Pass => (PASS_LABEL, vec![]),
+    }
 }
 
 /// Map a schema-agnostic [`BotAction`] to Akagi's `MjaiEvent` reply.
@@ -941,6 +1009,110 @@ mod tests {
             tehais: vec![hand.clone(), hand.clone(), hand.clone(), hand],
             num_players: 4,
         }
+    }
+
+    /// A `start_kyoku` shaped like the ones the bridge actually emits: our hand
+    /// is known, the opponents' are `?`. It matters. Handing the engine four
+    /// concrete hands (as `start_kyoku_4p` does, for convenience) lets it see
+    /// claims it can never see in a real game, so a test built on that is
+    /// testing a game we never get to play.
+    fn start_kyoku_4p_hidden(our_hand: [&str; 13]) -> MjaiEvent {
+        // The bridge's placeholder for a tile we cannot see (mjai's `?`).
+        let hidden = vec!["?".to_string(); 13];
+        MjaiEvent::StartKyoku {
+            bakaze: "E".into(),
+            dora_marker: "2m".into(),
+            kyoku: 1,
+            honba: 0,
+            kyotaku: 0,
+            oya: 0,
+            scores: vec![25000; 4],
+            tehais: vec![
+                our_hand.iter().map(|s| s.to_string()).collect(),
+                hidden.clone(),
+                hidden.clone(),
+                hidden,
+            ],
+            num_players: 4,
+        }
+    }
+
+    fn seat1_discards(pai: &str) -> [MjaiEvent; 2] {
+        [
+            MjaiEvent::Tsumo {
+                actor: 1,
+                pai: pai.into(),
+            },
+            MjaiEvent::Dahai {
+                actor: 1,
+                pai: pai.into(),
+                tsumogiri: true,
+            },
+        ]
+    }
+
+    /// Regression (#190), end to end. We hold two 9s, seat 1 discards a 9s: a pon
+    /// window. Whatever the model picks, the card must show the pass ranked
+    /// against the pon — that comparison *is* the decision. Before this fix the
+    /// bot emitted no card at all when it declined, so the tile kept displaying
+    /// the previous turn's discard advice as if it were live.
+    #[tokio::test]
+    async fn a_declined_call_still_produces_a_card_ranking_the_pass() {
+        let mut bot = bot_with(cfg_off(), crate::event_bus::notify_bus()).await;
+        let mut events = vec![
+            start_game_4p(0),
+            start_kyoku_4p_hidden([
+                "9s", "9s", "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p",
+            ]),
+        ];
+        events.extend(seat1_discards("9s"));
+
+        let resp = bot.react(&events).await.unwrap();
+
+        let meta = resp
+            .meta
+            .as_ref()
+            .expect("a pon window is a decision — it must refresh the card");
+        let items = meta["show"]["items"].as_array().unwrap();
+        let labels: Vec<&str> = items
+            .iter()
+            .map(|i| i["label"].as_str().unwrap_or_default())
+            .collect();
+        assert!(
+            labels.contains(&"Pass"),
+            "the pass must be a ranked row, got {labels:?}"
+        );
+        assert!(
+            labels.contains(&"Pon"),
+            "…alongside the call it is weighed against, got {labels:?}"
+        );
+        assert!(
+            items.iter().all(|i| i["value"].is_string()),
+            "every row carries the probability the player is here to read"
+        );
+    }
+
+    /// The other half of the contract: an opponent discard we cannot call is not
+    /// a decision, so the card must be left exactly as it was.
+    #[tokio::test]
+    async fn an_uncallable_opponent_discard_leaves_the_card_alone() {
+        let mut bot = bot_with(cfg_off(), crate::event_bus::notify_bus()).await;
+        let mut events = vec![
+            start_game_4p(0),
+            // No 9s in hand, and seat 1 is our shimocha so a chi is impossible.
+            start_kyoku_4p_hidden([
+                "1m", "3m", "5m", "7m", "9m", "2p", "4p", "6p", "8p", "1s", "3s", "5s", "7s",
+            ]),
+        ];
+        events.extend(seat1_discards("9s"));
+
+        let resp = bot.react(&events).await.unwrap();
+
+        assert!(matches!(resp.action, MjaiEvent::None));
+        assert!(
+            resp.meta.is_none(),
+            "nothing was decided, so nothing should replace the card on screen"
+        );
     }
 
     #[tokio::test]
@@ -1158,7 +1330,8 @@ mod tests {
         let (base, served) = mock_http(vec![(
             "200 OK",
             r#"{"reaction":{"type":"dahai","actor":0,"pai":"1m","tsumogiri":false},
-                "candidates":[{"action":"dahai:1m","prob":0.9}]}"#
+                "candidates":[{"action":"dahai:1m","prob":0.9}],
+                "model":"4p-mock"}"#
                 .into(),
         )]);
         let config = cfg_off();
@@ -1174,6 +1347,11 @@ mod tests {
             first.action
         );
         assert!(bot.api.is_none());
+        // ...and the HUD card says the local model played it.
+        assert_eq!(
+            first.meta.as_ref().unwrap()["show"]["title"],
+            SHOW_TITLE_LOCAL
+        );
 
         // The user enables cloud inference mid-kyoku.
         config.write().await.bot.api = api_on(&base, &"k".repeat(32));
@@ -1200,6 +1378,11 @@ mod tests {
             "the server's move must be played"
         );
         assert_eq!(served.join().unwrap().len(), 1, "exactly one API call");
+        // The card title now names the model the server says answered.
+        assert_eq!(
+            second.meta.as_ref().unwrap()["show"]["title"],
+            "Akagi · 4p-mock"
+        );
 
         // ...and the user is told, on the same channel the status LED listens to.
         let n = rx.try_recv().expect("a toast confirming the switch");
@@ -1394,11 +1577,24 @@ mod tests {
             action: "dahai:W".into(),
             prob: 0.83,
         }];
-        let meta = build_show_meta_mjai(&ev, &cands).unwrap();
+        let meta = build_show_meta_mjai(&ev, &cands, "Akagi · 4p-x").unwrap();
+        assert_eq!(meta["show"]["title"], "Akagi · 4p-x");
         let item = &meta["show"]["items"][0];
         assert_eq!(item["label"], "Discard");
         assert_eq!(item["pais"][0], "W");
         assert_eq!(item["value"], "83%");
+    }
+
+    /// The card title names the API model that served the decision: the
+    /// server's report wins, then the configured id, then a generic "Online".
+    /// Blanks don't count as a model id.
+    #[test]
+    fn api_show_title_prefers_served_then_configured_then_online() {
+        assert_eq!(api_show_title(Some("4p-x"), Some("4p-cfg")), "Akagi · 4p-x");
+        assert_eq!(api_show_title(None, Some("4p-cfg")), "Akagi · 4p-cfg");
+        assert_eq!(api_show_title(Some(""), Some(" ")), "Akagi · Online");
+        assert_eq!(api_show_title(None, None), "Akagi · Online");
+        assert_eq!(api_show_title(Some(" 4p-x "), None), "Akagi · 4p-x");
     }
 
     #[test]
@@ -1421,6 +1617,10 @@ mod tests {
             ),
         ];
         let meta = build_show_meta(&cands).unwrap();
+        assert_eq!(
+            meta["show"]["title"], SHOW_TITLE_LOCAL,
+            "a local decision must be titled as such"
+        );
         let items = meta["show"]["items"].as_array().unwrap();
         assert_eq!(items.len(), 3, "should surface all three candidates");
         assert_eq!(items[0]["label"], "Discard");
@@ -1433,8 +1633,13 @@ mod tests {
         assert_eq!(items[2]["value"], "10%");
     }
 
+    /// Regression (#190): declining a call used to produce no card at all, so
+    /// the tile kept showing the previous turn's discard advice — live-looking
+    /// advice for a decision that was already over. The pass is the decision
+    /// here, and its probability against the call it turned down is the whole
+    /// point of the card.
     #[test]
-    fn local_show_meta_none_when_top_is_pass() {
+    fn local_show_meta_ranks_the_pass_against_the_call_it_declined() {
         let cands = vec![
             (BotAction::Pass, 0.9f32),
             (
@@ -1446,10 +1651,65 @@ mod tests {
                 0.1f32,
             ),
         ];
+
+        let meta = build_show_meta(&cands).expect("a declined call still has a card to show");
+        let items = meta["show"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2, "both the pass and the pon it beat");
+        assert_eq!(items[0]["label"], "Pass");
+        assert_eq!(items[0]["value"], "90%");
         assert!(
-            build_show_meta(&cands).is_none(),
-            "a leading pass must not replace the card"
+            items[0].get("pais").is_none(),
+            "the pass row must draw no tile — it would read as a discard suggestion"
         );
+        assert_eq!(items[1]["label"], "Pon");
+        assert_eq!(items[1]["value"], "10%");
+    }
+
+    /// The other half of #190: a lone pass is *not* a decision. `WaitResponse`
+    /// opens for every seat as soon as any seat can claim, and the engine always
+    /// offers `Pass` there — so a seat with nothing to claim gets `[Pass]` back.
+    /// Showing "Pass 100%" for that would replace the card on every opponent
+    /// discard someone *else* could call.
+    #[test]
+    fn a_lone_pass_is_not_a_decision_point() {
+        assert!(
+            !is_decision_point(&[]),
+            "no legal action at all is not a decision"
+        );
+        assert!(
+            !is_decision_point(&[(BotAction::Pass, 1.0)]),
+            "someone else's call window is not our decision"
+        );
+    }
+
+    #[test]
+    fn a_choice_is_a_decision_point() {
+        let call_window = [
+            (BotAction::Pass, 0.9f32),
+            (
+                BotAction::Pon {
+                    target: 0,
+                    pai: "1m".into(),
+                    consumed: vec!["1m".into(), "1m".into()],
+                },
+                0.1f32,
+            ),
+        ];
+        assert!(
+            is_decision_point(&call_window),
+            "pass vs pon is exactly the decision the card exists to explain"
+        );
+
+        // Our own turn: no pass on offer, and even a single forced discard is a
+        // decision the player wants to see.
+        let forced_discard = [(
+            BotAction::Dahai {
+                pai: "1m".into(),
+                tsumogiri: true,
+            },
+            1.0f32,
+        )];
+        assert!(is_decision_point(&forced_discard));
     }
 
     #[test]
@@ -1473,7 +1733,8 @@ mod tests {
                 prob: 0.1,
             },
         ];
-        let meta = build_show_meta_mjai(&ev, &cands).unwrap();
+        let meta = build_show_meta_mjai(&ev, &cands, "Akagi · Online").unwrap();
+        assert_eq!(meta["show"]["title"], "Akagi · Online");
         let items = meta["show"]["items"].as_array().unwrap();
         assert_eq!(items.len(), 3);
         // Row 0 = exact chosen move; rows 1..= coarse candidate labels.
@@ -1487,12 +1748,12 @@ mod tests {
         assert_eq!(items[2]["value"], "10%");
     }
 
-    /// A call window where the model declines (pon 35% vs none 65%): the card
-    /// must show the chosen pass as row 0 AND keep `none` runner-up rows —
+    /// A call window where the model declines (pon 35% vs pass 65%): the card
+    /// must show the chosen pass as row 0 AND keep the pass runner-up rows —
     /// dropping them made the card read as recommending the declined call.
     #[test]
-    fn api_show_meta_renders_pass_and_none_rows() {
-        // Chosen move is pass: row 0 = "None" with candidates[0]'s prob.
+    fn api_show_meta_ranks_the_pass_alongside_the_call() {
+        // Chosen move is the pass: row 0 = "Pass" with candidates[0]'s prob.
         let cands = vec![
             Candidate {
                 action: "none".into(),
@@ -1503,15 +1764,17 @@ mod tests {
                 prob: 0.35,
             },
         ];
-        let meta = build_show_meta_mjai(&MjaiEvent::None, &cands).unwrap();
+        let meta = build_show_meta_mjai(&MjaiEvent::None, &cands, "Akagi · Online").unwrap();
         let items = meta["show"]["items"].as_array().unwrap();
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0]["label"], "None");
+        // Same word as the local path (#190): one card, one vocabulary,
+        // whichever inference path answered.
+        assert_eq!(items[0]["label"], "Pass");
         assert_eq!(items[0]["value"], "65%");
         assert_eq!(items[1]["label"], "Pon");
         assert_eq!(items[1]["value"], "35%");
 
-        // Chosen move is the call: the none runner-up still gets a row.
+        // Chosen move is the call: the pass runner-up still gets a row.
         let ev = MjaiEvent::Pon {
             actor: 0,
             target: 3,
@@ -1528,12 +1791,12 @@ mod tests {
                 prob: 0.45,
             },
         ];
-        let meta = build_show_meta_mjai(&ev, &cands).unwrap();
+        let meta = build_show_meta_mjai(&ev, &cands, "Akagi · Online").unwrap();
         let items = meta["show"]["items"].as_array().unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["label"], "Pon");
         assert_eq!(items[0]["value"], "55%");
-        assert_eq!(items[1]["label"], "None");
+        assert_eq!(items[1]["label"], "Pass");
         assert_eq!(items[1]["value"], "45%");
     }
 

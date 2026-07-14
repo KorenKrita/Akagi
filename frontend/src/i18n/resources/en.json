@@ -127,8 +127,6 @@
     "kind_ws_frame": "WS",
     "kind_mjai_event": "MJAI",
     "kind_bot_reaction": "Bot",
-    "direction": "Direction",
-    "direction_all": "all",
     "actor": "Actor",
     "actor_all": "all",
     "search_placeholder": "Search frames, events, actions…",
@@ -138,10 +136,9 @@
     "detail_title": "Entry detail",
     "detail_time": "Timestamp",
     "detail_direction": "Direction",
-    "detail_flow": "Flow ID",
+    "detail_flow": "Flow",
     "detail_size": "Size",
     "detail_emitted": "MJAI events emitted",
-    "detail_injected": "Injected by Akagi",
     "detail_method": "Method",
     "detail_args": "Args",
     "detail_raw_text": "Raw (text)",
@@ -160,7 +157,9 @@
   "sidebar": {
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar",
-    "pin": "Pin sidebar"
+    "pin": "Pin sidebar",
+    "openMenu": "Open navigation",
+    "closeMenu": "Close navigation"
   },
   "tile": {
     "header": "Game",
@@ -252,6 +251,8 @@
     "title": "Settings",
     "general": "General",
     "language": "Language",
+    "developer_mode": "Developer mode",
+    "developer_mode_hint": "Unlocks developer-only fields such as the cloud-inference server URL. Leave this off unless you know exactly what you are doing — never turn it on because someone told you to.",
     "proxy": "Proxy",
     "enabled": "Enabled",
     "address": "Address",
@@ -333,13 +334,9 @@
     "autoplay": {
       "title": "Autoplay",
       "enable": "Enable autoplay",
-      "enable_help": "When enabled, Akagi executes the bot's chosen action using the selected mode. Requires the Chromium capture mode and a running game tab.",
+      "enable_help": "When enabled, Akagi clicks the bot's chosen action on the Mahjong Soul board automatically. Requires the Chromium capture mode and a running game tab.",
       "platform_note": "Mahjong Soul only.",
       "requires_chromium": "Autoplay requires the Chromium capture mode.",
-      "mode": "Autoplay mode",
-      "mode_packet_with_click_fallback": "Packet, fallback to click",
-      "mode_packet": "Packet only",
-      "mode_click": "Click only",
       "pre_click_delay_min": "Pre-click delay (min, ms)",
       "pre_click_delay_max": "Pre-click delay (max, ms)",
       "inter_click_delay": "Inter-click delay (ms)",
@@ -349,11 +346,13 @@
       "dealer_first_discard_extra_delay": "Dealer first-discard extra delay (ms)",
       "dealer_first_discard_extra_delay_hint": "Mahjong Soul plays a hand-sort animation when the dealer is dealt all 14 tiles. Clicks during the animation are dropped. ~2000ms covers most devices."
     },
-    "upstream_proxy": "Upstream proxy",
-    "upstream_proxy_hint": "HTTP proxy endpoint for MITM upstream traffic. It is used only when the upstream proxy switch is on.",
-    "force_mitm_all": "Force MITM for all traffic",
-    "force_mitm_all_hint": "Disables raw tunneling for IP-literal CONNECT flows. Use only when you need every readable HTTP/TLS flow intercepted; some CDN clients may break.",
-    "upstream_proxy_enabled": "Use upstream proxy"
+    "overlay": "Suggestion overlay",
+    "overlay_enabled": "Show overlay window",
+    "overlay_enabled_hint": "A small always-on-top window that floats over the game and shows the bot's top suggestions. Drag it anywhere; resize it from its edges.",
+    "overlay_top_n": "Suggestions shown",
+    "overlay_opacity": "Opacity",
+    "overlay_always_on_top": "Keep above other windows",
+    "overlay_always_on_top_hint": "Turn this off to park the overlay on a second monitor. Note that a game running in exclusive fullscreen draws over every always-on-top window — use borderless or windowed mode."
   },
   "setup": {
     "title": "Akagi Setup",
@@ -430,10 +429,7 @@
       "bots_none": "none — analysis will be unavailable",
       "click_finish_pre": "Click ",
       "click_finish_btn": "Finish",
-      "click_finish_post": " to save these settings. The capture backend will start automatically. You can change everything later in Settings → Capture, or rerun this wizard from there.",
-      "upstream_label": "Upstream proxy:",
-      "force_mitm_all_label": "Force MITM:",
-      "upstream_enabled_label": "Use upstream proxy:"
+      "click_finish_post": " to save these settings. The capture backend will start automatically. You can change everything later in Settings → Capture, or rerun this wizard from there."
     }
   },
   "bots": {
@@ -486,8 +482,7 @@
       "enable": "Use cloud inference API",
       "enable_hint": "When on, the built-in bot asks the server for each move; it falls back to the local model on any error.",
       "base_url": "Server URL",
-      "use_system_proxy": "Use system proxy",
-      "use_system_proxy_hint": "Purchase, redeem, model-list, and online inference requests read the OS proxy settings.",
+      "base_url_locked": "The Online API server URL is locked. Do not change it unless you know exactly what you are doing.",
       "key": "API key",
       "show_key": "Show key",
       "hide_key": "Hide key",
@@ -582,7 +577,26 @@
   },
   "game": {
     "bot_disabled_title": "Bot is disabled",
-    "bot_disabled_desc": "Enable bots in Settings to receive recommendations."
+    "bot_disabled_desc": "Enable bots in Settings to receive recommendations.",
+    "onboarding": {
+      "title": "Customize your board",
+      "intro": "Every panel is a movable tile. Here's how to arrange them the way you like.",
+      "drag_title": "Move a tile",
+      "drag_desc": "Drag it by its title bar to reposition.",
+      "resize_title": "Resize a tile",
+      "resize_desc": "Drag the bottom-right corner to make it bigger or smaller.",
+      "delete_title": "Remove a tile",
+      "delete_desc": "Click the ✕ in a tile's top-right corner to hide it.",
+      "add_title": "Add a tile back",
+      "add_desc": "Use \"Add tile\" in the toolbar to bring hidden tiles back.",
+      "reset_hint": "Changed your mind? \"Reset Layout\" restores the default arrangement anytime.",
+      "got_it": "Got it",
+      "help_aria": "Show board tips"
+    },
+    "overlay": "Overlay",
+    "overlay_show": "Show the suggestion overlay",
+    "overlay_hide": "Hide the suggestion overlay",
+    "overlay_toggle_failed": "Could not toggle the overlay"
   },
   "mahjong": {
     "riichi": "Riichi",
@@ -687,5 +701,9 @@
   "install_overlay": {
     "title": "Installing…",
     "warning": "Please don’t close the app or start a game until the installation finishes."
+  },
+  "overlay": {
+    "close": "Close overlay",
+    "empty": "Waiting for the bot…"
   }
 }

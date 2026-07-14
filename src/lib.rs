@@ -111,6 +111,7 @@ pub fn run() {
     let bot_enabled = cfg.bot.enabled;
     let proxy_enabled = cfg.proxy.enabled;
     let autoplay_enabled = cfg.autoplay.enabled;
+    let overlay_cfg = cfg.overlay.clone();
 
     // Game-state tracker handle is built up front so AppState can carry
     // the Arc, but the consumer task is spawned inside `.setup()` once
@@ -131,6 +132,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // The overlay's geometry is still saved and restored, but not
+                // by the plugin's automatic pass: that restores `StateFlags::all()`,
+                // which would put decorations back on a deliberately frameless
+                // window. `ipc::overlay::open` restores position+size itself.
+                .skip_initial_state(ipc::overlay::LABEL)
+                .build(),
+        )
         .invoke_handler(crate::ipc_handlers!())
         .setup({
             // AppState constructed *inside* setup() so the python+uv
@@ -174,6 +184,36 @@ pub fn run() {
                 );
 
                 ipc::install(app.handle(), state.clone())?;
+
+                // Reopen the suggestion overlay if it was left enabled. Safe
+                // before any game data exists — it renders its empty state and
+                // fills in on the first `bot-response`.
+                ipc::overlay::reconcile(app.handle(), &overlay_cfg);
+
+                // The overlay is an accessory window, not a co-equal one. Tauri
+                // exits when *all* windows close, and the overlay counts — so
+                // without this, closing the main window leaves the overlay on
+                // screen holding the process open. It is `skip_taskbar` and
+                // undecorated, which is right while Akagi is running and hostile
+                // the moment it isn't: no taskbar entry, no title bar, nothing
+                // that leads back to the process still alive behind the card.
+                //
+                // Close it with the main window and let Tauri exit on its own
+                // once no windows remain — no `exit(0)`, so the window-state save
+                // and every other shutdown path still runs. This closes the
+                // *window*; it deliberately does not touch `overlay.enabled`, so
+                // the overlay comes back on the next launch. Only a deliberate ×
+                // (or the toggle) turns the feature off.
+                if let Some(main) = app.get_webview_window("main") {
+                    let handle = app.handle().clone();
+                    main.on_window_event(move |event| {
+                        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                            if let Err(e) = ipc::overlay::close(&handle) {
+                                warn!("overlay: could not close with the main window: {e}");
+                            }
+                        }
+                    });
+                }
 
                 // Spawn tracker + analysis loops inside the Tauri Tokio
                 // runtime — `lib::run` itself is sync.

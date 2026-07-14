@@ -1,6 +1,6 @@
 [package]
 name = "akagi"
-version = "3.3.0"
+version = "3.3.2"
 edition = "2021"
 
 [lib]
@@ -11,7 +11,15 @@ tauri-build = { version = "2", features = [] }
 prost-build = "0.14"
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `macos-private-api`: the suggestion overlay is a transparent window, and on
+# macOS `WebviewWindowBuilder::transparent` does not exist without this feature
+# — it is `#[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]`.
+# Must stay in step with `app.macOSPrivateApi` in tauri.conf.json; the feature
+# is what makes the call compile, the config flag is what makes it take effect.
+# The catch is that it uses private Apple APIs, so a build with it cannot be
+# accepted into the Mac App Store. Akagi ships as an unsigned portable zip from
+# GitHub Releases, so that costs us nothing.
+tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
@@ -48,6 +56,7 @@ semver = "1"
 sha2 = "0.11"
 thiserror = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-window-state = "2"
 opener = { version = "0.8.5", default-features = false }
 tower-service = "0.3"
 
@@ -64,3 +73,6 @@ hudsucker = { path = "vendor/hudsucker-0.24.0" }
 
 [dev-dependencies]
 tempfile = "3"
+# `net` is not in the main tokio feature set; the proxy integration test drives
+# the proxy over a real TCP socket.
+tokio = { version = "1", features = ["net"] }

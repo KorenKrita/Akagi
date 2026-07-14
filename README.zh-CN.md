@@ -185,6 +185,20 @@ bot 配置，以及 CA 信任（仅 MITM 模式才需要）。没有 bot 要安�
    健康检查：`GET /ping` → `pong`。
 3. Windows 上常用 [Proxifier](https://www.proxifier.com/)
    把指定应用程序导向 proxy。
+4. **把 loopback 排除在重定向之外。** `localhost`、`127.0.0.1`、`::1`
+   一律走 Direct，不要经过 Akagi。
+
+> [!IMPORTANT]
+> 第 4 步不是可选的。游戏会通过 loopback 跟自己通信来处理内部事务，
+> 而「匹配游戏程序、目标为任意 host」的重定向规则会把这些 socket
+> 一并扫进 Akagi。Akagi 会拒绝它们（日志里会出现
+> `refusing CONNECT to loopback` 警告），但游戏仍可能出问题 —
+> 所以请从源头排除 loopback。
+>
+> Proxifier 的做法：**Profile → Proxification Rules**，启用内建的
+> **Localhost** 规则（Action: *Direct*），并把它拖到游戏规则的**上面**。
+> 顺序很重要 — Proxifier 只采用第一条命中的规则，Localhost
+> 规则排在游戏规则下面就永远不会生效。
 
 ---
 
@@ -383,6 +397,9 @@ session；点击行可看到原始结构化字段与源位置。
   `curl http://127.0.0.1:23410/ping` 应回应 `pong`。
   确认你的 proxy 重定向工具（Proxifier / 系统 proxy）
   正把游戏客户端送到正确的 host:port。
+- **MITM 模式下游戏卡在加载画面。** 多半是重定向工具把游戏的 loopback
+  流量也送进了 proxy。在日志里找 `refusing CONNECT to loopback`，
+  然后排除 `localhost`、`127.0.0.1`、`::1` — 见上方 MITM 设置第 4 步。
 - **Chromium 模式抓不到包。** Detect 没找到浏览器。
   在设置或 `config.toml` 里手动设置
   `capture.chromium.executable`。如果浏览器有启动但没

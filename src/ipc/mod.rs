@@ -34,9 +34,15 @@
 //! | `notify`           | `schema::Notification`        |
 //! | `analysis-result`  | `analysis::AnalysisResult`    |
 //! | `history-recorded` | `schema::HistoryEvent`        |
+//! | `overlay-config`   | `config::OverlayConfig`       |
+//!
+//! All of the above are broadcast to every webview, which is what lets the
+//! [`overlay`] window render suggestions without any dedicated plumbing.
+//! `overlay-config` is the exception: it is emitted to the overlay label only.
 
 pub mod capture_supervisor;
 pub mod commands;
+pub mod overlay;
 pub mod state;
 
 pub use state::AppState;

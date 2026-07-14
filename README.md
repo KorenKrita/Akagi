@@ -200,6 +200,20 @@ System-wide proxy with a self-signed root CA at `./ca/`:
    Health probe: `GET /ping` → `pong`.
 3. On Windows, [Proxifier](https://www.proxifier.com/) is the usual
    way to redirect a specific application to the proxy.
+4. **Exclude loopback from that redirection.** Send `localhost`,
+   `127.0.0.1` and `::1` direct, never through Akagi.
+
+> [!IMPORTANT]
+> Step 4 is not optional. Games talk to themselves over loopback for
+> internal bookkeeping, and a redirector rule that matches the game for
+> *any* target host will sweep those sockets into Akagi too. Akagi refuses
+> them (you will see a `refusing CONNECT to loopback` warning in the log),
+> but the game may still misbehave — so exclude loopback at the source.
+>
+> In Proxifier: **Profile → Proxification Rules**, enable the built-in
+> **Localhost** rule (Action: *Direct*) and drag it **above** your game
+> rule. Order matters — Proxifier takes the first rule that matches, so a
+> Localhost rule sitting below the game rule never fires.
 
 ---
 
@@ -402,6 +416,10 @@ Useful when debugging a bot or a bridge issue.
   running: `curl http://127.0.0.1:23410/ping` should reply `pong`.
   Check your proxy redirector (Proxifier / system proxy) is sending
   the game client to the right host:port.
+- **Game hangs on the loading screen in MITM mode.** Your redirector is
+  probably proxying the game's loopback traffic. Look for
+  `refusing CONNECT to loopback` in the log, then exclude `localhost`,
+  `127.0.0.1` and `::1` — see step 4 of the MITM setup above.
 - **Capture not working in Chromium mode.** Detect did not find your
   browser. Set `capture.chromium.executable` manually in Settings or
   `config.toml`. If the launched browser starts but no frames flow,

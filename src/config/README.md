@@ -61,12 +61,13 @@ bar = "default_value"
 
 ## Existing sections
 
-- `general` (`general.rs`) — `first_run_completed` flag controls whether the setup wizard is shown on app start. (UI language lives in the webview's `localStorage`, managed by i18next — not in this config.)
+- `general` (`general.rs`) — `first_run_completed` flag controls whether the setup wizard is shown on app start. `developer_mode` unlocks developer-only fields in the frontend (currently the `bot.api.base_url` editor); it gates the UI only — the backend honours whatever the config file says. (UI language lives in the webview's `localStorage`, managed by i18next — not in this config.)
 - `logging` (`logging.rs`) — log root dir, console default level (overridden by `RUST_LOG`), `all_level` severity filter for `all.log` (`EnvFilter` syntax).
 - `platform` (`platform.rs`) — game platform whose traffic to bridge. `kind` selects which `Bridge` impl runs in the capture pipeline. Currently only `Majsoul`.
 - `proxy` (`proxy.rs`) — MITM proxy enable flag, listen addr, CA cert dir, optional upstream proxy switch/URI. Authoritative when `capture.mode = "mitm"`.
 - `bot` (`bot.rs`) — AI bot enable flag, active bot subdir name (per player count), `mjai_bot/` root, and whether to run `uv sync` automatically before spawning. Also nests `[bot.api]` (`NativeApiConfig`): the built-in bot's optional cloud-inference settings — `enabled`, `base_url`, `key`, `model_4p`, `model_3p`. `is_active()` gates the remote path on all three of enabled + URL + key, and the bot re-reads this section at every decision, so edits apply mid-game. A missing `[bot.api]` in an older `config.toml` deserialises to "disabled".
 - `capture` (`capture.rs`) — selects the capture transport: `mitm` (uses `[proxy]`) or `chromium` (uses `[capture.chromium]`). Chromium mode launches a controlled browser and intercepts WebSocket frames via CDP — no proxy/CA setup needed.
+- `overlay` (`overlay.rs`) — the always-on-top suggestion window. `enabled` (default **true**) doubles as its lifecycle switch: `ipc::overlay::reconcile` opens or closes the window to match it, at startup and on every `update_config` / `set_overlay_enabled`, so both "I closed it" and "I left it open" survive a restart. A `config.toml` written before this section existed therefore gets the overlay switched on, which is the intent. `top_n` and `opacity` are bounds-checked by `clamped_top_n()` / `clamped_opacity()` rather than trusted, because `config.toml` is a text file a user can put `top_n = 0` into — which would render an overlay with no rows and no explanation.
 
 ## Notes
 
