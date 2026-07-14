@@ -91,6 +91,7 @@ export function NativeApiFields({
   const queryModels = async (v: NativeApiConfig): Promise<ModelInfo[]> => {
     const list = await invoke<ModelInfo[]>('native_api_models', {
       baseUrl: v.base_url,
+      proxy: v.proxy,
       key: v.key,
     })
     setModels(list)
@@ -142,6 +143,7 @@ export function NativeApiFields({
       setStatus(
         await invoke<KeyStatus>('native_api_key_status', {
           baseUrl: value.base_url,
+          proxy: value.proxy,
           key: value.key,
         }),
       )
@@ -196,6 +198,7 @@ export function NativeApiFields({
     try {
       const h = await invoke<{ status: string; models: string[] }>('native_api_health', {
         baseUrl: value.base_url,
+        proxy: value.proxy,
       })
       toast.success(t('bots.api.health_ok', { status: h.status }), {
         description: h.models.join(', '),
@@ -239,6 +242,19 @@ export function NativeApiFields({
           spellCheck={false}
           disabled={!devMode}
         />
+      </div>
+
+      <div className="grid gap-1.5">
+        <Label>{t('bots.api.proxy')}</Label>
+        <Input
+          value={value.proxy}
+          onChange={(e) => set({ proxy: e.target.value })}
+          placeholder="socks5://127.0.0.1:1080"
+          autoComplete="off"
+          spellCheck={false}
+          className="font-mono"
+        />
+        <span className="text-xs text-muted-foreground">{t('bots.api.proxy_hint')}</span>
       </div>
 
       <div className="grid gap-1.5">
@@ -368,6 +384,7 @@ export function NativeApiFields({
       {redeemOpen && (
         <RedeemDialog
           baseUrl={value.base_url}
+          proxy={value.proxy}
           currentKey={value.key}
           onClose={() => setRedeemOpen(false)}
           onNewKey={(key) => void adoptNewKey(key)}
@@ -377,6 +394,7 @@ export function NativeApiFields({
       {buyOpen && (
         <PurchaseDialog
           baseUrl={value.base_url}
+          proxy={value.proxy}
           currentKey={value.key}
           onClose={() => setBuyOpen(false)}
           onNewKey={(key) => void adoptNewKey(key)}
@@ -426,11 +444,13 @@ function Kv({ label, value }: { label: string; value: string }) {
 
 function RedeemDialog({
   baseUrl,
+  proxy,
   currentKey,
   onClose,
   onNewKey,
 }: {
   baseUrl: string
+  proxy: string
   currentKey: string
   onClose: () => void
   onNewKey: (key: string) => void
@@ -458,6 +478,7 @@ function RedeemDialog({
     try {
       const resp = await invoke<RedeemResponse>('native_api_redeem', {
         baseUrl,
+        proxy,
         code: code.trim(),
         email: email.trim() || undefined,
         renewKey: renew ? currentKey : undefined,

@@ -30,6 +30,11 @@ pub struct NativeApiConfig {
     pub model_4p: String,
     /// Model id for 3-player games. Empty ⇒ server default 3p model.
     pub model_3p: String,
+    /// Proxy for ALL requests to the inference server (react, key/models,
+    /// redeem, health, PayPal purchase). Accepts `http://host:port`,
+    /// `https://host:port`, `socks5://host:port` or `socks5h://host:port`
+    /// (the `h` variant resolves DNS through the proxy). Empty ⇒ direct.
+    pub proxy: String,
 }
 
 /// Default inference server. Pre-filled so users don't have to type it; the API
@@ -44,6 +49,7 @@ impl Default for NativeApiConfig {
             key: String::new(),
             model_4p: String::new(),
             model_3p: String::new(),
+            proxy: String::new(),
         }
     }
 }

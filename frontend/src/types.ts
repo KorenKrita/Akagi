@@ -119,6 +119,9 @@ export type NativeApiConfig = {
   key: string
   model_4p: string
   model_3p: string
+  /** Proxy for all inference-server traffic: http://, https://, socks5:// or
+   *  socks5h:// URL; empty = direct connection. */
+  proxy: string
 }
 
 /** The always-on-top suggestion overlay. Mirrors `crate::config::OverlayConfig`. */

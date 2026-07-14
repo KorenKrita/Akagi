@@ -1357,22 +1357,30 @@ pub async fn apply_update(
 #[tauri::command]
 pub async fn native_api_redeem(
     base_url: String,
+    proxy: Option<String>,
     code: String,
     email: Option<String>,
     renew_key: Option<String>,
 ) -> CmdResult<crate::bot::api::RedeemResponse> {
-    crate::bot::api::redeem(&base_url, &code, email.as_deref(), renew_key.as_deref())
-        .await
-        .map_err(|e| format!("{e:#}"))
+    crate::bot::api::redeem(
+        &base_url,
+        proxy.as_deref().unwrap_or(""),
+        &code,
+        email.as_deref(),
+        renew_key.as_deref(),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Fetch a key's plan / expiry / live limits (`GET /v3/key`).
 #[tauri::command]
 pub async fn native_api_key_status(
     base_url: String,
+    proxy: Option<String>,
     key: String,
 ) -> CmdResult<crate::bot::api::KeyStatus> {
-    crate::bot::api::ApiClient::new(&base_url, &key)
+    crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
         .map_err(|e| format!("{e:#}"))?
         .key_status()
         .await
@@ -1383,9 +1391,10 @@ pub async fn native_api_key_status(
 #[tauri::command]
 pub async fn native_api_models(
     base_url: String,
+    proxy: Option<String>,
     key: String,
 ) -> CmdResult<Vec<crate::bot::api::ModelInfo>> {
-    crate::bot::api::ApiClient::new(&base_url, &key)
+    crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
         .map_err(|e| format!("{e:#}"))?
         .models()
         .await
@@ -1394,8 +1403,11 @@ pub async fn native_api_models(
 
 /// Liveness + per-model queue depth (`GET /healthz`, no auth).
 #[tauri::command]
-pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::Health> {
-    crate::bot::api::health(&base_url)
+pub async fn native_api_health(
+    base_url: String,
+    proxy: Option<String>,
+) -> CmdResult<crate::bot::api::Health> {
+    crate::bot::api::health(&base_url, proxy.as_deref().unwrap_or(""))
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1418,10 +1430,11 @@ pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::H
 #[tauri::command]
 pub async fn native_api_create_order(
     base_url: String,
+    proxy: Option<String>,
     product: String,
     redeem: bool,
 ) -> CmdResult<crate::bot::purchase::CreatedOrder> {
-    crate::bot::purchase::create_order(&base_url, &product, redeem)
+    crate::bot::purchase::create_order(&base_url, proxy.as_deref().unwrap_or(""), &product, redeem)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1432,10 +1445,11 @@ pub async fn native_api_create_order(
 #[tauri::command]
 pub async fn native_api_order_result(
     base_url: String,
+    proxy: Option<String>,
     order_id: String,
     claim: String,
 ) -> CmdResult<crate::bot::purchase::OrderResult> {
-    crate::bot::purchase::order_result(&base_url, &order_id, &claim)
+    crate::bot::purchase::order_result(&base_url, proxy.as_deref().unwrap_or(""), &order_id, &claim)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1445,9 +1459,10 @@ pub async fn native_api_order_result(
 #[tauri::command]
 pub async fn native_api_create_subscription(
     base_url: String,
+    proxy: Option<String>,
     product: String,
 ) -> CmdResult<crate::bot::purchase::CreatedSubscription> {
-    crate::bot::purchase::create_subscription(&base_url, &product)
+    crate::bot::purchase::create_subscription(&base_url, proxy.as_deref().unwrap_or(""), &product)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1457,12 +1472,18 @@ pub async fn native_api_create_subscription(
 #[tauri::command]
 pub async fn native_api_subscription_result(
     base_url: String,
+    proxy: Option<String>,
     subscription_id: String,
     claim: String,
 ) -> CmdResult<crate::bot::purchase::SubscriptionResult> {
-    crate::bot::purchase::subscription_result(&base_url, &subscription_id, &claim)
-        .await
-        .map_err(|e| format!("{e:#}"))
+    crate::bot::purchase::subscription_result(
+        &base_url,
+        proxy.as_deref().unwrap_or(""),
+        &subscription_id,
+        &claim,
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 fn persist_config(config: &AppConfig, path: &Path) -> std::io::Result<()> {

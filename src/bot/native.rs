@@ -166,6 +166,8 @@ struct ApiSession {
     client: ApiClient,
     base_url: String,
     key: String,
+    /// Proxy URL the client was built with; part of the rebuild key.
+    proxy: String,
     /// Model id to request; empty ⇒ let the server pick its game default.
     model: String,
 }
@@ -188,6 +190,11 @@ pub struct NativeBot {
     notify_tx: NotifyBus,
     /// `Some` while cloud inference is configured (`enabled` + URL + key).
     api: Option<ApiSession>,
+    /// The (base_url, key, proxy, model) tuple that last failed client build
+    /// (e.g. an invalid proxy URL). Re-read every decision, so without this
+    /// the same broken config would re-attempt and re-toast on every move;
+    /// with it, the warning fires once until the user actually edits something.
+    api_failed: Option<(String, String, String, String)>,
     breaker: Breaker,
 }
 
@@ -210,6 +217,7 @@ impl NativeBot {
             stream: Vec::new(),
             notify_tx,
             api: None,
+            api_failed: None,
             breaker: Breaker::new(),
         })
     }
@@ -223,6 +231,7 @@ impl NativeBot {
     /// rather than after the current backoff window.
     fn apply_api_config(&mut self, cfg: &NativeApiConfig, announce: Announce) {
         if !cfg.is_active() {
+            self.api_failed = None;
             if self.api.take().is_some() {
                 self.breaker.reset();
                 self.notify(
@@ -237,22 +246,34 @@ impl NativeBot {
 
         let base_url = cfg.base_url.trim();
         let key = cfg.key.trim();
+        let proxy = cfg.proxy.trim();
         let model = cfg.model_for(self.num_players).trim().to_string();
-        let unchanged = self
-            .api
-            .as_ref()
-            .is_some_and(|s| s.base_url == base_url && s.key == key && s.model == model);
+        let unchanged = self.api.as_ref().is_some_and(|s| {
+            s.base_url == base_url && s.key == key && s.proxy == proxy && s.model == model
+        });
         if unchanged {
+            return;
+        }
+        // This exact config already failed to build a client — stay on the
+        // local model quietly instead of re-attempting (and re-toasting) on
+        // every decision. Any edit to the config clears the tombstone below.
+        if self
+            .api_failed
+            .as_ref()
+            .is_some_and(|f| f.0 == base_url && f.1 == key && f.2 == proxy && f.3 == model)
+        {
             return;
         }
 
         let was_off = self.api.is_none();
-        match ApiClient::new(base_url, key) {
+        match ApiClient::new(base_url, key, proxy) {
             Ok(client) => {
+                self.api_failed = None;
                 self.api = Some(ApiSession {
                     client,
                     base_url: base_url.to_string(),
                     key: key.to_string(),
+                    proxy: proxy.to_string(),
                     model: model.clone(),
                 });
                 self.breaker.reset();
@@ -275,10 +296,17 @@ impl NativeBot {
             }
             Err(e) => {
                 // Building the HTTP client failed — retrying won't help, so drop
-                // to the local model rather than opening a breaker window.
+                // to the local model rather than opening a breaker window, and
+                // remember the rejected config so this warns once, not per move.
                 let msg = format!("{e:#}");
                 warn!("native API: client setup failed ({msg}); using the local model");
                 self.api = None;
+                self.api_failed = Some((
+                    base_url.to_string(),
+                    key.to_string(),
+                    proxy.to_string(),
+                    model.clone(),
+                ));
                 self.notify(
                     Notification::warn("Cloud inference unavailable")
                         .body(msg)
@@ -945,6 +973,7 @@ mod tests {
             key: key.to_string(),
             model_4p: String::new(),
             model_3p: String::new(),
+            proxy: String::new(),
         }
     }
 
