@@ -18,6 +18,7 @@ import { InstallBlockingOverlay } from '@/components/InstallBlockingOverlay'
 import { NativeApiFields } from '@/components/NativeApiFields'
 import { invoke } from '@/lib/tauri'
 import { withInstallBlock } from '@/lib/install'
+import { checkApiBeforeSave } from '@/lib/nativeApi'
 import { mergeExternal } from '@/lib/merge'
 import { useTauriBridge } from '@/hooks/useTauriBridge'
 import { useConfigStore } from '@/stores/configStore'
@@ -126,6 +127,21 @@ export function Setup() {
       setBusy(true)
       setErr(null)
       try {
+        // Same guard as the Bots page Save: if cloud inference is enabled,
+        // the key must work before we let the wizard advance — otherwise Finish
+        // would persist an enabled-but-broken API that silently falls back to
+        // the local model. Checked here (not on Finish) so the error surfaces
+        // right by the API fields; the user must fix the key or turn it off.
+        const check = await checkApiBeforeSave(draft.bot.api)
+        if (!check.ok) {
+          setErr(
+            check.kind === 'missing'
+              ? `${t('bots.api.save_key_check_failed')} ${t('bots.api.need_url_key')}`
+              : `${t('bots.api.save_key_check_failed')} ${check.message}`,
+          )
+          setBusy(false)
+          return
+        }
         await saveBotSettings()
       } catch (e) {
         setErr(String(e))
