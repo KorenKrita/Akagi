@@ -22,7 +22,15 @@ function makeConfig(over: {
       active_3p: 'akagi-native3p',
       auto_sync: false,
       dir: '',
-      api: { enabled: false, base_url: '', key: '', model_4p: '', model_3p: '' },
+      api: {
+        enabled: false,
+        base_url: '',
+        key: '',
+        model_4p: '',
+        model_3p: '',
+        proxy_enabled: false,
+        proxy: '',
+      },
     },
     capture: {
       mode: over.mode ?? 'mitm',
