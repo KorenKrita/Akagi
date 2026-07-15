@@ -246,7 +246,9 @@ impl NativeBot {
 
         let base_url = cfg.base_url.trim();
         let key = cfg.key.trim();
-        let proxy = cfg.proxy.trim();
+        // Collapses the on/off toggle into the effective value, so flipping
+        // `proxy_enabled` alone changes this and rebuilds the client.
+        let proxy = cfg.effective_proxy();
         let model = cfg.model_for(self.num_players).trim().to_string();
         let unchanged = self.api.as_ref().is_some_and(|s| {
             s.base_url == base_url && s.key == key && s.proxy == proxy && s.model == model
@@ -973,6 +975,7 @@ mod tests {
             key: key.to_string(),
             model_4p: String::new(),
             model_3p: String::new(),
+            proxy_enabled: false,
             proxy: String::new(),
         }
     }
@@ -1454,6 +1457,33 @@ mod tests {
             "a settings change is an explicit retry signal"
         );
         assert_eq!(bot.api.as_ref().unwrap().key, "z".repeat(32));
+    }
+
+    #[tokio::test]
+    async fn toggling_the_proxy_flag_rebuilds_with_the_effective_proxy() {
+        let notify = crate::event_bus::notify_bus();
+        // A proxy is typed but the toggle is off: the session must stay direct.
+        let mut cfg = AppConfig::default();
+        cfg.bot.api = api_on(UNREACHABLE_BASE_URL, &"k".repeat(32));
+        cfg.bot.api.proxy = "socks5://127.0.0.1:1080".into();
+        let mut bot = bot_with(Arc::new(RwLock::new(cfg)), notify).await;
+        assert_eq!(
+            bot.api.as_ref().unwrap().proxy,
+            "",
+            "toggle off ⇒ client built direct even with a proxy set"
+        );
+
+        // Flip the toggle on (same URL/key/proxy string): the client rebuilds
+        // and now carries the effective proxy.
+        let mut on = api_on(UNREACHABLE_BASE_URL, &"k".repeat(32));
+        on.proxy = "socks5://127.0.0.1:1080".into();
+        on.proxy_enabled = true;
+        bot.apply_api_config(&on, Announce::ToUser);
+        assert_eq!(
+            bot.api.as_ref().unwrap().proxy,
+            "socks5://127.0.0.1:1080",
+            "toggle on ⇒ rebuilt with the effective proxy"
+        );
     }
 
     /// Switching the model id keeps the same server but re-requests under the new

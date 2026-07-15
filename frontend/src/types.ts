@@ -119,8 +119,10 @@ export type NativeApiConfig = {
   key: string
   model_4p: string
   model_3p: string
+  /** Whether `proxy` is applied. Off ⇒ direct even if `proxy` holds a value. */
+  proxy_enabled: boolean
   /** Proxy for all inference-server traffic: http://, https://, socks5:// or
-   *  socks5h:// URL; empty = direct connection. */
+   *  socks5h:// URL. Applied only when `proxy_enabled`; empty = direct. */
   proxy: string
 }
 
