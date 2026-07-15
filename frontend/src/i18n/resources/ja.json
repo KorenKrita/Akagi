@@ -503,6 +503,7 @@
       "topk": "候補数(top-k)",
       "saved": "クラウド推論の設定を保存しました",
       "save_failed": "設定の保存に失敗しました",
+      "save_key_check_failed": "クラウド推論を有効にしたままでは保存できません：APIキーの確認に失敗しました。キーを修正するか、APIをオフにしてください。",
       "check_key": "キーを確認",
       "checking": "確認中…",
       "fetch_models": "モデルを取得",

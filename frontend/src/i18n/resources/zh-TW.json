@@ -503,6 +503,7 @@
       "topk": "候選數(top-k)",
       "saved": "已儲存雲端推論設定",
       "save_failed": "儲存設定失敗",
+      "save_key_check_failed": "無法在啟用雲端推論的情況下儲存：金鑰檢查未通過。請修正金鑰，或關閉 API。",
       "check_key": "查詢金鑰",
       "checking": "查詢中…",
       "fetch_models": "取得模型",

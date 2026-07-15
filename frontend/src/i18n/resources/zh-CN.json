@@ -503,6 +503,7 @@
       "topk": "候选数(top-k)",
       "saved": "已保存云端推理设置",
       "save_failed": "保存设置失败",
+      "save_key_check_failed": "无法在启用云端推理的情况下保存：密钥检查未通过。请修正密钥，或关闭 API。",
       "check_key": "查询密钥",
       "checking": "查询中…",
       "fetch_models": "获取模型",

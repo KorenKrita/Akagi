@@ -503,6 +503,7 @@
       "topk": "Candidates (top-k)",
       "saved": "Cloud inference settings saved",
       "save_failed": "Failed to save settings",
+      "save_key_check_failed": "Can't save with cloud inference on: the API key check failed. Fix the key or turn the API off.",
       "check_key": "Check key",
       "checking": "Checking…",
       "fetch_models": "Fetch models",
