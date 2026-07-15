@@ -148,13 +148,14 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
-    /// Build a client for `base_url` authenticating with `key`. A trailing
-    /// slash on the URL is tolerated.
-    pub fn new(base_url: &str, key: &str) -> Result<Self> {
+    /// Build a client for `base_url` authenticating with `key`, optionally
+    /// routing through `proxy` (see [`http_client`]; empty ⇒ direct). A
+    /// trailing slash on the URL is tolerated.
+    pub fn new(base_url: &str, key: &str, proxy: &str) -> Result<Self> {
         Ok(Self {
             base: normalize_base(base_url),
             key: key.trim().to_string(),
-            http: build_http()?,
+            http: http_client(REQUEST_TIMEOUT, proxy)?,
         })
     }
 
@@ -235,12 +236,13 @@ impl ApiClient {
 /// keys to an account (ignored when `renew_key` is set).
 pub async fn redeem(
     base_url: &str,
+    proxy: &str,
     code: &str,
     email: Option<&str>,
     renew_key: Option<&str>,
 ) -> Result<RedeemResponse> {
     let base = normalize_base(base_url);
-    let http = build_http()?;
+    let http = http_client(REQUEST_TIMEOUT, proxy)?;
     let url = format!("{base}/v3/redeem");
     let body = RedeemRequest {
         code: code.trim(),
@@ -260,9 +262,9 @@ pub async fn redeem(
 }
 
 /// `GET /healthz` (no auth) — liveness + per-model queue depth.
-pub async fn health(base_url: &str) -> Result<Health> {
+pub async fn health(base_url: &str, proxy: &str) -> Result<Health> {
     let base = normalize_base(base_url);
-    let http = build_http()?;
+    let http = http_client(REQUEST_TIMEOUT, proxy)?;
     let url = format!("{base}/healthz");
     let resp = http.get(&url).send().await.context("GET /healthz")?;
     let resp = check(resp, "health").await?;
@@ -271,11 +273,37 @@ pub async fn health(base_url: &str) -> Result<Health> {
         .context("parse /healthz response")
 }
 
-fn build_http() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .context("build inference-API http client")
+/// Build the HTTP client all inference-server traffic goes through, honoring
+/// the user's proxy setting (`bot.api.proxy`). `proxy` accepts
+/// `http://`, `https://`, `socks5://` or `socks5h://` URLs (`socks5h` resolves
+/// DNS on the proxy — what you want when the server's name doesn't resolve
+/// locally); empty/whitespace ⇒ direct connection. Shared with
+/// [`crate::bot::purchase`], so the whole `/v3` + `/paypal` surface follows
+/// one setting.
+pub(crate) fn http_client(timeout: Duration, proxy: &str) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder().timeout(timeout);
+    let proxy = proxy.trim();
+    if !proxy.is_empty() {
+        // Scheme match is case-insensitive (RFC 3986; the url crate lowercases
+        // on parse anyway) — `HTTP://…` pasted from a provider dashboard works.
+        const SCHEMES: [&str; 4] = ["http://", "https://", "socks5://", "socks5h://"];
+        let scheme_ok = SCHEMES.iter().any(|s| {
+            proxy
+                .get(..s.len())
+                .is_some_and(|p| p.eq_ignore_ascii_case(s))
+        });
+        // Never echo the proxy string into errors: proxy URLs routinely carry
+        // credentials (`socks5://user:pass@host`), and these messages end up
+        // in toasts AND in the persisted session log (which users attach to
+        // bug reports). The user just typed the value — no diagnostic value
+        // in repeating it.
+        if !scheme_ok {
+            bail!("unsupported proxy scheme: use http://, https://, socks5:// or socks5h://");
+        }
+        let p = reqwest::Proxy::all(proxy).context("invalid proxy URL")?;
+        builder = builder.proxy(p);
+    }
+    builder.build().context("build inference-API http client")
 }
 
 pub(crate) fn normalize_base(base_url: &str) -> String {
@@ -315,6 +343,54 @@ pub(crate) async fn check(resp: reqwest::Response, what: &str) -> Result<reqwest
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_client_accepts_supported_proxy_schemes_and_empty() {
+        for p in [
+            "",
+            "  ",
+            "http://127.0.0.1:7890",
+            "https://p:8443",
+            "socks5://127.0.0.1:1080",
+            "socks5h://127.0.0.1:1080",
+            // Schemes are case-insensitive (RFC 3986).
+            "HTTP://127.0.0.1:7890",
+            "SOCKS5h://127.0.0.1:1080",
+        ] {
+            assert!(
+                http_client(REQUEST_TIMEOUT, p).is_ok(),
+                "proxy {p:?} should build"
+            );
+        }
+    }
+
+    #[test]
+    fn http_client_rejects_unknown_proxy_scheme() {
+        for p in [
+            "ftp://x",
+            "socks4://127.0.0.1:1080",
+            "127.0.0.1:7890",
+            "socks5:/bad",
+        ] {
+            let err = http_client(REQUEST_TIMEOUT, p).unwrap_err();
+            assert!(
+                format!("{err:#}").contains("unsupported proxy scheme"),
+                "proxy {p:?} should be rejected with a clear message, got: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_errors_never_echo_the_credentials() {
+        // Proxy URLs often carry `user:pass@host`; the error text lands in
+        // toasts and persisted logs, so it must not contain the secret.
+        let err = http_client(REQUEST_TIMEOUT, "socks4://user:sekret@10.0.0.1:1080").unwrap_err();
+        let text = format!("{err:#}");
+        assert!(
+            !text.contains("sekret") && !text.contains("10.0.0.1"),
+            "error text leaked the proxy string: {text}"
+        );
+    }
 
     #[test]
     fn normalize_trims_trailing_slash_and_space() {
@@ -423,7 +499,7 @@ mod tests {
             r#"{"reaction":{"type":"none"},"candidates":[{"action":"none","prob":1.0}],"model":"4p-x"}"#
                 .into(),
         )]);
-        let client = ApiClient::new(&base, "SECRETKEY").unwrap();
+        let client = ApiClient::new(&base, "SECRETKEY", "").unwrap();
         let resp = client
             .react(
                 Some("4p-x"),
@@ -458,7 +534,7 @@ mod tests {
                 r#"{"models":[{"id":"4p-x","game":"4p","desc":"d"}]}"#.into(),
             ),
         ]);
-        let client = ApiClient::new(&base, "SECRETKEY").unwrap();
+        let client = ApiClient::new(&base, "SECRETKEY", "").unwrap();
         assert_eq!(client.key_status().await.unwrap().plan, "basic");
         assert_eq!(client.models().await.unwrap()[0].id, "4p-x");
 
@@ -480,9 +556,9 @@ mod tests {
             ),
             ("200 OK", r#"{"status":"ok","models":["4p-x"]}"#.into()),
         ]);
-        let r = redeem(&base, " CODE ", Some(" "), None).await.unwrap();
+        let r = redeem(&base, "", " CODE ", Some(" "), None).await.unwrap();
         assert_eq!(r.key.as_deref(), Some("K"));
-        assert_eq!(health(&base).await.unwrap().status, "ok");
+        assert_eq!(health(&base, "").await.unwrap().status, "ok");
 
         let reqs = served.join().unwrap();
         assert!(reqs[0].starts_with("POST /v3/redeem "), "{}", reqs[0]);
@@ -494,6 +570,76 @@ mod tests {
         assert!(header(&reqs[1], "authorization").is_none());
     }
 
+    /// End-to-end through a mock SOCKS5 proxy: greeting → no-auth → CONNECT
+    /// (domain ATYP, i.e. DNS resolved BY the proxy — `socks5h`) → success →
+    /// plain HTTP inside the tunnel. Locks in that socks support is actually
+    /// compiled into reqwest — without the `socks` feature this whole path
+    /// fails at `Proxy::all` and the setting would silently be unusable.
+    #[tokio::test]
+    async fn socks5h_proxy_tunnels_the_request_and_resolves_dns_remotely() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let served = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 512];
+            let n = s.read(&mut buf).unwrap();
+            assert!(
+                n >= 2 && buf[0] == 0x05,
+                "not a SOCKS5 greeting: {:?}",
+                &buf[..n]
+            );
+            s.write_all(&[0x05, 0x00]).unwrap(); // no-auth accepted
+            let n = s.read(&mut buf).unwrap();
+            assert!(n >= 4 && buf[1] == 0x01, "not a CONNECT: {:?}", &buf[..n]);
+            // ATYP 0x03 = domain name: the client did NOT resolve locally.
+            assert_eq!(buf[3], 0x03, "expected domain ATYP, got {:#x}", buf[3]);
+            s.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                .unwrap();
+            // From here the socket IS the tunnel — speak plain HTTP on it.
+            let mut req = Vec::new();
+            let mut tmp = [0u8; 1024];
+            loop {
+                let n = s.read(&mut tmp).unwrap();
+                req.extend_from_slice(&tmp[..n]);
+                if n == 0 || req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let body = r#"{"status":"ok","models":[]}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            s.write_all(resp.as_bytes()).unwrap();
+            String::from_utf8_lossy(&req).to_string()
+        });
+        // The target host doesn't exist — the request can only succeed by
+        // going through the mock proxy.
+        let h = health("http://ot.invalid:8080", &format!("socks5h://{addr}"))
+            .await
+            .unwrap();
+        assert_eq!(h.status, "ok");
+        let req = served.join().unwrap();
+        assert!(req.starts_with("GET /healthz HTTP/1.1"), "{req}");
+    }
+
+    /// Plain HTTP proxying is the same request with an absolute URI in the
+    /// request line — `mock_http` can play the proxy directly.
+    #[tokio::test]
+    async fn http_proxy_receives_the_absolute_form_request() {
+        let (proxy_base, served) =
+            mock_http(vec![("200 OK", r#"{"status":"ok","models":[]}"#.into())]);
+        let h = health("http://ot.invalid:8080", &proxy_base).await.unwrap();
+        assert_eq!(h.status, "ok");
+        let reqs = served.join().unwrap();
+        assert!(
+            reqs[0].starts_with("GET http://ot.invalid:8080/healthz"),
+            "expected an absolute-form request line, got: {}",
+            reqs[0]
+        );
+    }
+
     /// A non-2xx surfaces the server's `error` message and the `Retry-After` hint.
     #[tokio::test]
     async fn http_error_carries_the_server_message() {
@@ -501,7 +647,7 @@ mod tests {
             "429 Too Many Requests",
             r#"{"error":"rate limited"}"#.into(),
         )]);
-        let client = ApiClient::new(&base, "K").unwrap();
+        let client = ApiClient::new(&base, "K", "").unwrap();
         let err = client.key_status().await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("429"), "{msg}");

@@ -41,6 +41,7 @@ import type { AppConfig, BotInfo, BotSettings, NativeApiConfig } from '@/types'
 import { ManifestField } from '@/components/ManifestField'
 import { NativeApiFields } from '@/components/NativeApiFields'
 import { persistApiConfig } from '@/lib/nativeApi'
+import { proxyConfigValid } from '@/lib/proxy'
 import { mergeExternal } from '@/lib/merge'
 
 // Reserved names of the built-in, pure-Rust bots (see `src/bot/native.rs`).
@@ -694,7 +695,7 @@ function NativeApiSettings() {
       <CardContent className="grid gap-4">
         <NativeApiFields value={draft} onChange={setDraft} onKeyMinted={persistApiConfig} />
         <div className="border-t border-border pt-3">
-          <Button onClick={save} disabled={saving || !dirty}>
+          <Button onClick={save} disabled={saving || !dirty || !proxyConfigValid(draft)}>
             {saving ? t('common.saving') : t('common.save')}
           </Button>
         </div>
