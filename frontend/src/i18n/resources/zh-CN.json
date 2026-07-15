@@ -123,6 +123,9 @@
     "detail_fields": "字段"
   },
   "inspector": {
+    "direction": "方向",
+    "direction_all": "全部方向",
+    "detail_injected": "已注入",
     "kind": "显示",
     "kind_ws_frame": "封包",
     "kind_mjai_event": "MJAI",
@@ -332,6 +335,10 @@
     "unsaved_desc": "你有尚未保存的设置更改。请选择保存后离开、放弃更改，或留在此页继续编辑。",
     "save_and_leave": "保存并离开",
     "autoplay": {
+      "mode": "发送模式",
+      "mode_packet_with_click_fallback": "封包，失败时点击兜底",
+      "mode_packet": "仅封包",
+      "mode_click": "仅点击",
       "title": "自动打牌",
       "enable": "启用自动打牌",
       "enable_help": "启用后 Akagi 会自动在雀魂界面上点击 bot 选定的动作。需要 Chromium 抓包模式以及打开的游戏标签页。",
@@ -476,6 +483,8 @@
     "native_builtin": "内建 · 免安装",
     "native_version": "内建",
     "api": {
+      "use_system_proxy": "使用系统代理",
+      "use_system_proxy_hint": "通过系统代理发送云端推理请求。",
       "title": "云端推理(内建 Bot)",
       "desc": "可选择将内建 Bot 的每一步交给远程推理服务器，使用更强的模型。若服务器无法连接，会自动回退到离线的本地模型。",
       "apply_immediately": "更改在保存后立即生效，对局进行中也一样。",

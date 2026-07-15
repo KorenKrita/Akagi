@@ -35,14 +35,32 @@ where
     let addr = SocketAddr::from_str(&config.addr)
         .with_context(|| format!("Invalid proxy addr: {}", config.addr))?;
 
-    let handler = ProxyHandler::new(session.clone(), platform, mjai_tx, notify_tx, force_close)?;
+    let handler = ProxyHandler::new(
+        session.clone(),
+        platform,
+        mjai_tx,
+        notify_tx,
+        force_close,
+        config.force_mitm_all,
+    )?;
+
+    let upstream_proxy = if config.upstream_enabled {
+        config
+            .upstream
+            .as_deref()
+            .map(str::parse)
+            .transpose()
+            .context("Invalid upstream proxy URI")?
+    } else {
+        None
+    };
 
     info!("Starting proxy on {addr}");
 
     let proxy = Proxy::builder()
         .with_addr(addr)
         .with_ca(ca)
-        .with_http_connector(upstream::http_connector())
+        .with_http_connector(upstream::http_connector(upstream_proxy)?)
         .with_http_handler(handler.clone())
         .with_websocket_handler(handler)
         .with_websocket_connector(upstream::websocket_connector())

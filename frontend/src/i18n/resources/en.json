@@ -123,6 +123,9 @@
     "detail_fields": "Fields"
   },
   "inspector": {
+    "direction": "Direction",
+    "direction_all": "All directions",
+    "detail_injected": "Injected",
     "kind": "Show",
     "kind_ws_frame": "WS",
     "kind_mjai_event": "MJAI",
@@ -332,6 +335,10 @@
     "unsaved_desc": "You have unsaved settings changes. Save them before leaving, discard them, or stay on this page.",
     "save_and_leave": "Save & leave",
     "autoplay": {
+      "mode": "Dispatch mode",
+      "mode_packet_with_click_fallback": "Packet, then click fallback",
+      "mode_packet": "Packets only",
+      "mode_click": "Clicks only",
       "title": "Autoplay",
       "enable": "Enable autoplay",
       "enable_help": "When enabled, Akagi clicks the bot's chosen action on the Mahjong Soul board automatically. Requires the Chromium capture mode and a running game tab.",
@@ -476,6 +483,8 @@
     "native_builtin": "Built-in · no install",
     "native_version": "built-in",
     "api": {
+      "use_system_proxy": "Use system proxy",
+      "use_system_proxy_hint": "Route cloud inference requests through the system proxy.",
       "title": "Cloud inference (built-in bot)",
       "desc": "Optionally route the built-in bot's moves to a remote inference server for a stronger model. The offline local model stays as an automatic fallback if the server is unreachable.",
       "apply_immediately": "Changes take effect immediately after saving, even during a game.",

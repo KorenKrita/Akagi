@@ -29,6 +29,13 @@ pub struct AutoplayContext {
     pub canvas_rect: Arc<RwLock<Option<CanvasRect>>>,
     pub packet_bridge: Arc<RwLock<Option<SharedBridge>>>,
     pub packet_ws_url: Arc<RwLock<Option<String>>>,
+    /// The most recently connected gameplay flow, used as the fallback when
+    /// no ActionPrototype flow has been observed yet.
+    pub fallback_page: Arc<RwLock<Option<Page>>>,
+    pub fallback_packet_bridge: Arc<RwLock<Option<SharedBridge>>>,
+    pub fallback_packet_ws_url: Arc<RwLock<Option<String>>>,
+    /// Flow id that most recently delivered a gameplay ActionPrototype.
+    pub preferred_packet_flow: Arc<RwLock<Option<String>>>,
     injected_ws_frames: Arc<Mutex<VecDeque<u64>>>,
 }
 

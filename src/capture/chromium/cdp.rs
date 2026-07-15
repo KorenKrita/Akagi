@@ -265,6 +265,7 @@ async fn attach_page(
         // so we know which WS close to react to when clearing the page
         // handle from the autoplay context.
         let mut autoplay_request_id: Option<String> = None;
+        let mut autoplay_urls: HashMap<String, String> = HashMap::new();
         loop {
             tokio::select! {
                 Some(ev) = on_created.next() => {
@@ -275,6 +276,7 @@ async fn attach_page(
                     let label = format!("ws {}", ev.url);
                     let slug = slugify(&ev.url);
                     let bridge = bridges.acquire(key, &slug, &label);
+                    autoplay_urls.insert(ev.request_id.inner().clone(), ev.url.clone());
                     debug!("ws created: {} (target {target_id} request {})", ev.url, ev.request_id.inner());
 
                     // If this is the platform's WS (Majsoul), capture
@@ -283,15 +285,17 @@ async fn attach_page(
                     // the plan.
                     if let Some(ctx) = &autoplay {
                         if is_autoplay_target_url(&ev.url) {
-                            let mut guard = ctx.page.write().await;
-                            if guard.is_some() {
-                                warn!(
-                                    "autoplay: replacing page handle on new WS for target {target_id}"
-                                );
+                            *ctx.fallback_page.write().await = Some(page.clone());
+                            *ctx.fallback_packet_bridge.write().await = Some(bridge.clone());
+                            *ctx.fallback_packet_ws_url.write().await = Some(ev.url.clone());
+                            // Until a gameplay ActionPrototype identifies a
+                            // better flow, the last connected flow remains
+                            // the packet-dispatch target.
+                            if ctx.preferred_packet_flow.read().await.is_none() {
+                                *ctx.page.write().await = Some(page.clone());
+                                *ctx.packet_bridge.write().await = Some(bridge.clone());
+                                *ctx.packet_ws_url.write().await = Some(ev.url.clone());
                             }
-                            *guard = Some(page.clone());
-                            *ctx.packet_bridge.write().await = Some(bridge.clone());
-                            *ctx.packet_ws_url.write().await = Some(ev.url.clone());
                             autoplay_request_id = Some(ev.request_id.inner().clone());
                             info!(
                                 "autoplay: page handle bound to target {target_id} via WS {}",
@@ -320,6 +324,24 @@ async fn attach_page(
                         let mut b = bridge.lock().expect("bridge mutex poisoned");
                         b.parse(Direction::Down, &payload)
                     };
+                    if let Some(ctx) = &autoplay {
+                        if result
+                            .parsed
+                            .as_ref()
+                            .is_some_and(|p| p.method == ".lq.ActionPrototype")
+                        {
+                            *ctx.preferred_packet_flow.write().await = Some(flow_id.clone());
+                            *ctx.page.write().await = Some(page.clone());
+                            *ctx.packet_bridge.write().await = Some(bridge.clone());
+                            *ctx.packet_ws_url.write().await = Some(
+                                autoplay_urls
+                                    .get(ev.request_id.inner())
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            );
+                            info!("autoplay: packet target selected from ActionPrototype flow {flow_id}");
+                        }
+                    }
                     record_frame(
                         &inspector,
                         FrameDirection::Down,
@@ -377,6 +399,7 @@ async fn attach_page(
                         target: target_id.clone(),
                         request: ev.request_id.inner().clone(),
                     };
+                    let flow_id = format_flow_id(&key);
                     debug!("ws closed: target={target_id} request={}", ev.request_id.inner());
                     // Synthetic empty bridge ref so we can call release.
                     // FlowBridges::release reaps the entry when no other
@@ -389,9 +412,15 @@ async fn attach_page(
                     // restart, network blip) re-binds it from `on_created`.
                     if let (Some(ctx), Some(req)) = (&autoplay, &autoplay_request_id) {
                         if *req == *ev.request_id.inner() {
-                            *ctx.page.write().await = None;
-                            *ctx.packet_bridge.write().await = None;
-                            *ctx.packet_ws_url.write().await = None;
+                            let preferred = ctx.preferred_packet_flow.read().await.clone();
+                            if preferred.as_deref() == Some(flow_id.as_str()) {
+                                *ctx.preferred_packet_flow.write().await = None;
+                                *ctx.page.write().await = ctx.fallback_page.read().await.clone();
+                                *ctx.packet_bridge.write().await =
+                                    ctx.fallback_packet_bridge.read().await.clone();
+                                *ctx.packet_ws_url.write().await =
+                                    ctx.fallback_packet_ws_url.read().await.clone();
+                            }
                             autoplay_request_id = None;
                             debug!("autoplay: page handle cleared on WS close for target {target_id}");
                         }

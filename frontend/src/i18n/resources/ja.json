@@ -123,6 +123,9 @@
     "detail_fields": "フィールド"
   },
   "inspector": {
+    "direction": "方向",
+    "direction_all": "すべての方向",
+    "detail_injected": "注入済み",
     "kind": "表示",
     "kind_ws_frame": "WS",
     "kind_mjai_event": "MJAI",
@@ -332,6 +335,10 @@
     "unsaved_desc": "未保存の設定変更があります。保存して離れる、変更を破棄する、またはこのページに留まるか選択してください。",
     "save_and_leave": "保存して離れる",
     "autoplay": {
+      "mode": "送信モード",
+      "mode_packet_with_click_fallback": "パケット、失敗時クリック",
+      "mode_packet": "パケットのみ",
+      "mode_click": "クリックのみ",
       "title": "自動操作",
       "enable": "自動操作を有効化",
       "enable_help": "有効にすると、ボットが選んだ操作をAkagiが雀魂のクライアント上で自動的にクリックします。Chromiumキャプチャモードと開いているゲームタブが必要です。",
@@ -476,6 +483,8 @@
     "native_builtin": "内蔵 · インストール不要",
     "native_version": "内蔵",
     "api": {
+      "use_system_proxy": "システムプロキシを使用",
+      "use_system_proxy_hint": "クラウド推論リクエストにシステムプロキシを使用します。",
       "title": "クラウド推論(内蔵ボット)",
       "desc": "内蔵ボットの着手をリモート推論サーバーに問い合わせ、より強力なモデルを使用できます。サーバーに接続できない場合は、オフラインのローカルモデルへ自動的にフォールバックします。",
       "apply_immediately": "変更は保存後、対局中でもすぐに反映されます。",
