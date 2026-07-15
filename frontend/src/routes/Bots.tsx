@@ -40,7 +40,7 @@ import { useConfigStore } from '@/stores/configStore'
 import type { AppConfig, BotInfo, BotSettings, NativeApiConfig } from '@/types'
 import { ManifestField } from '@/components/ManifestField'
 import { NativeApiFields } from '@/components/NativeApiFields'
-import { persistApiConfig } from '@/lib/nativeApi'
+import { checkApiBeforeSave, persistApiConfig } from '@/lib/nativeApi'
 import { proxyConfigValid } from '@/lib/proxy'
 import { mergeExternal } from '@/lib/merge'
 
@@ -658,6 +658,17 @@ function NativeApiSettings() {
   const save = async (): Promise<boolean> => {
     setSaving(true)
     try {
+      // With cloud inference enabled, refuse to persist a key that doesn't
+      // work: a saved-but-broken key silently falls back to the local model
+      // every turn, so the user would think the API is on when it isn't. Block
+      // the save and surface why — they must fix the key or turn the API off.
+      const check = await checkApiBeforeSave(draft)
+      if (!check.ok) {
+        toast.error(t('bots.api.save_key_check_failed'), {
+          description: check.kind === 'missing' ? t('bots.api.need_url_key') : check.message,
+        })
+        return false
+      }
       const next = { ...config, bot: { ...config.bot, api: draft } }
       await invoke('update_config', { newConfig: next })
       setConfig(next)
