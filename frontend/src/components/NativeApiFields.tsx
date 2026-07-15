@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   XCircle,
   Lock,
+  Info,
+  Network,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,11 +25,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { invoke } from '@/lib/tauri'
 import { toast } from '@/components/ui/sonner'
 import { PurchaseDialog } from '@/components/PurchaseDialog'
 import { useConfigStore } from '@/stores/configStore'
 import { usePurchaseStore, type PurchasePhase } from '@/stores/purchaseStore'
+import { effectiveProxy, isValidProxyUrl } from '@/lib/proxy'
 import type { KeyStatus, ModelInfo, NativeApiConfig, RedeemResponse } from '@/types'
 
 /**
@@ -61,6 +70,7 @@ export function NativeApiFields({
   const [checking, setChecking] = useState(false)
   const [enabling, setEnabling] = useState(false)
   const [checkingHealth, setCheckingHealth] = useState(false)
+  const [testingProxy, setTestingProxy] = useState(false)
   const [loadingModels, setLoadingModels] = useState(false)
   const [status, setStatus] = useState<KeyStatus | null>(null)
   const [models, setModels] = useState<ModelInfo[] | null>(null)
@@ -91,6 +101,7 @@ export function NativeApiFields({
   const queryModels = async (v: NativeApiConfig): Promise<ModelInfo[]> => {
     const list = await invoke<ModelInfo[]>('native_api_models', {
       baseUrl: v.base_url,
+      proxy: effectiveProxy(v),
       key: v.key,
     })
     setModels(list)
@@ -142,6 +153,7 @@ export function NativeApiFields({
       setStatus(
         await invoke<KeyStatus>('native_api_key_status', {
           baseUrl: value.base_url,
+          proxy: effectiveProxy(value),
           key: value.key,
         }),
       )
@@ -196,6 +208,7 @@ export function NativeApiFields({
     try {
       const h = await invoke<{ status: string; models: string[] }>('native_api_health', {
         baseUrl: value.base_url,
+        proxy: effectiveProxy(value),
       })
       toast.success(t('bots.api.health_ok', { status: h.status }), {
         description: h.models.join(', '),
@@ -204,6 +217,29 @@ export function NativeApiFields({
       setErr(String(e))
     } finally {
       setCheckingHealth(false)
+    }
+  }
+
+  // Verify the proxy actually carries traffic: a health check forced through
+  // the typed proxy. The button is only reachable with a valid, enabled proxy,
+  // so reaching the server proves the tunnel works end to end.
+  const testProxy = async () => {
+    if (value.base_url.trim() === '') {
+      setErr(t('bots.api.need_url'))
+      return
+    }
+    setTestingProxy(true)
+    setErr(null)
+    try {
+      const h = await invoke<{ status: string; models: string[] }>('native_api_health', {
+        baseUrl: value.base_url,
+        proxy: value.proxy.trim(),
+      })
+      toast.success(t('bots.api.proxy_ok', { status: h.status }))
+    } catch (e) {
+      setErr(String(e))
+    } finally {
+      setTestingProxy(false)
     }
   }
 
@@ -239,6 +275,54 @@ export function NativeApiFields({
           spellCheck={false}
           disabled={!devMode}
         />
+      </div>
+
+      <div className="grid gap-1.5">
+        <div className="flex items-center justify-between gap-4">
+          <Label className="flex items-center gap-1.5">
+            {t('bots.api.proxy')}
+            <TooltipProvider>
+              <Tooltip delayDuration={100}>
+                <TooltipTrigger asChild>
+                  <Info className="h-3.5 w-3.5 cursor-help text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent side="right">{t('bots.api.proxy_hint')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </Label>
+          <Switch
+            checked={value.proxy_enabled}
+            onCheckedChange={(on) => set({ proxy_enabled: on })}
+          />
+        </div>
+        <div className="flex gap-2">
+          <Input
+            value={value.proxy}
+            onChange={(e) => set({ proxy: e.target.value })}
+            placeholder="socks5://127.0.0.1:1080"
+            autoComplete="off"
+            spellCheck={false}
+            className="font-mono"
+            disabled={!value.proxy_enabled}
+          />
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0"
+            onClick={testProxy}
+            disabled={testingProxy || !value.proxy_enabled || !isValidProxyUrl(value.proxy)}
+            title={t('bots.api.test_proxy')}
+          >
+            {testingProxy ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <Network className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+        {value.proxy_enabled && !isValidProxyUrl(value.proxy) && (
+          <span className="text-xs text-red-400">{t('bots.api.proxy_invalid')}</span>
+        )}
       </div>
 
       <div className="grid gap-1.5">
@@ -368,6 +452,7 @@ export function NativeApiFields({
       {redeemOpen && (
         <RedeemDialog
           baseUrl={value.base_url}
+          proxy={effectiveProxy(value)}
           currentKey={value.key}
           onClose={() => setRedeemOpen(false)}
           onNewKey={(key) => void adoptNewKey(key)}
@@ -377,6 +462,7 @@ export function NativeApiFields({
       {buyOpen && (
         <PurchaseDialog
           baseUrl={value.base_url}
+          proxy={effectiveProxy(value)}
           currentKey={value.key}
           onClose={() => setBuyOpen(false)}
           onNewKey={(key) => void adoptNewKey(key)}
@@ -426,11 +512,13 @@ function Kv({ label, value }: { label: string; value: string }) {
 
 function RedeemDialog({
   baseUrl,
+  proxy,
   currentKey,
   onClose,
   onNewKey,
 }: {
   baseUrl: string
+  proxy: string
   currentKey: string
   onClose: () => void
   onNewKey: (key: string) => void
@@ -458,6 +546,7 @@ function RedeemDialog({
     try {
       const resp = await invoke<RedeemResponse>('native_api_redeem', {
         baseUrl,
+        proxy,
         code: code.trim(),
         email: email.trim() || undefined,
         renewKey: renew ? currentKey : undefined,

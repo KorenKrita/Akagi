@@ -30,6 +30,16 @@ pub struct NativeApiConfig {
     pub model_4p: String,
     /// Model id for 3-player games. Empty ⇒ server default 3p model.
     pub model_3p: String,
+    /// Whether [`Self::proxy`] is applied. When false the server is reached
+    /// directly even if `proxy` holds a value, so a configured proxy can be
+    /// switched off without losing the typed URL. Defaults off.
+    pub proxy_enabled: bool,
+    /// Proxy for ALL requests to the inference server (react, key/models,
+    /// redeem, health, PayPal purchase). Accepts `http://host:port`,
+    /// `https://host:port`, `socks5://host:port` or `socks5h://host:port`
+    /// (the `h` variant resolves DNS through the proxy). Applied only when
+    /// [`Self::proxy_enabled`]; empty ⇒ direct.
+    pub proxy: String,
 }
 
 /// Default inference server. Pre-filled so users don't have to type it; the API
@@ -44,6 +54,8 @@ impl Default for NativeApiConfig {
             key: String::new(),
             model_4p: String::new(),
             model_3p: String::new(),
+            proxy_enabled: false,
+            proxy: String::new(),
         }
     }
 }
@@ -64,6 +76,37 @@ impl NativeApiConfig {
         } else {
             &self.model_4p
         }
+    }
+
+    /// The proxy actually used for inference-server traffic: the trimmed
+    /// [`Self::proxy`] when [`Self::proxy_enabled`], else `""` (direct). Keeps
+    /// the toggle authoritative in one place so a disabled-but-nonempty `proxy`
+    /// never leaks into a client build.
+    pub fn effective_proxy(&self) -> &str {
+        if self.proxy_enabled {
+            self.proxy.trim()
+        } else {
+            ""
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_proxy_honors_the_toggle() {
+        let mut cfg = NativeApiConfig {
+            proxy: "  socks5://127.0.0.1:1080  ".to_string(),
+            ..Default::default()
+        };
+        // Disabled: the configured value is kept but never applied.
+        assert!(!cfg.proxy_enabled);
+        assert_eq!(cfg.effective_proxy(), "");
+        // Enabled: the trimmed value is used.
+        cfg.proxy_enabled = true;
+        assert_eq!(cfg.effective_proxy(), "socks5://127.0.0.1:1080");
     }
 }
 
