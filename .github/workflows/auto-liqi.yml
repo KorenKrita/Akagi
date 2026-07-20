@@ -25,52 +25,40 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install requests
-        run: python -m pip install --upgrade requests
+      - name: Install extractor dependencies
+        run: python -m pip install --upgrade requests "UnityPy==1.25.2" protobuf
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install protobufjs-cli
-        run: npm install -g protobufjs protobufjs-cli
-
-      - name: Fetch latest liqi.json
-        id: fetch
-        run: python scripts/fetch_liqi.py
-
-      - name: Regenerate liqi.proto
-        if: steps.fetch.outputs.changed == 'true'
-        run: |
-          pbjs -t proto3 src/bridge/majsoul/liqi.json \
-            > src/bridge/majsoul/proto/liqi.proto
+      - name: Extract liqi from the Unity client
+        id: extract
+        run: python scripts/extract_liqi.py
 
       - name: Open PR
-        if: steps.fetch.outputs.changed == 'true'
+        if: steps.extract.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           base: v3
-          branch: auto/liqi-${{ steps.fetch.outputs.version }}
+          branch: auto/liqi-${{ steps.extract.outputs.product_version }}
           delete-branch: true
           commit-message: |
-            chore(majsoul): update liqi.proto/liqi.json to ${{ steps.fetch.outputs.version }}
+            chore(majsoul): update liqi.proto/liqi.json to ${{ steps.extract.outputs.product_version }}
 
-            prefix: ${{ steps.fetch.outputs.liqi_prefix }}
-          title: "chore(majsoul): update liqi to ${{ steps.fetch.outputs.version }}"
+            bundle_hash: ${{ steps.extract.outputs.bundle_hash }}
+          title: "chore(majsoul): update liqi to ${{ steps.extract.outputs.product_version }}"
           body: |
             Automated update of Mahjong Soul protocol definitions.
 
-            - Game version: `${{ steps.fetch.outputs.version }}`
-            - Resource prefix: `${{ steps.fetch.outputs.liqi_prefix }}`
-            - Source: `https://game.maj-soul.com/1/${{ steps.fetch.outputs.liqi_prefix }}/res/proto/liqi.json`
+            - Client productVersion: `${{ steps.extract.outputs.product_version }}`
+            - Bundle hash: `${{ steps.extract.outputs.bundle_hash }}`
 
-            `liqi.proto` regenerated from `liqi.json` via `pbjs -t proto3`.
+            Reconstructed directly from the Mahjong Soul Unity client asset
+            bundles (protobuf descriptors in `Protol/*_pb.lua`, service table in
+            `docs/proto_config.bytes`) by `scripts/extract_liqi.py`. No external
+            proto release is involved.
 
-            Review the diff before merging — the proto fuels `build.rs`
-            (prost-build) and the runtime descriptor pool used by
-            `src/bridge/majsoul/parser.rs`.
+            Review the diff before merging — `liqi.proto` fuels `build.rs`
+            (prost-build) and the runtime descriptor pool, and `liqi.json` is the
+            flat rpc-map used by `src/bridge/majsoul/parser.rs`.
           labels: |
             automation
             majsoul

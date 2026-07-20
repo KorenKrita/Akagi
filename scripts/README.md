@@ -55,13 +55,28 @@ Symlink preservation matters: `python-build-standalone` ships internal
 symlinks (`bin/python3.12 → bin/python`). `cp -RP` and `zip -y` are
 used so the zip stays small (~half the size of a flattened copy).
 
-## `fetch_liqi.py`
+## `extract_liqi.py`
 
-Polled daily by `.github/workflows/auto-liqi.yml`. Fetches the latest
-Mahjong Soul `liqi.json` schema from the game CDN and exposes
-`changed=true/false` as a GHA output. The workflow then regenerates
-`src/bridge/majsoul/proto/liqi.proto` via `pbjs` and opens a PR on `v3`
-when the schema moved.
+Polled daily by `.github/workflows/auto-liqi.yml`. Reconstructs the Mahjong
+Soul liqi protocol **directly from the live Unity client asset bundles** —
+the protobuf descriptors shipped as Lua in `Protol/*_pb.lua` and the service
+table in `docs/proto_config.bytes` — and writes:
+
+- `src/bridge/majsoul/proto/liqi.proto` — flat proto3 schema (`package lq`),
+- `src/bridge/majsoul/liqi.json` — flat rpc-map `".lq.Svc.method" → {req, resp}`.
+
+It exposes `product_version`, `bundle_hash`, and `changed=true/false` as GHA
+outputs; the workflow opens a PR on `v3` when the schema moved. Requires
+`requests`, `UnityPy`, and `protobuf`. There is no dependency on any external
+proto release or on the legacy `res/proto/liqi.json` CDN file (a lagging
+Laya-era artifact since Mahjong Soul's Unity WASM migration).
+
+Offline mode for local validation reads pre-extracted assets from a directory
+instead of downloading:
+
+```sh
+python scripts/extract_liqi.py --from-raw <dir-with-lua-and-proto_config>
+```
 
 ## CI integration
 
