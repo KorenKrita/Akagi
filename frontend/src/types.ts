@@ -121,6 +121,10 @@ export type NativeApiConfig = {
   model_4p: string
   model_3p: string
   use_system_proxy: boolean
+  /** Upstream v3.3.3 custom-proxy fields; optional for configs created by the
+   * local system-proxy implementation. */
+  proxy_enabled?: boolean
+  proxy?: string
 }
 
 /** The always-on-top suggestion overlay. Mirrors `crate::config::OverlayConfig`. */

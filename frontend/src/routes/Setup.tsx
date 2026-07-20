@@ -18,7 +18,9 @@ import { InstallBlockingOverlay } from '@/components/InstallBlockingOverlay'
 import { NativeApiFields } from '@/components/NativeApiFields'
 import { invoke } from '@/lib/tauri'
 import { withInstallBlock } from '@/lib/install'
+import { checkApiBeforeSave } from '@/lib/nativeApi'
 import { mergeExternal } from '@/lib/merge'
+import { withFirstRunCaptureDefault } from '@/lib/setupDefaults'
 import { useTauriBridge } from '@/hooks/useTauriBridge'
 import { useConfigStore } from '@/stores/configStore'
 import { ManifestField } from '@/components/ManifestField'
@@ -58,7 +60,14 @@ export function Setup() {
   useTauriBridge()
   const stored = useConfigStore((s) => s.config)
   const setStored = useConfigStore((s) => s.setConfig)
-  const [draft, setDraft] = useState<AppConfig | null>(stored)
+  // Seed the editable draft. On a genuine first run this also pre-selects the
+  // Chromium capture backend (see `withFirstRunCaptureDefault`); a re-run keeps
+  // the user's saved mode. Idempotent, so seeding here and in the effect below
+  // (whichever path fires first depending on whether `stored` was ready at
+  // mount) yields the same draft.
+  const [draft, setDraft] = useState<AppConfig | null>(() =>
+    stored ? withFirstRunCaptureDefault(stored) : null,
+  )
   const [step, setStep] = useState<Step>('welcome')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -82,8 +91,9 @@ export function Setup() {
     const prev = syncedStoredRef.current
     syncedStoredRef.current = stored
     if (!prev) {
-      // Seed the editable draft once the config loads.
-      setDraft(stored)
+      // Seed the editable draft once the config loads (first run → Chromium
+      // pre-selected; see the useState initializer above).
+      setDraft(withFirstRunCaptureDefault(stored))
       return
     }
     // The stored config changed mid-wizard (e.g. the purchase store persisted
@@ -126,6 +136,21 @@ export function Setup() {
       setBusy(true)
       setErr(null)
       try {
+        // Same guard as the Bots page Save: if cloud inference is enabled,
+        // the key must work before we let the wizard advance — otherwise Finish
+        // would persist an enabled-but-broken API that silently falls back to
+        // the local model. Checked here (not on Finish) so the error surfaces
+        // right by the API fields; the user must fix the key or turn it off.
+        const check = await checkApiBeforeSave(draft.bot.api)
+        if (!check.ok) {
+          setErr(
+            check.kind === 'missing'
+              ? `${t('bots.api.save_key_check_failed')} ${t('bots.api.need_url_key')}`
+              : `${t('bots.api.save_key_check_failed')} ${check.message}`,
+          )
+          setBusy(false)
+          return
+        }
         await saveBotSettings()
       } catch (e) {
         setErr(String(e))
