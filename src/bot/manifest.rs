@@ -283,6 +283,13 @@ pub fn write_resolved(
     std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
     let path = dir.join(RESOLVED_FILE);
     let body = serde_json::to_vec_pretty(values).context("serialize resolved settings")?;
+    if std::fs::read(&path)
+        .map(|existing| existing == body)
+        .unwrap_or(false)
+    {
+        return std::fs::canonicalize(&path)
+            .with_context(|| format!("canonicalize {}", path.display()));
+    }
     std::fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
     // Canonicalize so the env var survives the child's `current_dir(bot_dir)`
     // — a relative path would otherwise be resolved against the bot's cwd
@@ -580,6 +587,26 @@ mystery = "ignored"
         let body = std::fs::read_to_string(&path).unwrap();
         let back: BTreeMap<String, serde_json::Value> = serde_json::from_str(&body).unwrap();
         assert_eq!(back["k"], json!("v"));
+    }
+
+    #[test]
+    fn write_resolved_leaves_identical_file_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        values.insert("k".into(), json!("v"));
+
+        let path = write_resolved(tmp.path(), &values).unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        let result = write_resolved(tmp.path(), &values);
+
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(false);
+        std::fs::set_permissions(&path, perms).unwrap();
+
+        result.unwrap();
     }
 
     /// Regression: the resolved-settings path must be absolute. The bot
