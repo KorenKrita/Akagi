@@ -4914,6 +4914,10 @@ message ReqFetchCustomizedContestOnlineInfo {
     uint32 unique_id = 1;
 }
 
+message ReqFetchDailySignActivityData {
+    repeated uint32 activity_id_list = 1;
+}
+
 message ReqFetchFriendGiftActivityData {
     uint32 activity_id = 1;
     repeated uint32 account_list = 2;
@@ -5552,6 +5556,7 @@ message ReqRequestConnection {
     uint32 type = 2;
     string route_id = 3;
     uint64 timestamp = 4;
+    string platform = 6;
 }
 
 message ReqRequestRouteChange {
@@ -6915,6 +6920,24 @@ message ResFetchCustomizedContestList {
 message ResFetchCustomizedContestOnlineInfo {
     .lq.Error error = 1;
     uint32 online_player = 2;
+}
+
+message ResFetchDailySignActivityData {
+    message DailySignActivityData {
+        uint32 activity_id = 1;
+        repeated .lq.ResFetchDailySignActivityData.DailySignActivityDay days = 2;
+        uint32 type = 3;
+    }
+    message DailySignActivityDay {
+        uint32 day = 1;
+        repeated .lq.ResFetchDailySignActivityData.DailySignActivityReward rewards = 2;
+    }
+    message DailySignActivityReward {
+        uint32 id = 1;
+        uint32 count = 2;
+    }
+    .lq.Error error = 1;
+    repeated .lq.ResFetchDailySignActivityData.DailySignActivityData activity_list = 2;
 }
 
 message ResFetchFriendGiftActivityData {
@@ -8509,6 +8532,7 @@ message TransparentData {
     bytes data = 2;
     string session = 3;
     .lq.NetworkEndpoint remote = 4;
+    string platform = 5;
 }
 
 message UInt32ArrayDirty {
@@ -8780,6 +8804,7 @@ service Lobby {
     rpc fetchCustomizedContestGameRecords (ReqFetchCustomizedContestGameRecords) returns (ResFetchCustomizedContestGameRecords);
     rpc fetchCustomizedContestList (ReqFetchCustomizedContestList) returns (ResFetchCustomizedContestList);
     rpc fetchCustomizedContestOnlineInfo (ReqFetchCustomizedContestOnlineInfo) returns (ResFetchCustomizedContestOnlineInfo);
+    rpc fetchDailySignActivityData (ReqFetchDailySignActivityData) returns (ResFetchDailySignActivityData);
     rpc fetchDailySignInInfo (ReqCommon) returns (ResDailySignInInfo);
     rpc fetchDailyTask (ReqCommon) returns (ResDailyTask);
     rpc fetchFriendApplyList (ReqCommon) returns (ResFriendApplyList);
