@@ -615,6 +615,13 @@ on tag push (`v3.*`) or manual dispatch. One portable zip per target:
 | `macos-14` | `aarch64-apple-darwin` | `akagi-<version>-macos-arm64.zip` |
 | `windows-latest` | `x86_64-pc-windows-msvc` | `akagi-<version>-windows-x64.zip` |
 
+Repository admins can build the current head commit of an open PR by posting
+an exact `/build-artifacts` comment on that PR. The
+[`pr-build.yml`](./.github/workflows/pr-build.yml) workflow replies with links
+to the three portable artifacts when the build finishes; artifacts are retained
+for 14 days. Comments from users without repository admin permission are
+ignored.
+
 Each zip ships `python-build-standalone` 3.12 + `uv` next to the
 binary, so bots run without a system Python install.
 
