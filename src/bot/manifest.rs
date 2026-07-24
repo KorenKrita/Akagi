@@ -596,15 +596,14 @@ mystery = "ignored"
         values.insert("k".into(), json!("v"));
 
         let path = write_resolved(tmp.path(), &values).unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        let original_perms = std::fs::metadata(&path).unwrap().permissions();
+        let mut perms = original_perms.clone();
         perms.set_readonly(true);
         std::fs::set_permissions(&path, perms).unwrap();
 
         let result = write_resolved(tmp.path(), &values);
 
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        perms.set_readonly(false);
-        std::fs::set_permissions(&path, perms).unwrap();
+        std::fs::set_permissions(&path, original_perms).unwrap();
 
         result.unwrap();
     }
