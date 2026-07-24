@@ -209,17 +209,21 @@ impl RiichiCityBridge {
         let honba = field_i64(data, "ben_chang_num").unwrap_or(0).max(0) as u8;
         let kyotaku = field_i64(data, "li_zhi_bang_num").unwrap_or(0).max(0) as u8;
 
-        // Scores from user_info_list, which is in fixed seat order (index i =
-        // seat i). Verified against a full 13-kyoku capture with rotating
-        // dealers: the list never re-orders with dealer_pos.
+        // user_info_list stays in fixed wire-seat order, while player_list is
+        // rotated into MJAI actor order. Map by user_id so each score follows
+        // the same actor assignment as gameplay events and settlement deltas.
         let mut scores = vec![0i32; self.status.num_players as usize];
         if let Some(list) = data.get("user_info_list").and_then(JsonValue::as_array) {
-            for (i, p) in list
-                .iter()
-                .take(self.status.num_players as usize)
-                .enumerate()
-            {
-                scores[i] = field_i64(p, "hand_points").unwrap_or(0) as i32;
+            for p in list.iter().take(self.status.num_players as usize) {
+                let Some(uid) = field_i64(p, "user_id") else {
+                    continue;
+                };
+                let Some(actor) = self.status.actor_of(uid) else {
+                    continue;
+                };
+                if let Some(score) = scores.get_mut(actor as usize) {
+                    *score = field_i64(p, "hand_points").unwrap_or(0) as i32;
+                }
             }
         }
 
@@ -708,8 +712,10 @@ mod tests {
                     "ben_chang_num": 0,
                     "li_zhi_bang_num": 0,
                     "user_info_list": [
-                        {"hand_points": 25000}, {"hand_points": 25000},
-                        {"hand_points": 25000}, {"hand_points": 25000}
+                        {"user_id": 1001, "hand_points": 25000},
+                        {"user_id": 1002, "hand_points": 25000},
+                        {"user_id": 1003, "hand_points": 25000},
+                        {"user_id": 1004, "hand_points": 25000}
                     ],
                     "hand_cards": [0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x01,0x02,0x03,0x04,0x05]
                 }
@@ -762,6 +768,43 @@ mod tests {
         }
     }
 
+    /// Regression for #215: `user_info_list` stays in fixed wire-seat order,
+    /// while MJAI actors are rotated so actor 0 is the first dealer.
+    #[test]
+    fn game_start_maps_scores_to_rotated_actor_order() {
+        let mut b = RiichiCityBridge::new(None, None);
+        auth(&mut b);
+        enter_room_4p(&mut b);
+
+        let events = feed(
+            &mut b,
+            18,
+            json!({
+                "cmd": "cmd_game_start",
+                "data": {
+                    "quan_feng": 0x31,
+                    "bao_pai_card": 0x21,
+                    "dealer_pos": 2,
+                    "ben_chang_num": 0,
+                    "li_zhi_bang_num": 0,
+                    "user_info_list": [
+                        {"user_id": 1001, "hand_points": 11100},
+                        {"user_id": 1002, "hand_points": 22200},
+                        {"user_id": 1003, "hand_points": 33300},
+                        {"user_id": 1004, "hand_points": 44400}
+                    ],
+                    "hand_cards": [0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x01,0x02,0x03,0x04]
+                }
+            }),
+        );
+
+        let scores = events.iter().find_map(|event| match event {
+            MjaiEvent::StartKyoku { scores, .. } => Some(scores),
+            _ => None,
+        });
+        assert_eq!(scores, Some(&vec![33300, 44400, 11100, 22200]));
+    }
+
     #[test]
     fn sanma_uses_native_length_three() {
         let mut b = RiichiCityBridge::new(None, None);
@@ -791,7 +834,9 @@ mod tests {
                     "quan_feng": 0x31, "bao_pai_card": 0x21, "dealer_pos": 0,
                     "ben_chang_num": 0, "li_zhi_bang_num": 0,
                     "user_info_list": [
-                        {"hand_points": 35000}, {"hand_points": 35000}, {"hand_points": 35000}
+                        {"user_id": 1001, "hand_points": 35000},
+                        {"user_id": 1002, "hand_points": 35000},
+                        {"user_id": 1003, "hand_points": 35000}
                     ],
                     "hand_cards": [0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x01,0x02,0x03,0x04]
                 }
@@ -835,8 +880,10 @@ mod tests {
                     "quan_feng": 0x31, "bao_pai_card": 0x21, "dealer_pos": 0,
                     "ben_chang_num": 0, "li_zhi_bang_num": 0,
                     "user_info_list": [
-                        {"hand_points": 25000}, {"hand_points": 25000},
-                        {"hand_points": 25000}, {"hand_points": 25000}
+                        {"user_id": 1001, "hand_points": 25000},
+                        {"user_id": 1002, "hand_points": 25000},
+                        {"user_id": 1003, "hand_points": 25000},
+                        {"user_id": 1004, "hand_points": 25000}
                     ],
                     "hand_cards": [0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x01,0x02,0x03,0x04,0x05]
                 }
