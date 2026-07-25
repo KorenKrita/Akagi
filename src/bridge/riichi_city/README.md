@@ -93,7 +93,9 @@ The action codes only flag the end; `on_game_end` does the work:
 Emits a `hora` per winner (so double/triple ron yields multiple), or a
 `ryukyoku`, then `end_kyoku`. Verified against full captures: `point_profit`
 includes honba and carried kyotaku, and `user_info_list` stays in fixed seat
-order across rotating dealers.
+order across rotating dealers. Since MJAI actor order is dealer-relative, the
+bridge assigns each starting score by `user_id` rather than by the list index.
+
 Exhaustive-draw (荒牌流局) tenpai/noten payments use the same `user_point`-diff
 path but weren't present in that capture.
 
