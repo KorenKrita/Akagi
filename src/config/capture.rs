@@ -13,6 +13,60 @@ use serde::{Deserialize, Serialize};
 pub struct CaptureConfig {
     pub mode: CaptureMode,
     pub chromium: ChromiumConfig,
+    pub http: HttpCaptureConfig,
+}
+
+/// What to record of the HTTP traffic a backend intercepts.
+///
+/// Akagi used to record WebSocket frames and discard everything else,
+/// which hid the game's own HTTP entirely — route topology, version
+/// endpoints, and the analytics beacons through which the client reports
+/// on itself. This turns that back on.
+///
+/// `record_all` defaults to **off** on purpose. Full HTTP capture puts
+/// access tokens, cookies and authorization headers into the session
+/// file, and nothing is redacted — redaction would re-create the blind
+/// spot this exists to remove. So the default keeps only the exchanges a
+/// recognizer understood (analytics beacons, and Akagi's own notes about
+/// traffic it declined to intercept), and the firehose is opt-in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HttpCaptureConfig {
+    /// Record every intercepted exchange, not just recognized ones.
+    /// Off by default — see the struct docs.
+    pub record_all: bool,
+    /// Keep textual request/response bodies within `max_body_bytes`.
+    /// Only consulted when the exchange is being recorded at all.
+    pub bodies: bool,
+    /// Ceiling on a buffered body. Larger ones are recorded with their
+    /// size and the reason they were skipped, never truncated silently.
+    pub max_body_bytes: usize,
+    /// Chromium backend only: also record static subresources (images,
+    /// fonts, media, stylesheets). Off by default — a WebGL client pulls
+    /// enough of them to bury everything else, and none of it says
+    /// anything about the client.
+    pub static_assets: bool,
+}
+
+impl Default for HttpCaptureConfig {
+    fn default() -> Self {
+        Self {
+            record_all: false,
+            bodies: true,
+            max_body_bytes: 256 * 1024,
+            static_assets: false,
+        }
+    }
+}
+
+impl HttpCaptureConfig {
+    pub fn policy(&self) -> crate::capture::http::HttpCapturePolicy {
+        crate::capture::http::HttpCapturePolicy {
+            record_all: self.record_all,
+            bodies: self.bodies,
+            max_body_bytes: self.max_body_bytes,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,9 +129,27 @@ mod tests {
         let cfg = CaptureConfig {
             mode: CaptureMode::Chromium,
             chromium: Default::default(),
+            http: Default::default(),
         };
         let s = toml::to_string(&cfg).unwrap();
         assert!(s.contains("mode = \"chromium\""), "got: {s}");
+    }
+
+    /// The default is deliberately conservative: full HTTP capture would
+    /// put access tokens and cookies into every session file, and nothing
+    /// is redacted (redaction would re-create the blind spot the capture
+    /// exists to remove). Recognized exchanges are still recorded.
+    #[test]
+    fn http_capture_is_opt_in_but_bodies_are_on_once_it_is() {
+        let cfg = CaptureConfig::default();
+        assert!(!cfg.http.record_all, "full capture must be opt-in");
+        assert!(cfg.http.bodies);
+        assert!(!cfg.http.static_assets);
+        assert_eq!(cfg.http.max_body_bytes, 256 * 1024);
+
+        let s = toml::to_string(&cfg).unwrap();
+        let back: CaptureConfig = toml::from_str(&s).unwrap();
+        assert_eq!(back.http, cfg.http);
     }
 
     #[test]
@@ -92,6 +164,7 @@ mod tests {
                 force_cft: true,
                 extra_args: vec!["--lang=ja".into()],
             },
+            http: Default::default(),
         };
         let s = toml::to_string(&original).unwrap();
         let back: CaptureConfig = toml::from_str(&s).unwrap();

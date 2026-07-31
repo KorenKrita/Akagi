@@ -9,7 +9,7 @@ mod proxy;
 
 pub use autoplay::{AutoplayConfig, MajsoulAutoplayConfig};
 pub use bot::{BotConfig, NativeApiConfig};
-pub use capture::{CaptureConfig, CaptureMode, ChromiumConfig};
+pub use capture::{CaptureConfig, CaptureMode, ChromiumConfig, HttpCaptureConfig};
 pub use general::GeneralConfig;
 pub use logging::LoggingConfig;
 pub use overlay::{OverlayConfig, TOP_N_MAX, TOP_N_MIN};

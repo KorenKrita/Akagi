@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowDown, ArrowUp, Bot, Hash, Network, X, Zap } from 'lucide-react'
+import { ArrowDown, ArrowUp, Bot, Globe, Hash, Network, X, Zap } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -13,6 +13,7 @@ const KIND_BADGE: Record<InspectorKind, string> = {
   ws_frame: 'bg-cyan-500/15 text-cyan-700 border-cyan-500/30 dark:text-cyan-300',
   mjai_event: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/30 dark:text-emerald-300',
   bot_reaction: 'bg-fuchsia-500/15 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300',
+  http: 'bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-300',
 }
 
 function formatTime(ms: number): string {
@@ -37,11 +38,16 @@ function entryKey(e: InspectorEntry, idx: number): string {
   if (e.kind === 'mjai_event') {
     return `${e.ts_ms}:${idx}:me:${e.event.type}`
   }
+  if (e.kind === 'http') {
+    return `${e.ts_ms}:${idx}:ht:${e.phase}:${e.exchange_id ?? ''}:${e.url}`
+  }
   return `${e.ts_ms}:${idx}:br:${e.bot}:${e.actor_id}`
 }
 
 function entryHasActor(e: InspectorEntry, actor: number): boolean {
   if (e.kind === 'ws_frame') return false
+  // Describes the client, not any seat — never matches a seat filter.
+  if (e.kind === 'http') return false
   if (e.kind === 'bot_reaction') return e.actor_id === actor
   // mjai_event: many variants carry an `actor` field. Cast loosely —
   // variants without `actor` simply don't match.
@@ -113,7 +119,9 @@ export function InspectorView({ liveEnabled, autoScroll, onUserScrolledAway }: I
             ? `${e.raw.data} ${e.parsed?.method ?? ''}`
             : e.kind === 'mjai_event'
               ? JSON.stringify(e.event)
-              : `${e.bot} ${JSON.stringify(e.action)} ${JSON.stringify(e.trigger)}`
+              : e.kind === 'http'
+                ? `${e.method} ${e.url} ${e.annotations?.map((a) => a.summary).join(' ') ?? ''}`
+                : `${e.bot} ${JSON.stringify(e.action)} ${JSON.stringify(e.trigger)}`
         if (!hay.toLowerCase().includes(search)) return false
       }
       return true
@@ -149,6 +157,7 @@ export function InspectorView({ liveEnabled, autoScroll, onUserScrolledAway }: I
             <KindToggle kind="ws_frame" label={t('inspector.kind_ws_frame')} icon={<Network className="h-3 w-3" />} active={filter.kinds.has('ws_frame')} onToggle={toggleKind} />
             <KindToggle kind="mjai_event" label={t('inspector.kind_mjai_event')} icon={<Zap className="h-3 w-3" />} active={filter.kinds.has('mjai_event')} onToggle={toggleKind} />
             <KindToggle kind="bot_reaction" label={t('inspector.kind_bot_reaction')} icon={<Bot className="h-3 w-3" />} active={filter.kinds.has('bot_reaction')} onToggle={toggleKind} />
+            <KindToggle kind="http" label={t('inspector.kind_http')} icon={<Globe className="h-3 w-3" />} active={filter.kinds.has('http')} onToggle={toggleKind} />
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -285,7 +294,13 @@ function KindToggle({
 function KindRowBadge({ kind }: { kind: InspectorKind }) {
   const cls = KIND_BADGE[kind]
   const label =
-    kind === 'ws_frame' ? 'WS' : kind === 'mjai_event' ? 'MJAI' : 'BOT'
+    kind === 'ws_frame'
+      ? 'WS'
+      : kind === 'mjai_event'
+        ? 'MJAI'
+        : kind === 'http'
+          ? 'HTTP'
+          : 'BOT'
   return (
     <span
       className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] leading-none ${cls}`}
@@ -330,6 +345,27 @@ function RowSummary({ entry }: { entry: InspectorEntry }) {
           {ev.type}
         </Badge>
         <span className="text-muted-foreground">{tail}</span>
+      </span>
+    )
+  }
+  if (entry.kind === 'http') {
+    // The path is what distinguishes one row from the next; the host
+    // repeats. Show the path prominently and keep the host muted.
+    const path = entry.url.replace(/^https?:\/\/[^/]+/, '') || '/'
+    return (
+      <span className="flex-1 break-all whitespace-pre-wrap">
+        <span className="text-muted-foreground">
+          {entry.phase === 'response'
+            ? `← ${entry.status ?? '?'}`
+            : `→ ${entry.method}`}
+        </span>
+        {entry.annotations?.map((a) => (
+          <Badge key={a.kind} variant="outline" className="font-mono text-[10px] py-0 mx-1">
+            {a.summary}
+          </Badge>
+        ))}
+        <span className="ml-2">{path.slice(0, 100)}</span>
+        <span className="text-muted-foreground ml-2">{entry.host}</span>
       </span>
     )
   }
@@ -390,6 +426,71 @@ function DetailPanel({ entry }: { entry: InspectorEntry }) {
           <div className="text-muted-foreground mb-1">{t('inspector.detail_event')}</div>
           <pre className="font-mono whitespace-pre-wrap break-all bg-muted/40 rounded p-2">
             {JSON.stringify(entry.event, null, 2)}
+          </pre>
+        </div>
+      </>
+    )
+  }
+  if (entry.kind === 'http') {
+    return (
+      <>
+        <DetailRow label={t('inspector.detail_time')} value={new Date(entry.ts_ms).toISOString()} />
+        <DetailRow label={t('inspector.detail_source')} value={entry.source} mono />
+        <DetailRow label={t('inspector.detail_phase')} value={entry.phase} mono />
+        <DetailRow
+          label={t('inspector.detail_method')}
+          value={entry.status != null ? `${entry.method || '—'} → ${entry.status}` : entry.method}
+          mono
+        />
+        <DetailRow label={t('inspector.detail_host')} value={entry.host || '—'} mono />
+        {/* Absent on an unpaired response — see the HTTP/2 note in the
+            backend. Showing the gap beats implying a pairing we don't have. */}
+        <DetailRow
+          label={t('inspector.detail_exchange')}
+          value={entry.exchange_id ?? t('inspector.unpaired')}
+          mono
+        />
+        {entry.annotations?.map((a) => (
+          <div key={a.kind}>
+            <div className="text-muted-foreground mb-1">
+              {t('inspector.detail_decoded')} · {a.kind}
+            </div>
+            <pre className="font-mono whitespace-pre-wrap break-all bg-muted/40 rounded p-2">
+              {JSON.stringify(a.data, null, 2)}
+            </pre>
+          </div>
+        ))}
+        <div>
+          <div className="text-muted-foreground mb-1">{t('inspector.detail_headers')}</div>
+          <div className="rounded bg-muted/40 p-2 space-y-1">
+            {entry.headers.length === 0 ? (
+              <div className="text-muted-foreground">—</div>
+            ) : (
+              entry.headers.map((h, i) => (
+                <div key={`${h.name}:${i}`} className="grid grid-cols-[9rem_1fr] gap-2">
+                  <span className="font-mono text-muted-foreground break-all">{h.name}</span>
+                  <span className="font-mono break-all">{h.value}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+        {entry.body && (
+          <div>
+            <div className="text-muted-foreground mb-1">
+              {t('inspector.detail_body')}
+              {entry.body.bytes != null && ` · ${formatBytes(entry.body.bytes)}`}
+            </div>
+            <pre className="font-mono whitespace-pre-wrap break-all bg-muted/40 rounded p-2 text-[11px]">
+              {entry.body.text ??
+                t('inspector.body_skipped', { reason: entry.body.skipped ?? '' })}
+            </pre>
+          </div>
+        )}
+        <div>
+          <div className="text-muted-foreground mb-1">{t('inspector.detail_url')}</div>
+          <pre className="font-mono whitespace-pre-wrap break-all bg-muted/40 rounded p-2 text-[11px]">
+            {entry.url}
           </pre>
         </div>
       </>

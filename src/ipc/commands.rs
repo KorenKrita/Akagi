@@ -999,6 +999,7 @@ fn inspector_matches(
         InspectorEntry::WsFrame { .. } => "ws_frame",
         InspectorEntry::MjaiEvent { .. } => "mjai_event",
         InspectorEntry::BotReaction { .. } => "bot_reaction",
+        InspectorEntry::Http { .. } => "http",
     };
     if let Some(ks) = kind_set {
         if !ks.contains(kind) {
@@ -1008,6 +1009,9 @@ fn inspector_matches(
     if let Some(a) = actor {
         match entry {
             InspectorEntry::WsFrame { .. } => {} // pre-bridge, no actor
+            // Describes the client, not any seat — same treatment as a
+            // ws frame: only the `kinds` filter can drop it.
+            InspectorEntry::Http { .. } => {}
             InspectorEntry::MjaiEvent { event, .. } => {
                 if let Some(ev_actor) = mjai_event_actor(event) {
                     if ev_actor != a {
@@ -1043,6 +1047,11 @@ fn inspector_matches(
                 .unwrap_or_default()
                 .to_lowercase(),
             InspectorEntry::BotReaction { reaction, .. } => serde_json::to_string(reaction)
+                .unwrap_or_default()
+                .to_lowercase(),
+            // The whole exchange, so a search for a URL, a header, a
+            // status, or anything a recognizer decoded all hit.
+            InspectorEntry::Http { exchange, .. } => serde_json::to_string(exchange)
                 .unwrap_or_default()
                 .to_lowercase(),
         };
