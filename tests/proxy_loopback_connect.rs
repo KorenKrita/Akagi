@@ -20,7 +20,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use akagi::config::{Platform, ProxyConfig};
+use akagi::config::{HttpCaptureConfig, Platform, ProxyConfig};
 use akagi::event_bus::notify_bus;
 use akagi::logger::Session;
 use akagi::proxy::start_proxy;
@@ -96,6 +96,7 @@ async fn loopback_connect_is_refused_without_blocking() {
         enabled: true,
         addr: format!("127.0.0.1:{port}"),
         ca_dir: tmp.path().join("ca"),
+        rewrite_certificate_report: true,
     };
 
     let notify = notify_bus();
@@ -104,6 +105,7 @@ async fn loopback_connect_is_refused_without_blocking() {
     let (stop_tx, stop_rx) = oneshot::channel::<()>();
     let proxy = tokio::spawn(start_proxy(
         config,
+        HttpCaptureConfig::default(),
         Platform::Majsoul,
         Arc::new(session),
         None,

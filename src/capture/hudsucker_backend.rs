@@ -3,7 +3,7 @@
 //! adapter so the supervisor can multiplex MITM and Chromium uniformly.
 
 use super::{CaptureBackend, CaptureCtx, CaptureDescriptor, CaptureKind, ShutdownToken};
-use crate::config::ProxyConfig;
+use crate::config::{HttpCaptureConfig, ProxyConfig};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use tracing::info;
 
 pub struct HudsuckerBackend {
     proxy_cfg: ProxyConfig,
+    http_cfg: HttpCaptureConfig,
     /// Shared with `AppState.capture_control.force_close` — `notify_waiters`
     /// kicks every in-flight WS so existing flows actually disconnect (not
     /// just drain naturally) when the supervisor stops the backend.
@@ -19,9 +20,14 @@ pub struct HudsuckerBackend {
 }
 
 impl HudsuckerBackend {
-    pub fn new(proxy_cfg: ProxyConfig, force_close: Arc<Notify>) -> Self {
+    pub fn new(
+        proxy_cfg: ProxyConfig,
+        http_cfg: HttpCaptureConfig,
+        force_close: Arc<Notify>,
+    ) -> Self {
         Self {
             proxy_cfg,
+            http_cfg,
             force_close,
         }
     }
@@ -41,6 +47,7 @@ impl CaptureBackend for HudsuckerBackend {
 
         crate::proxy::start_proxy(
             self.proxy_cfg,
+            self.http_cfg,
             ctx.platform,
             ctx.session,
             Some(ctx.mjai_bus),

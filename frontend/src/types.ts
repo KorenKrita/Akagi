@@ -572,6 +572,35 @@ export type BotReactionPayload = {
   reaction_ms: number
 }
 
+/** Which capture backend observed an event. */
+export type CaptureSource = 'mitm' | 'chromium'
+
+export type HttpPhase = 'request' | 'response'
+
+export type HttpHeader = {
+  name: string
+  value: string
+}
+
+/** A body we kept, or the reason we did not. */
+export type HttpBody = {
+  text?: string
+  bytes?: number
+  /** Absent when the body was captured whole. */
+  skipped?: string
+}
+
+/**
+ * A recognizer's reading of an exchange. Vendor-specific vocabulary lives
+ * in `data` — never in the exchange itself — so a new recognizer needs no
+ * change here.
+ */
+export type HttpAnnotation = {
+  kind: string
+  summary: string
+  data: unknown
+}
+
 export type InspectorEntry =
   | {
       kind: 'ws_frame'
@@ -600,6 +629,23 @@ export type InspectorEntry =
       action: MjaiEvent
       meta?: Record<string, unknown>
       reaction_ms: number
+    }
+  | {
+      kind: 'http'
+      ts_ms: number
+      source: CaptureSource
+      // Backend serializes HttpExchange with #[serde(flatten)], so its
+      // fields land at the top level of the row, same as bot_reaction.
+      exchange_id?: string
+      phase: HttpPhase
+      method: string
+      url: string
+      host: string
+      version: string
+      status?: number
+      headers: HttpHeader[]
+      body?: HttpBody
+      annotations?: HttpAnnotation[]
     }
 
 export type InspectorKind = InspectorEntry['kind']

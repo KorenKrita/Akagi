@@ -1,13 +1,22 @@
 use crate::{
     bridge::{self, Bridge, Direction},
+    capture::http::{self as httpcap, BodyPlan, ExchangePairing, HttpCapturePolicy},
     config::Platform,
     event_bus::{MjaiBus, NotifyBus},
-    inspector::InspectorWriter,
+    inspector::{
+        annotate::{self, RequestView},
+        InspectorWriter,
+    },
     logger::{BinaryLogger, Session},
-    schema::{FrameDirection, FrameRaw, InspectorEntry, Notification},
+    proxy::{certstore::CertStore, rewrite::majsoul_cert},
+    schema::{
+        CaptureSource, FrameDirection, FrameRaw, HttpAnnotation, HttpExchange, HttpPhase,
+        InspectorEntry, Notification,
+    },
 };
 use base64::Engine as _;
 use chrono::Local;
+use http_body_util::{BodyExt as _, Full};
 use hudsucker::{
     futures::{Sink, SinkExt, Stream, StreamExt},
     hyper::{self, Method, Request, Response, StatusCode, Uri},
@@ -67,15 +76,32 @@ pub struct ProxyHandler {
     /// connections; existing ones would drain naturally and the game
     /// client would never see a disconnect.
     force_close: Arc<Notify>,
+    /// How much of the intercepted HTTP traffic to record.
+    http_policy: HttpCapturePolicy,
+    /// Request↔response pairing state. See `capture::http`.
+    pairing: Arc<ExchangePairing>,
+    /// Certificates observed on the upstream leg, shared with the TLS
+    /// verifier that records them.
+    certs: Arc<CertStore>,
+    /// Whether to correct the client's certificate report. See
+    /// `rewrite::majsoul_cert`.
+    rewrite_cert_report: bool,
 }
 
 impl ProxyHandler {
+    /// Every collaborator is injected rather than reached for, which is
+    /// what lets the integration tests drive the proxy with buses and
+    /// autoplay left out. Hence the argument count.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Arc<Session>,
         platform: Platform,
         mjai_tx: Option<MjaiBus>,
         notify_tx: Option<NotifyBus>,
         force_close: Arc<Notify>,
+        http_policy: HttpCapturePolicy,
+        certs: Arc<CertStore>,
+        rewrite_cert_report: bool,
     ) -> anyhow::Result<Self> {
         let binary = session.binary_logger("proxy")?;
         let inspector = session.inspector();
@@ -91,6 +117,10 @@ impl ProxyHandler {
             inspector,
             inspector_flow_ids: Arc::new(StdMutex::new(HashMap::new())),
             force_close,
+            http_policy,
+            pairing: Arc::new(ExchangePairing::default()),
+            certs,
+            rewrite_cert_report,
         })
     }
 
@@ -137,6 +167,125 @@ impl ProxyHandler {
                 format!("{}:{:06}", self.platform.subdir(), n)
             })
             .clone()
+    }
+
+    /// Record one half of an HTTP exchange.
+    ///
+    /// `record_all` off keeps only exchanges a recognizer understood, so
+    /// the default session file holds the interesting traffic without
+    /// accumulating every credential the client sends. See
+    /// [`crate::config::HttpCaptureConfig`].
+    fn record_http(&self, exchange: HttpExchange) {
+        if !self.http_policy.record_all && exchange.annotations.is_empty() {
+            return;
+        }
+        self.inspector.record(InspectorEntry::Http {
+            ts_ms: Local::now().timestamp_millis(),
+            source: CaptureSource::Mitm,
+            exchange,
+        });
+    }
+
+    /// Substitute the genuine upstream certificates into a Mahjong Soul
+    /// certificate report, in place.
+    ///
+    /// A no-op unless this request is that beacon and we have observed
+    /// the certificates it refers to. The rewritten URI is what gets
+    /// recorded on the timeline too — the inspector shows what left the
+    /// machine, not what the client wrote, because the former is what the
+    /// operator sees.
+    fn rewrite_certificate_report(&self, req: &mut Request<Body>) {
+        // Both guards live in the rewriter: it declines anything that is
+        // not a certificate report, and anything it cannot improve.
+        let Some(beacon) = annotate::sls::parse_uri(req.uri()) else {
+            return;
+        };
+        // The raw query is what everything except `content` is copied
+        // from verbatim, so the rewriter needs it, not just the decoded
+        // view — see its module docs.
+        let query = req.uri().query().unwrap_or_default().to_string();
+        let Some(out) = majsoul_cert::rewrite(&query, &beacon, &self.certs) else {
+            return;
+        };
+
+        let mut parts = req.uri().clone().into_parts();
+        let path = parts
+            .path_and_query
+            .as_ref()
+            .map(|pq| pq.path().to_string())
+            .unwrap_or_else(|| "/".to_string());
+        match format!("{path}?{}", out.query).parse() {
+            Ok(pq) => parts.path_and_query = Some(pq),
+            Err(e) => {
+                // Leave the request untouched rather than forward a
+                // mangled one.
+                warn!(
+                    target: "akagi::proxy::rewrite",
+                    "certificate report rewrite produced an invalid URI, forwarding as-is: {e}",
+                );
+                return;
+            }
+        }
+        match Uri::from_parts(parts) {
+            Ok(uri) => {
+                *req.uri_mut() = uri;
+                if out.uncorrected > 0 {
+                    warn!(
+                        target: "akagi::proxy::rewrite",
+                        "certificate report: corrected {} entr{}, but {} still describe{} Akagi's \
+                         CA because no upstream certificate was observed for those gateways",
+                        out.corrected,
+                        if out.corrected == 1 { "y" } else { "ies" },
+                        out.uncorrected,
+                        if out.uncorrected == 1 { "s" } else { "" },
+                    );
+                } else {
+                    info!(
+                        target: "akagi::proxy::rewrite",
+                        "certificate report: corrected all {} entries", out.corrected,
+                    );
+                }
+            }
+            Err(e) => warn!(
+                target: "akagi::proxy::rewrite",
+                "certificate report rewrite could not rebuild the URI, forwarding as-is: {e}",
+            ),
+        }
+    }
+
+    /// Buffer a body when the plan says to, and rebuild the message so
+    /// forwarding is unaffected.
+    ///
+    /// Returns the replacement body alongside what to store. Only ever
+    /// called when [`httpcap::plan_body`] already approved it from the
+    /// headers, so the amount held in memory is bounded by the policy.
+    async fn take_body(
+        plan: BodyPlan,
+        body: Body,
+        headers: &hyper::HeaderMap,
+    ) -> (Body, Option<crate::schema::HttpBody>) {
+        if !matches!(plan, BodyPlan::Capture { .. }) {
+            return (body, plan.into_skipped());
+        }
+        match body.collect().await {
+            Ok(collected) => {
+                // `Bytes` is refcounted, so handing the same buffer to
+                // both the record and the rebuilt body costs no copy.
+                let bytes = collected.to_bytes();
+                let record = httpcap::body_record(&bytes, headers);
+                (Body::from(Full::new(bytes)), Some(record))
+            }
+            // A body that fails to read is gone either way; say so rather
+            // than forward an empty one silently.
+            Err(e) => (
+                Body::empty(),
+                Some(crate::schema::HttpBody {
+                    text: None,
+                    bytes: None,
+                    skipped: Some(format!("body read failed: {e}")),
+                }),
+            ),
+        }
     }
 
     fn acquire_bridge(&self, client: SocketAddr, uri: &Uri) -> SharedBridge {
@@ -253,7 +402,122 @@ impl HttpHandler for ProxyHandler {
                 .into();
         }
 
+        // The one place Akagi deliberately changes what it forwards: the
+        // client's certificate report otherwise describes Akagi's own CA.
+        // See `rewrite::majsoul_cert` for what it substitutes and why.
+        let mut req = req;
+        if self.rewrite_cert_report && self.platform == Platform::Majsoul {
+            self.rewrite_certificate_report(&mut req);
+        }
+
+        // Everything else the game asks for, recorded and forwarded
+        // unaltered. This is where the analytics beacons surface, but
+        // nothing here knows or cares that they are beacons — that is the
+        // recognizers' job.
+        let method = req.method().to_string();
+        let uri = req.uri().clone();
+        let url = uri.to_string();
+        let host = uri
+            .host()
+            .map(str::to_string)
+            .or_else(|| {
+                req.headers()
+                    .get(hyper::header::HOST)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|h| h.split(':').next().unwrap_or(h).to_string())
+            })
+            .unwrap_or_default();
+        let version = format!("{:?}", req.version());
+        let headers = httpcap::headers_of(req.headers());
+        let annotations = annotate::annotate_request(&RequestView::new(&method, &url, &headers));
+        if let Some(a) = annotations.first() {
+            info!(
+                target: "akagi::proxy::http",
+                "recognized {} {} on {host}", a.kind, a.summary,
+            );
+        }
+
+        let recording = self.http_policy.record_all || !annotations.is_empty();
+        let plan = if recording {
+            httpcap::plan_body(req.headers(), &self.http_policy)
+        } else {
+            BodyPlan::None
+        };
+        let (parts, body) = req.into_parts();
+        let (body, body_record) = Self::take_body(plan, body, &parts.headers).await;
+        let req = Request::from_parts(parts, body);
+
+        // The id is allocated even when this exchange is not recorded, so
+        // the FIFO stays aligned with what the connection actually sent.
+        let exchange_id = self.pairing.open(ctx.client_addr, &method, &url, &host);
+
+        self.record_http(HttpExchange {
+            exchange_id: Some(exchange_id),
+            phase: HttpPhase::Request,
+            method,
+            url,
+            host,
+            version,
+            status: None,
+            headers,
+            body: body_record,
+            annotations,
+        });
+
         req.into()
+    }
+
+    /// The response half. Paired back to its request where the protocol
+    /// permits — see `capture::http` for why HTTP/2 does not.
+    async fn handle_response(&mut self, ctx: &HttpContext, res: Response<Body>) -> Response<Body> {
+        let multiplexed = !matches!(
+            res.version(),
+            hyper::Version::HTTP_09 | hyper::Version::HTTP_10 | hyper::Version::HTTP_11
+        );
+        let claimed = self.pairing.close(ctx.client_addr, multiplexed);
+        if !self.http_policy.record_all {
+            return res;
+        }
+
+        let status = res.status().as_u16();
+        let version = format!("{:?}", res.version());
+        let headers = httpcap::headers_of(res.headers());
+        let plan = httpcap::plan_body(res.headers(), &self.http_policy);
+        let (parts, body) = res.into_parts();
+        let (body, body_record) = Self::take_body(plan, body, &parts.headers).await;
+        let res = Response::from_parts(parts, body);
+
+        let (exchange_id, method, url, host) = match claimed {
+            Some(req) => (Some(req.id), req.method, req.url, req.host),
+            None => (None, String::new(), String::new(), String::new()),
+        };
+        let annotations = if exchange_id.is_none() && multiplexed {
+            vec![HttpAnnotation {
+                kind: "akagi_unpaired".to_string(),
+                summary: "response not attributed to a request".to_string(),
+                data: serde_json::json!({
+                    "reason": "HTTP/2 multiplexes streams over one connection, \
+                               and hudsucker's context carries no stream id",
+                    "version": version,
+                }),
+            }]
+        } else {
+            Vec::new()
+        };
+
+        self.record_http(HttpExchange {
+            exchange_id,
+            phase: HttpPhase::Response,
+            method,
+            url,
+            host,
+            version,
+            status: Some(status),
+            headers,
+            body: body_record,
+            annotations,
+        });
+        res
     }
 
     /// Skip MITM only for the narrow case of `CONNECT <ip-literal>:443` on
@@ -295,6 +559,35 @@ impl HttpHandler for ProxyHandler {
                 "raw-tunneling IP-literal CONNECT to {}",
                 req.uri()
             );
+            // Record the bypass itself. Everything inside this tunnel is
+            // invisible to us, and a timeline that simply omits it looks
+            // identical to one where the game never talked to that host.
+            // An annotated gap is not a gap.
+            self.inspector.record(InspectorEntry::Http {
+                ts_ms: Local::now().timestamp_millis(),
+                source: CaptureSource::Mitm,
+                exchange: HttpExchange {
+                    exchange_id: None,
+                    phase: HttpPhase::Request,
+                    method: "CONNECT".to_string(),
+                    url: req.uri().to_string(),
+                    host: host.to_string(),
+                    version: format!("{:?}", req.version()),
+                    status: None,
+                    headers: httpcap::headers_of(req.headers()),
+                    body: None,
+                    annotations: vec![HttpAnnotation {
+                        kind: "akagi_bypass".to_string(),
+                        summary: "raw-tunneled — contents not visible".to_string(),
+                        data: serde_json::json!({
+                            "reason": "IP-literal CONNECT on port 443 is tunneled so the \
+                                       client's own SNI and Host reach multi-tenant CDNs intact",
+                            "platform": format!("{:?}", self.platform),
+                            "port": port,
+                        }),
+                    }],
+                },
+            });
             return false;
         }
         true

@@ -39,7 +39,7 @@ type InspectorStore = {
 export const useInspectorStore = create<InspectorStore>((set) => ({
   entries: [],
   filter: {
-    kinds: new Set<InspectorKind>(['ws_frame', 'mjai_event', 'bot_reaction']),
+    kinds: new Set<InspectorKind>(['ws_frame', 'mjai_event', 'bot_reaction', 'http']),
     actor: null,
     search: '',
   },

@@ -85,12 +85,13 @@ pub async fn spawn_capture_supervisor(state: AppState) -> Result<()> {
         }
     }
 
-    let (mode, proxy_cfg, chromium_cfg, platform) = {
+    let (mode, proxy_cfg, chromium_cfg, http_cfg, platform) = {
         let cfg = state.config.read().await;
         (
             cfg.capture.mode,
             cfg.proxy.clone(),
             cfg.capture.chromium.clone(),
+            cfg.capture.http.clone(),
             cfg.platform.kind,
         )
     };
@@ -108,7 +109,11 @@ pub async fn spawn_capture_supervisor(state: AppState) -> Result<()> {
                 let ctl = state.capture_control.lock().await;
                 ctl.force_close.clone()
             };
-            Box::new(HudsuckerBackend::new(proxy_cfg.clone(), force_close))
+            Box::new(HudsuckerBackend::new(
+                proxy_cfg.clone(),
+                http_cfg.clone(),
+                force_close,
+            ))
         }
         CaptureMode::Chromium => Box::new(ChromiumBackend::new(chromium_cfg)),
     };
@@ -138,6 +143,7 @@ pub async fn spawn_capture_supervisor(state: AppState) -> Result<()> {
         mjai_bus: state.mjai_bus.clone(),
         notify_bus: state.notify_bus.clone(),
         autoplay: Some(state.autoplay_context.clone()),
+        http: http_cfg,
     };
     let status_bus = state.capture_status_bus.clone();
     let control = state.capture_control.clone();

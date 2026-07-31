@@ -23,16 +23,22 @@
 use crate::autoplay::AutoplayContext;
 use crate::bridge::Direction;
 use crate::capture::flow::{slugify, FlowBridges};
+use crate::config::HttpCaptureConfig;
 use crate::event_bus::MjaiBus;
+use crate::inspector::annotate::{self, RequestView};
 use crate::inspector::InspectorWriter;
-use crate::schema::{FrameDirection, FrameRaw, InspectorEntry};
+use crate::schema::{
+    CaptureSource, FrameDirection, FrameRaw, HttpBody, HttpExchange, HttpHeader, HttpPhase,
+    InspectorEntry,
+};
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use chromiumoxide::page::Page;
 use chromiumoxide::{
     cdp::browser_protocol::network::{
-        EnableParams as NetworkEnableParams, EventWebSocketClosed, EventWebSocketCreated,
-        EventWebSocketFrameReceived, EventWebSocketFrameSent,
+        EnableParams as NetworkEnableParams, EventRequestWillBeSent, EventResponseReceived,
+        EventWebSocketClosed, EventWebSocketCreated, EventWebSocketFrameReceived,
+        EventWebSocketFrameSent, Headers, ResourceType,
     },
     Browser,
 };
@@ -144,6 +150,7 @@ pub async fn run(
     mjai_bus: MjaiBus,
     inspector: InspectorWriter,
     autoplay: Option<Arc<AutoplayContext>>,
+    http_cfg: HttpCaptureConfig,
 ) -> Result<()> {
     info!("CDP connecting to {endpoint}");
     let (browser_owned, mut handler) = Browser::connect(endpoint)
@@ -228,6 +235,7 @@ pub async fn run(
                     mjai_bus.clone(),
                     inspector.clone(),
                     autoplay.clone(),
+                    http_cfg.clone(),
                 )
                 .await
                 {
@@ -270,6 +278,7 @@ async fn attach_page(
     mjai_bus: MjaiBus,
     inspector: InspectorWriter,
     autoplay: Option<Arc<AutoplayContext>>,
+    http_cfg: HttpCaptureConfig,
 ) -> Result<JoinHandle<()>> {
     page.execute(NetworkEnableParams::default())
         .await
@@ -290,6 +299,17 @@ async fn attach_page(
         .event_listener::<EventWebSocketClosed>()
         .await
         .context("subscribe webSocketClosed")?;
+    // Every HTTP request the page makes, so we can pick the game's
+    // analytics beacons out of it. `Network.enable` above already turns
+    // this event on; the filtering is ours, in the select arm.
+    let mut on_request = page
+        .event_listener::<EventRequestWillBeSent>()
+        .await
+        .context("subscribe requestWillBeSent")?;
+    let mut on_response = page
+        .event_listener::<EventResponseReceived>()
+        .await
+        .context("subscribe responseReceived")?;
 
     let handle = tokio::spawn(async move {
         loop {
@@ -432,11 +452,131 @@ async fn attach_page(
                     // autoplay mid-game. The handle is tied to the tab and
                     // cleared by the poll loop when the tab itself closes.
                 }
+                Some(ev) = on_request.next() => {
+                    // Fires for every subresource the page loads — the
+                    // asymmetry with the MITM leg, where a whole session
+                    // is a couple of dozen requests. Filter first, and
+                    // keep the recognizers' work off the hot path.
+                    if is_static_asset(ev.r#type.as_ref()) && !http_cfg.static_assets {
+                        continue;
+                    }
+                    let headers = headers_of(&ev.request.headers);
+                    let annotations = annotate::annotate_request(&RequestView::new(
+                        &ev.request.method,
+                        &ev.request.url,
+                        &headers,
+                    ));
+                    if let Some(a) = annotations.first() {
+                        info!(
+                            target: "akagi::capture::http",
+                            "recognized {} {}", a.kind, a.summary,
+                        );
+                    }
+                    if !http_cfg.record_all && annotations.is_empty() {
+                        continue;
+                    }
+                    inspector.record(InspectorEntry::Http {
+                        ts_ms: Local::now().timestamp_millis(),
+                        source: CaptureSource::Chromium,
+                        exchange: HttpExchange {
+                            // CDP hands out a real request id, so pairing
+                            // here is exact — unlike the MITM leg.
+                            exchange_id: Some(ev.request_id.inner().clone()),
+                            phase: HttpPhase::Request,
+                            method: ev.request.method.clone(),
+                            url: ev.request.url.clone(),
+                            host: host_of(&ev.request.url),
+                            version: String::new(),
+                            status: None,
+                            headers,
+                            body: None,
+                            annotations,
+                        },
+                    });
+                }
+                Some(ev) = on_response.next() => {
+                    if !http_cfg.record_all {
+                        continue;
+                    }
+                    if is_static_asset(Some(&ev.r#type)) && !http_cfg.static_assets {
+                        continue;
+                    }
+                    inspector.record(InspectorEntry::Http {
+                        ts_ms: Local::now().timestamp_millis(),
+                        source: CaptureSource::Chromium,
+                        exchange: HttpExchange {
+                            exchange_id: Some(ev.request_id.inner().clone()),
+                            phase: HttpPhase::Response,
+                            method: String::new(),
+                            url: ev.response.url.clone(),
+                            host: host_of(&ev.response.url),
+                            version: String::new(),
+                            status: Some(ev.response.status as u16),
+                            headers: headers_of(&ev.response.headers),
+                            // Reading a body here costs a separate
+                            // `Network.getResponseBody` round-trip per
+                            // request, which the MITM leg does not need.
+                            // Say so rather than look like there was none.
+                            body: Some(HttpBody {
+                                text: None,
+                                bytes: None,
+                                skipped: Some(
+                                    "not captured on the chromium backend".to_string(),
+                                ),
+                            }),
+                            annotations: Vec::new(),
+                        },
+                    });
+                }
                 else => break,
             }
         }
     });
     Ok(handle)
+}
+
+/// Subresource types that say nothing about the client and would bury
+/// everything else. A WebGL game pulls thousands; the MITM leg never sees
+/// them at all because the game fetches them outside the proxied path.
+fn is_static_asset(kind: Option<&ResourceType>) -> bool {
+    matches!(
+        kind,
+        Some(
+            ResourceType::Image
+                | ResourceType::Font
+                | ResourceType::Media
+                | ResourceType::Stylesheet
+        )
+    )
+}
+
+/// CDP delivers headers as a JSON object, which has no wire order to
+/// preserve — unlike the MITM leg, where order is a real fingerprint.
+/// Sorted so two captures of the same request compare equal.
+fn headers_of(headers: &Headers) -> Vec<HttpHeader> {
+    let Some(map) = headers.inner().as_object() else {
+        return Vec::new();
+    };
+    let mut out: Vec<HttpHeader> = map
+        .iter()
+        .map(|(name, value)| HttpHeader {
+            name: name.clone(),
+            value: match value {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            },
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Host of an absolute URL, or empty when it has none (`data:`, `blob:`).
+fn host_of(url: &str) -> String {
+    url.parse::<http::Uri>()
+        .ok()
+        .and_then(|u| u.host().map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// Build a stable flow id for the inspector. Uses just the request id
