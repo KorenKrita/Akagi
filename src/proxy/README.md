@@ -62,6 +62,15 @@ Two proxy-specific notes:
   That is exact over HTTP/1.x and wrong over HTTP/2, where streams
   interleave — so an h2 response is recorded unpaired and annotated
   `akagi_unpaired` rather than attributed to the wrong URL.
+
+  Only requests hudsucker answers through `handle_response` may be
+  queued. A `CONNECT`, a WebSocket upgrade and a failed forward are each
+  answered elsewhere, so queueing them would leave an entry nothing
+  claims and shift every later response onto the wrong request — which a
+  live capture caught as JSON responses recorded against a `CONNECT`. A
+  failed forward is claimed in `handle_error` and recorded as a `502`
+  annotated `akagi_forward_failed`, so "the game asked and we could not
+  reach it" is visible rather than a silent gap.
 - **The raw-tunnel bypass is recorded.** `should_intercept` returning
   false means we will never see inside that connection, so the CONNECT is
   logged with an `akagi_bypass` annotation. An announced gap is not a

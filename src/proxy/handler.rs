@@ -447,12 +447,20 @@ impl HttpHandler for ProxyHandler {
         let (body, body_record) = Self::take_body(plan, body, &parts.headers).await;
         let req = Request::from_parts(parts, body);
 
-        // The id is allocated even when this exchange is not recorded, so
-        // the FIFO stays aligned with what the connection actually sent.
-        let exchange_id = self.pairing.open(ctx.client_addr, &method, &url, &host);
+        // Only requests that will actually reach `handle_response` may go
+        // on the pairing queue. hudsucker answers a CONNECT from
+        // `process_connect` and an upgrade from `upgrade_websocket`, and
+        // neither calls the response hook — so queueing them desynchronises
+        // it, and every later response on the connection gets attributed to
+        // the wrong request. That is worse than not attributing it at all.
+        let exchange_id = if will_be_answered_by_handle_response(&req) {
+            Some(self.pairing.open(ctx.client_addr, &method, &url, &host))
+        } else {
+            None
+        };
 
         self.record_http(HttpExchange {
-            exchange_id: Some(exchange_id),
+            exchange_id,
             phase: HttpPhase::Request,
             method,
             url,
@@ -604,6 +612,11 @@ impl HttpHandler for ProxyHandler {
         ctx: &HttpContext,
         err: hudsucker::hyper_util::client::legacy::Error,
     ) -> Response<Body> {
+        // A failed forward never reaches `handle_response`, so its queued
+        // request has to be claimed here or the pairing desynchronises for
+        // the rest of the connection.
+        let claimed = self.pairing.close(ctx.client_addr, false);
+
         let mut chain = String::new();
         let mut next: Option<&dyn std::error::Error> = Some(&err);
         let mut depth = 0;
@@ -625,6 +638,29 @@ impl HttpHandler for ProxyHandler {
             "upstream forward failed: client={} chain=[{chain}]",
             ctx.client_addr,
         );
+
+        // Record it: "the game asked for this and we could not reach it"
+        // is exactly the gap a timeline should show, and it is the usual
+        // cause of a client stuck on its loading screen.
+        if let Some(req) = claimed {
+            self.record_http(HttpExchange {
+                exchange_id: Some(req.id),
+                phase: HttpPhase::Response,
+                method: req.method,
+                url: req.url,
+                host: req.host,
+                version: String::new(),
+                status: Some(StatusCode::BAD_GATEWAY.as_u16()),
+                headers: Vec::new(),
+                body: None,
+                annotations: vec![HttpAnnotation {
+                    kind: "akagi_forward_failed".to_string(),
+                    summary: "upstream forward failed".to_string(),
+                    data: serde_json::json!({ "error": chain }),
+                }],
+            });
+        }
+
         Response::builder()
             .status(StatusCode::BAD_GATEWAY)
             .body(Body::empty())
@@ -862,6 +898,34 @@ fn is_loopback_host(host: &str) -> bool {
     }
 }
 
+/// Whether hudsucker will answer this request through `handle_response`.
+///
+/// It will not for a `CONNECT` (answered by `process_connect`) nor for a
+/// WebSocket upgrade (answered by `upgrade_websocket`), so neither may be
+/// queued for response pairing. Mirrors `hyper_tungstenite::is_upgrade_request`,
+/// which is what hudsucker itself branches on.
+fn will_be_answered_by_handle_response<B>(req: &Request<B>) -> bool {
+    if req.method() == Method::CONNECT {
+        return false;
+    }
+    !is_websocket_upgrade(req)
+}
+
+fn is_websocket_upgrade<B>(req: &Request<B>) -> bool {
+    header_contains(req, hyper::header::CONNECTION, "upgrade")
+        && header_contains(req, hyper::header::UPGRADE, "websocket")
+}
+
+/// `Connection` is a comma-separated list, so a substring test would be
+/// wrong; compare each element.
+fn header_contains<B>(req: &Request<B>, name: hyper::header::HeaderName, value: &str) -> bool {
+    req.headers().get_all(name).iter().any(|v| {
+        v.as_bytes()
+            .split(|&c| c == b',')
+            .any(|part| part.trim_ascii().eq_ignore_ascii_case(value.as_bytes()))
+    })
+}
+
 /// `true` for a `CONNECT` whose authority names the loopback interface — the
 /// signature of a redirector that is proxying the game's own internal sockets.
 /// See the refusal in [`ProxyHandler::handle_request`] for why these must not
@@ -872,9 +936,84 @@ fn is_loopback_connect(method: &Method, uri: &Uri) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_ip_literal_host, is_loopback_connect, is_loopback_host, should_raw_tunnel};
+    use super::{
+        is_ip_literal_host, is_loopback_connect, is_loopback_host, should_raw_tunnel,
+        will_be_answered_by_handle_response,
+    };
     use crate::config::Platform;
-    use hudsucker::hyper::{Method, Uri};
+    use hudsucker::hyper::{Method, Request, Uri};
+
+    /// Regression: only requests hudsucker answers through
+    /// `handle_response` may join the pairing queue.
+    ///
+    /// A live capture showed responses carrying `content-type:
+    /// application/json` recorded as `CONNECT` — a CONNECT has no body at
+    /// all. hudsucker answers a CONNECT from `process_connect` and an
+    /// upgrade from `upgrade_websocket`, neither of which calls the
+    /// response hook, so queueing them left an entry that was never
+    /// claimed and shifted every later response on that connection onto
+    /// the wrong request.
+    #[test]
+    fn connect_and_upgrades_are_kept_off_the_pairing_queue() {
+        let connect = Request::builder()
+            .method(Method::CONNECT)
+            .uri("route-6.maj-soul.com:443")
+            .body(())
+            .unwrap();
+        assert!(!will_be_answered_by_handle_response(&connect));
+
+        // The game's gateway socket, exactly as the client opens it.
+        let upgrade = Request::builder()
+            .method(Method::GET)
+            .uri("https://route-6.maj-soul.com/gateway")
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .body(())
+            .unwrap();
+        assert!(!will_be_answered_by_handle_response(&upgrade));
+
+        // An ordinary forward is answered by `handle_response`, so it does
+        // belong on the queue.
+        let plain = Request::builder()
+            .method(Method::GET)
+            .uri("https://route-6.maj-soul.com/api/clientgate/routes")
+            .body(())
+            .unwrap();
+        assert!(will_be_answered_by_handle_response(&plain));
+    }
+
+    /// `Connection` is a comma-separated list and browsers send it with
+    /// other tokens alongside, so element-wise matching is load-bearing —
+    /// and a lone `Connection: keep-alive` must not read as an upgrade.
+    #[test]
+    fn upgrade_detection_handles_header_lists_and_casing() {
+        let listed = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/ws")
+            .header("Connection", "keep-alive, Upgrade")
+            .header("Upgrade", "WebSocket")
+            .body(())
+            .unwrap();
+        assert!(!will_be_answered_by_handle_response(&listed));
+
+        let keep_alive = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/api")
+            .header("Connection", "keep-alive")
+            .body(())
+            .unwrap();
+        assert!(will_be_answered_by_handle_response(&keep_alive));
+
+        // `Connection: Upgrade` without the websocket token is not one.
+        let half = Request::builder()
+            .method(Method::GET)
+            .uri("https://example.com/api")
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "h2c")
+            .body(())
+            .unwrap();
+        assert!(will_be_answered_by_handle_response(&half));
+    }
 
     /// Regression: a redirector matching the game for *any* target host sweeps
     /// up its internal `socketpair()` self-connect. Tunneling that deadlocks —

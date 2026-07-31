@@ -39,6 +39,16 @@
 //! [`ExchangePairing::close`] refuses to guess and the response is
 //! recorded unpaired. The chromium backend has no such problem; CDP hands
 //! out a real request id.
+//!
+//! **Only queue a request that will actually produce a response here.**
+//! hudsucker answers a `CONNECT` from `process_connect`, a WebSocket
+//! upgrade from `upgrade_websocket`, and a failed forward from
+//! `handle_error` — none of which call the response hook. Queueing one of
+//! those leaves an entry nothing ever claims, and every later response on
+//! that connection is attributed to the request before it. A live capture
+//! caught exactly that: JSON responses recorded as `CONNECT`, which has no
+//! body at all. The proxy handler decides what may be queued; see
+//! `will_be_answered_by_handle_response` there.
 
 use crate::schema::{HttpBody, HttpHeader};
 use http::{HeaderMap, HeaderValue};

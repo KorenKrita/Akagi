@@ -103,6 +103,30 @@ pub async fn wait_until_listening(port: u16) {
 
 /// Send an absolute-form request through the proxy, the way a client
 /// configured to use one does, and read the whole response.
+/// Send several requests down **one** proxy connection, keep-alive, and
+/// return the raw bytes of everything that came back.
+///
+/// One connection is the point: the request/response pairing is per
+/// connection, so a desynchronising request only misattributes the
+/// responses that follow it on the same socket.
+pub async fn pipeline_through_proxy(proxy_port: u16, requests: &[(String, String)]) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", proxy_port))
+        .await
+        .expect("reach the proxy");
+    for (i, (url, host)) in requests.iter().enumerate() {
+        let last = i + 1 == requests.len();
+        let conn = if last { "close" } else { "keep-alive" };
+        let req = format!("GET {url} HTTP/1.1\r\nHost: {host}\r\nConnection: {conn}\r\n\r\n");
+        stream.write_all(req.as_bytes()).await.expect("write");
+    }
+    let mut out = Vec::new();
+    tokio::time::timeout(TIMEOUT, stream.read_to_end(&mut out))
+        .await
+        .expect("proxy never finished answering")
+        .expect("read");
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 pub async fn get_through_proxy(proxy_port: u16, url: &str, host: &str) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", proxy_port))
         .await
