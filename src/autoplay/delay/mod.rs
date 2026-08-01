@@ -55,6 +55,15 @@ impl DecisionKind {
     pub fn is_kan(self) -> bool {
         matches!(self, Self::Daiminkan | Self::Ankan | Self::Kakan)
     }
+
+    /// The first click of this decision lands on an **action button**
+    /// (chi/pon/kan, ron/tsumo, riichi, skip, kyuushu, kita) rather than
+    /// a hand tile. Buttons render later than tiles — after the
+    /// triggering discard's animation plus their own pop-in — so these
+    /// decisions carry a higher UI-readiness floor.
+    pub fn clicks_action_button(self) -> bool {
+        !matches!(self, Self::Dahai)
+    }
 }
 
 /// Rough class of a discarded tile. Measured effect (Throne records):
@@ -262,18 +271,25 @@ pub fn budget_cap(input: &DelayInput, allow_bank: bool) -> u32 {
 
 /// The minimum target no policy — built-in or script — may go below.
 ///
-/// Two components, both about the client UI rather than style:
-/// `min_delay_ms` covers Mahjong Soul's button/tile render latency after
-/// the triggering frame (a click issued before the UI exists is silently
-/// lost — the reason the legacy model had a hard lower bound), and the
-/// dealer-opening animation pad covers the 14-tile hand-sort animation.
+/// All components are about the client UI rather than style — a click
+/// issued before the UI exists is silently lost (the reason the legacy
+/// model had a hard lower bound):
+/// - `min_delay_ms` covers tile render latency after the triggering
+///   frame;
+/// - `min_button_delay_ms` covers action buttons (chi/pon/kan, ron,
+///   riichi, skip, ...), which appear only after the triggering
+///   discard's animation plus their own pop-in;
+/// - the dealer-opening pad covers the 14-tile hand-sort animation.
 pub fn functional_floor(input: &DelayInput) -> u32 {
-    let ui_floor = input.delay_cfg.min_delay_ms;
-    if input.opening_animation {
-        ui_floor.max(input.cfg.dealer_first_discard_extra_delay_ms)
-    } else {
-        ui_floor
+    let d = input.delay_cfg;
+    let mut floor = d.min_delay_ms;
+    if input.kind.clicks_action_button() {
+        floor = floor.max(d.min_button_delay_ms);
     }
+    if input.opening_animation {
+        floor = floor.max(input.cfg.dealer_first_discard_extra_delay_ms);
+    }
+    floor
 }
 
 /// Sample the base thinking time.
@@ -740,6 +756,54 @@ mod tests {
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let dec = decide(&i, &mut r);
         assert_eq!(dec.total_target_ms, 160_000, "0 disables the static cap");
+    }
+
+    /// Button-clicking decisions (chi/pon/kan/ron/skip/riichi) carry the
+    /// higher button floor — Majsoul renders action buttons later than
+    /// hand tiles (discard animation + button pop-in).
+    #[test]
+    fn button_decisions_use_button_floor() {
+        let c = cfg();
+        let d = DelayModelConfig {
+            // Force tiny samples so the floor is what decides.
+            obvious_max_ms: 1,
+            obvious_top_prob: 0.5,
+            ..uniform()
+        };
+        let probs = Some(DecisionProbs {
+            top: 0.99,
+            second: Some(0.01),
+        });
+
+        for kind in [
+            DecisionKind::Chi,
+            DecisionKind::Pon,
+            DecisionKind::Daiminkan,
+            DecisionKind::Ankan,
+            DecisionKind::Kakan,
+            DecisionKind::Hora,
+            DecisionKind::Reach,
+            DecisionKind::Ryukyoku,
+            DecisionKind::Pass,
+            DecisionKind::Kita,
+        ] {
+            let mut i = input(&c, &d);
+            i.kind = kind;
+            i.probs = probs;
+            let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+            let dec = decide(&i, &mut r);
+            assert_eq!(
+                dec.total_target_ms, d.min_button_delay_ms,
+                "{kind:?} must sit on the button floor"
+            );
+        }
+
+        // A plain discard keeps the lower tile floor.
+        let mut i = input(&c, &d);
+        i.probs = probs;
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert_eq!(dec.total_target_ms, d.min_delay_ms);
     }
 
     /// The functional floor (animation wait) wins over the cap: losing

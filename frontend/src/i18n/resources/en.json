@@ -361,7 +361,9 @@
       "delay_mode_legacy": "Legacy (fixed random delay)",
       "delay_mode_lua_help": "Delays come from delay.lua next to the config file, generated with a human-like model calibrated against ranked-game data on first use. Edit it freely — it hot-reloads on save; delete it to restore the default. If the script errors, a built-in model takes over.",
       "min_delay": "Minimum delay (ms)",
-      "min_delay_hint": "Safety floor for every action: Mahjong Soul needs time to render buttons and tiles, and a click issued too early is silently lost. Applies in both modes and cannot be undercut by the script."
+      "min_delay_hint": "Safety floor for every action: Mahjong Soul needs time to render the UI, and a click issued too early is silently lost. Applies in both modes and cannot be undercut by the script.",
+      "min_button_delay": "Minimum button delay (ms)",
+      "min_button_delay_hint": "Higher floor for chi/pon/kan/ron/skip/riichi buttons — they appear only after the discard animation plus their own pop-in, later than hand tiles. Raise this if buttons are still missing clicks."
     },
     "overlay": "Suggestion overlay",
     "overlay_enabled": "Show overlay window",

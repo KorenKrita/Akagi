@@ -13,8 +13,10 @@
 -- whatever networking and bot inference already consumed.
 --
 -- Akagi always enforces on top of whatever this script returns:
---   * a minimum delay (config `min_delay_ms`) — clicks issued before
---     Mahjong Soul finishes rendering buttons/tiles are silently lost
+--   * a minimum delay (config `min_delay_ms`; the higher
+--     `min_button_delay_ms` for chi/pon/kan/ron/skip/riichi buttons,
+--     which render later than hand tiles) — clicks issued before the
+--     UI exists are silently lost
 --   * the dealing-animation wait on the dealer's opening discard
 --   * the server time budget — autoplay can never run into an
 --     auto-discard; the extra time bank is only spent when this script

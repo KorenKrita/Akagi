@@ -60,10 +60,17 @@ pub struct DelayModelConfig {
     pub mode: DelayMode,
     /// Minimum total thinking time per decision, ms. This is a
     /// functional floor, not a style knob: Mahjong Soul needs time to
-    /// render action buttons / tiles after the triggering frame, and a
-    /// click issued before the UI exists is silently lost. Applies in
-    /// every mode and cannot be undercut by the Lua script.
+    /// render tiles after the triggering frame, and a click issued
+    /// before the UI exists is silently lost. Applies in every mode and
+    /// cannot be undercut by the Lua script.
     pub min_delay_ms: u32,
+    /// UI-readiness floor for decisions that click an **action button**
+    /// (chi/pon/kan, ron/tsumo, riichi, skip, kyuushu, kita), ms. The
+    /// buttons appear only after the triggering discard's animation and
+    /// their own pop-in — noticeably later than hand tiles render — so
+    /// they need a higher floor than plain discards. Applies in every
+    /// mode and cannot be undercut by the Lua script.
+    pub min_button_delay_ms: u32,
     /// Base distribution shape (built-in model; also the fallback when
     /// the Lua script fails).
     pub distribution: DelayDistribution,
@@ -141,6 +148,10 @@ impl Default for DelayModelConfig {
             // Matches the historical uniform lower bound — the value the
             // old model implicitly relied on for UI readiness.
             min_delay_ms: 1000,
+            // Buttons render after the discard animation + their own
+            // pop-in; observed to still be missing at 1000ms on real
+            // hardware.
+            min_button_delay_ms: 1600,
             distribution: DelayDistribution::LogNormal,
             lognormal: default_lognormal(),
             bank_on_long_thought: true,

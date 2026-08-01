@@ -487,11 +487,21 @@ mod tests {
 
         // Regression: even outside the opening animation, a 0 return is
         // lifted to the UI-readiness floor — clicking before Majsoul
-        // renders the buttons loses the click.
+        // renders the tiles loses the click.
         let dec = zero.try_decide(&base_input(&cfg, &d)).unwrap();
         assert_eq!(
             dec.total_target_ms, d.min_delay_ms,
             "min_delay_ms floor must hold against a 0 return"
+        );
+
+        // Regression: claim windows click an action button, which renders
+        // later than tiles — the higher button floor must hold.
+        let mut i = base_input(&cfg, &d);
+        i.kind = DecisionKind::Pon;
+        let dec = zero.try_decide(&i).unwrap();
+        assert_eq!(
+            dec.total_target_ms, d.min_button_delay_ms,
+            "min_button_delay_ms floor must hold against a 0 return"
         );
 
         let huge = DelayScript::compile(

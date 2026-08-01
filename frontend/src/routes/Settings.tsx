@@ -840,6 +840,22 @@ function AutoplayCard({
             }
           />
         </Field>
+        <Field
+          label={t('settings.autoplay.min_button_delay')}
+          hint={t('settings.autoplay.min_button_delay_hint')}
+        >
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            value={delay.min_button_delay_ms}
+            onChange={(e) =>
+              setDelayField({
+                min_button_delay_ms: Number(e.target.value || 0),
+              })
+            }
+          />
+        </Field>
         <Field label={t('settings.autoplay.inter_click_delay')}>
           <Input
             type="number"
@@ -911,6 +927,7 @@ function defaultDelayModel(): DelayModelConfig {
   return {
     mode: 'lua',
     min_delay_ms: 1000,
+    min_button_delay_ms: 1600,
     distribution: 'log_normal',
     lognormal: {
       dahai_tedashi: [0.87, 0.62],

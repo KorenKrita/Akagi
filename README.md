@@ -287,10 +287,12 @@ Two delay models exist and exactly one is active
 
 Guardrails apply in **both** modes and cannot be undercut by a script:
 
-- **Minimum delay** (`min_delay_ms`, default 1000) — Mahjong Soul needs
-  time to render buttons/tiles after a game event; a click issued
-  before the UI exists is silently lost. This floor is why the legacy
-  model always had a hard lower bound.
+- **Minimum delay** (`min_delay_ms`, default 1000; `min_button_delay_ms`,
+  default 1600, for chi/pon/kan/ron/skip/riichi buttons, which appear
+  only after the discard animation plus their own pop-in) — Mahjong
+  Soul needs time to render the UI after a game event; a click issued
+  before it exists is silently lost. This floor is why the legacy model
+  always had a hard lower bound.
 - **Animation floors** — the dealer's opening hand-sort animation.
 - **Server-budget awareness** — on Mahjong Soul, Akagi reads the
   per-turn time budget from the wire and clamps the delay so it never

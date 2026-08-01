@@ -56,6 +56,7 @@ function makeConfig(over: {
       delay: {
         mode: 'legacy',
         min_delay_ms: 0,
+        min_button_delay_ms: 0,
         distribution: 'uniform',
         lognormal: {},
         bank_on_long_thought: false,
