@@ -355,7 +355,11 @@
       "hover_delay_hint": "雀魂が牌のクリックを認識するには、mousedown前に100ms以上のホバーが必要です。短すぎるとクリックが無視されます。",
       "click_hold": "ボタン押下保持 (ms)",
       "dealer_first_discard_extra_delay": "親の初打追加待機 (ms)",
-      "dealer_first_discard_extra_delay_hint": "雀魂は親に14枚配られた後に手牌整列アニメーションを再生し、その間のクリックは無視されます。2000ms前後でほぼ吸収できます。"
+      "dealer_first_discard_extra_delay_hint": "雀魂は親に14枚配られた後に手牌整列アニメーションを再生し、その間のクリックは無視されます。2000ms前後でほぼ吸収できます。",
+      "script_enabled": "Lua 遅延スクリプト",
+      "script_enabled_help": "Lua スクリプト（decide_delay）で遅延ポリシーを上書きします。保存すると自動的に再読み込みされ、ファイルが無い・エラー時は内蔵モデルを使用します。Akagi リポジトリの delay.lua.example を参照してください。",
+      "script_path": "遅延スクリプトのパス",
+      "script_path_help": "空欄の場合は設定ファイルと同じ場所の scripts/delay.lua を使用します。"
     },
     "overlay": "推奨オーバーレイ",
     "overlay_enabled": "オーバーレイウィンドウを表示",

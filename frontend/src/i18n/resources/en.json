@@ -355,7 +355,11 @@
       "hover_delay_hint": "Mouse must hover for ≥100ms before mousedown for Mahjong Soul to register a tile click. Lower values risk dropped clicks.",
       "click_hold": "Click hold (ms)",
       "dealer_first_discard_extra_delay": "Dealer first-discard extra delay (ms)",
-      "dealer_first_discard_extra_delay_hint": "Mahjong Soul plays a hand-sort animation when the dealer is dealt all 14 tiles. Clicks during the animation are dropped. ~2000ms covers most devices."
+      "dealer_first_discard_extra_delay_hint": "Mahjong Soul plays a hand-sort animation when the dealer is dealt all 14 tiles. Clicks during the animation are dropped. ~2000ms covers most devices.",
+      "script_enabled": "Lua delay script",
+      "script_enabled_help": "Override the delay policy with a Lua script (decide_delay). The file is hot-reloaded on save; if it is missing or errors, the built-in model is used. See delay.lua.example in the Akagi repository.",
+      "script_path": "Delay script path",
+      "script_path_help": "Leave empty to use scripts/delay.lua next to the config file."
     },
     "overlay": "Suggestion overlay",
     "overlay_enabled": "Show overlay window",

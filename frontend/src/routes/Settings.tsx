@@ -59,6 +59,7 @@ import {
 import type {
   AppConfig,
   CaptureMode,
+  DelayModelConfig,
   DetectedBrowser,
   OverlayConfig,
   PlatformKind,
@@ -734,7 +735,9 @@ function AutoplayCard({
       click_hold_ms: 50,
       dealer_first_discard_extra_delay_ms: 2000,
     },
+    delay: defaultDelayModel(),
   }
+  const delay = ap.delay ?? defaultDelayModel()
   const captureIsChromium = draft.capture?.mode === 'chromium'
   const setApField = (patch: Partial<typeof ap>) =>
     setDraft({ ...draft, autoplay: { ...ap, ...patch } })
@@ -742,6 +745,11 @@ function AutoplayCard({
     setDraft({
       ...draft,
       autoplay: { ...ap, majsoul: { ...ap.majsoul, ...patch } },
+    })
+  const setDelayField = (patch: Partial<DelayModelConfig>) =>
+    setDraft({
+      ...draft,
+      autoplay: { ...ap, delay: { ...delay, ...patch } },
     })
   return (
     <Card>
@@ -846,12 +854,54 @@ function AutoplayCard({
             }
           />
         </Field>
+        <Toggle
+          label={t('settings.autoplay.script_enabled')}
+          value={delay.script_enabled}
+          onChange={(v) => setDelayField({ script_enabled: v })}
+        />
+        <p className="text-xs text-muted-foreground">
+          {t('settings.autoplay.script_enabled_help')}
+        </p>
+        {delay.script_enabled && (
+          <Field
+            label={t('settings.autoplay.script_path')}
+            hint={t('settings.autoplay.script_path_help')}
+          >
+            <Input
+              value={delay.script_path ?? ''}
+              onChange={(e) =>
+                setDelayField({ script_path: e.target.value || null })
+              }
+            />
+          </Field>
+        )}
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.platform_note')}
         </p>
       </CardContent>
     </Card>
   )
+}
+
+/** Mirror of `DelayModelConfig::default()` on the Rust side. */
+function defaultDelayModel(): DelayModelConfig {
+  return {
+    distribution: 'uniform',
+    lognormal_mu: 0.6,
+    lognormal_sigma: 0.5,
+    riichi_extra_ms: 0,
+    kan_extra_ms: 0,
+    close_margin: 0.005,
+    close_margin_extra_ms: 0,
+    obvious_top_prob: 0.995,
+    obvious_max_ms: 0,
+    safety_margin_ms: 1000,
+    bank_use_fraction: 0.25,
+    bank_max_single_ms: 5000,
+    no_budget_cap_ms: 15000,
+    script_enabled: true,
+    script_path: null,
+  }
 }
 
 function CaptureCard({

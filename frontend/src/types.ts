@@ -106,9 +106,31 @@ export type MajsoulAutoplayConfig = {
   dealer_first_discard_extra_delay_ms: number
 }
 
+/** Pre-click delay model parameters. Mirrors
+ *  `src/config/autoplay.rs::DelayModelConfig`; the fine-grained knobs are
+ *  config-file-only — the Settings UI exposes the Lua script fields. */
+export type DelayModelConfig = {
+  distribution: 'uniform' | 'log_normal'
+  lognormal_mu: number
+  lognormal_sigma: number
+  riichi_extra_ms: number
+  kan_extra_ms: number
+  close_margin: number
+  close_margin_extra_ms: number
+  obvious_top_prob: number
+  obvious_max_ms: number
+  safety_margin_ms: number
+  bank_use_fraction: number
+  bank_max_single_ms: number
+  no_budget_cap_ms: number
+  script_enabled: boolean
+  script_path: string | null
+}
+
 export type AutoplayConfig = {
   enabled: boolean
   majsoul: MajsoulAutoplayConfig
+  delay: DelayModelConfig
 }
 
 /** Optional cloud-inference settings for the built-in native bot.
