@@ -176,10 +176,7 @@ pub fn decide<R: Rng + ?Sized>(input: &DelayInput, rng: &mut R) -> DelayDecision
     // hard cap): real players dip into the pool routinely and it refills
     // every kyoku. Decided on the *base* sample so a huge additive bonus
     // alone doesn't unlock the bank when the gate is off.
-    if d.bank_on_long_thought
-        && input.budget.is_some()
-        && target > budget_cap(input, false)
-    {
+    if d.bank_on_long_thought && input.budget.is_some() && target > budget_cap(input, false) {
         allow_bank = true;
     }
 
@@ -320,7 +317,11 @@ fn base_sample<R: Rng + ?Sized>(input: &DelayInput, rng: &mut R) -> u32 {
             // (which would collapse every sample to 0 — silently pinning
             // all delays to the floor) and even a negative sigma.
             if !mu.is_finite() || !sigma.is_finite() || sigma < 0.0 {
-                return if hi == lo { lo } else { rng.random_range(lo..=hi) };
+                return if hi == lo {
+                    lo
+                } else {
+                    rng.random_range(lo..=hi)
+                };
             }
             match rand_distr::LogNormal::new(mu, sigma) {
                 Ok(dist) => {
@@ -870,8 +871,7 @@ mod tests {
         let c = cfg();
         let mut d = DelayModelConfig::default();
         // e^0.6 ≈ 1.82s
-        d.lognormal
-            .insert("dahai_tedashi".into(), [0.6, 0.5]);
+        d.lognormal.insert("dahai_tedashi".into(), [0.6, 0.5]);
         let i = input(&c, &d);
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let mut samples: Vec<u32> = (0..10_000)

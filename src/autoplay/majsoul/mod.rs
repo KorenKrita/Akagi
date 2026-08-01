@@ -244,8 +244,7 @@ fn push_pre_delay(
 ) {
     let cfg = ctx.cfg;
     let per_click = cfg.hover_delay_ms + cfg.click_hold_ms;
-    let click_overhead_ms =
-        per_click + extra_clicks * (per_click + cfg.inter_click_delay_ms);
+    let click_overhead_ms = per_click + extra_clicks * (per_click + cfg.inter_click_delay_ms);
 
     let opening_animation = match kind {
         DecisionKind::Dahai => is_dealer_first_discard(ctx),
@@ -336,8 +335,7 @@ fn push_pre_delay(
     // highlighted before the tile exists to click), and still clamped
     // so the window total never exceeds the budget cap. Floor last —
     // losing the click is worse than shaving budget headroom.
-    let follow_up =
-        kind == DecisionKind::Dahai && ctx.reach_state == ReachState::AwaitingDahai;
+    let follow_up = kind == DecisionKind::Dahai && ctx.reach_state == ReachState::AwaitingDahai;
 
     // Convert target total time to a sleep: subtract what the window has
     // already consumed. Without a budget there is no window clock — sleep
@@ -345,8 +343,8 @@ fn push_pre_delay(
     let sleep = match ctx.budget {
         Some(b) if follow_up => {
             let residual = decision.total_target_ms.saturating_sub(b.elapsed_ms);
-            let remaining = delay::budget_cap(&input, decision.allow_bank)
-                .saturating_sub(b.elapsed_ms);
+            let remaining =
+                delay::budget_cap(&input, decision.allow_bank).saturating_sub(b.elapsed_ms);
             residual.min(remaining).max(delay_cfg.min_delay_ms)
         }
         Some(b) => decision.total_target_ms.saturating_sub(b.elapsed_ms),

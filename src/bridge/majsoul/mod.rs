@@ -421,10 +421,7 @@ impl MajsoulBridge {
         if fixed_ms == 0 {
             return None;
         }
-        let add_ms = op
-            .get("time_add")
-            .and_then(JsonValue::as_u64)
-            .unwrap_or(0);
+        let add_ms = op.get("time_add").and_then(JsonValue::as_u64).unwrap_or(0);
         Some(TimeBudget {
             fixed_ms: u32::try_from(fixed_ms).unwrap_or(u32::MAX),
             add_ms: u32::try_from(add_ms).unwrap_or(u32::MAX),
@@ -3485,8 +3482,7 @@ mod tests {
 
     fn budget_bridge(seat: Actor) -> (MajsoulBridge, crate::autoplay::budget::SharedTimeBudget) {
         let slot = crate::autoplay::budget::new_shared();
-        let mut bridge =
-            MajsoulBridge::new(None, None).with_time_budget(Some(slot.clone()));
+        let mut bridge = MajsoulBridge::new(None, None).with_time_budget(Some(slot.clone()));
         bridge.seat = Some(seat);
         (bridge, slot)
     }
@@ -3579,7 +3575,10 @@ mod tests {
         let payload: JsonValue = serde_json::from_str(SYNC_GAME_SAMPLE).unwrap();
         bridge.dispatch(&resp(METHOD_SYNC_GAME, payload));
 
-        let b = slot.read().unwrap().expect("final window must be committed");
+        let b = slot
+            .read()
+            .unwrap()
+            .expect("final window must be committed");
         assert_eq!(b.fixed_ms, 300_000, "wire value of the final window");
         assert_eq!(b.source, BudgetSource::DealTile);
         assert!(
@@ -3605,8 +3604,14 @@ mod tests {
                 "operation": { "seat": 2, "time_fixed": 5000, "time_add": 0 },
             }),
         ));
-        let b = slot.read().unwrap().expect("chankan window must fill the slot");
-        assert_eq!(b.source, crate::autoplay::budget::BudgetSource::AnGangAddGang);
+        let b = slot
+            .read()
+            .unwrap()
+            .expect("chankan window must fill the slot");
+        assert_eq!(
+            b.source,
+            crate::autoplay::budget::BudgetSource::AnGangAddGang
+        );
     }
 
     /// Regression: `time_fixed == 0` has unknown semantics (possibly an

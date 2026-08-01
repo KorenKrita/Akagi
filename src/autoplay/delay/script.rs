@@ -40,8 +40,10 @@ use tracing::{info, warn};
 
 /// The default delay policy, generated as `delay.lua` next to the
 /// config file on first use (see [`ScriptHost::maybe_reload`]).
-pub const DEFAULT_SCRIPT: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/delay_default.lua"));
+pub const DEFAULT_SCRIPT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/delay_default.lua"
+));
 
 /// Hard sanity range for a script-provided target (10 minutes). Values
 /// outside are treated as a script bug, not clamped silently.
@@ -70,7 +72,14 @@ const MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 /// filesystem (`dofile()` with no argument blocks reading stdin), and
 /// `pcall`/`xpcall` would let a script catch the guard's abort error
 /// and keep spinning.
-const SCRUBBED_GLOBALS: &[&str] = &["load", "loadstring", "dofile", "loadfile", "pcall", "xpcall"];
+const SCRUBBED_GLOBALS: &[&str] = &[
+    "load",
+    "loadstring",
+    "dofile",
+    "loadfile",
+    "pcall",
+    "xpcall",
+];
 
 /// A loaded, compiled delay script.
 pub struct DelayScript {
@@ -262,9 +271,7 @@ impl DelayScript {
                         use rand::Rng;
                         Ok(rand::rng().sample::<f64, _>(dist))
                     }
-                    Err(_) => Err(mlua::Error::RuntimeError(
-                        "lognormal: invalid sigma".into(),
-                    )),
+                    Err(_) => Err(mlua::Error::RuntimeError("lognormal: invalid sigma".into())),
                 }
             })?,
         )?;
@@ -468,16 +475,16 @@ mod tests {
     #[test]
     fn syntax_error_is_rejected_at_compile() {
         assert!(DelayScript::compile("function decide_delay(", "test").is_err());
-        assert!(DelayScript::compile("x = 1", "test").is_err(), "no function");
+        assert!(
+            DelayScript::compile("x = 1", "test").is_err(),
+            "no function"
+        );
     }
 
     #[test]
     fn runtime_error_falls_back() {
-        let s = DelayScript::compile(
-            "function decide_delay(ctx) error('boom') end",
-            "test",
-        )
-        .unwrap();
+        let s =
+            DelayScript::compile("function decide_delay(ctx) error('boom') end", "test").unwrap();
         let cfg = MajsoulAutoplayConfig::default();
         let d = DelayModelConfig::default();
         assert!(s.try_decide(&base_input(&cfg, &d)).is_none());
@@ -505,11 +512,8 @@ mod tests {
 
     #[test]
     fn infinite_loop_is_aborted() {
-        let s = DelayScript::compile(
-            "function decide_delay(ctx) while true do end end",
-            "test",
-        )
-        .unwrap();
+        let s = DelayScript::compile("function decide_delay(ctx) while true do end end", "test")
+            .unwrap();
         let cfg = MajsoulAutoplayConfig::default();
         let d = DelayModelConfig::default();
         let start = Instant::now();
@@ -790,11 +794,16 @@ mod tests {
             "missing file must be created from the bundled default"
         );
 
-        std::fs::write(&path, "-- user edit\nfunction decide_delay(c) return { delay_ms = 1 } end")
-            .unwrap();
+        std::fs::write(
+            &path,
+            "-- user edit\nfunction decide_delay(c) return { delay_ms = 1 } end",
+        )
+        .unwrap();
         host.ensure_default(&path);
         assert!(
-            std::fs::read_to_string(&path).unwrap().starts_with("-- user edit"),
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .starts_with("-- user edit"),
             "an existing file must never be overwritten"
         );
     }

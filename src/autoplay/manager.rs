@@ -244,9 +244,7 @@ impl AutoplayManager {
                         window_checked = true;
                         if planned_budget.is_some() {
                             let current = self.ctx.time_budget.read().ok().and_then(|g| *g);
-                            if current.map(|b| b.opened_at)
-                                != planned_budget.map(|b| b.opened_at)
-                            {
+                            if current.map(|b| b.opened_at) != planned_budget.map(|b| b.opened_at) {
                                 warn!(
                                     "autoplay: decision window closed mid-delay — dropping stale click for {:?}",
                                     resp.action
