@@ -40,8 +40,8 @@ pub enum DelayDistribution {
     /// clamped to the `[pre_click_delay_min_ms, pre_click_delay_max_ms]`
     /// window scaled by 0.5x/4x so the fat tail can exceed the old bounds
     /// without running away. Default: real players' think times are
-    /// log-normal with sigma ~0.5–0.6 (measured from ranked game
-    /// records — see `scripts/analyze_record_think_time.py`).
+    /// log-normal with sigma ~0.5–0.6 (measured from the server-side
+    /// action clock of ranked game records).
     #[default]
     LogNormal,
 }
@@ -49,8 +49,8 @@ pub enum DelayDistribution {
 /// Parameters of the built-in pre-click delay model (`autoplay::delay`).
 ///
 /// The log-normal defaults are **calibrated against real ranked-game
-/// records** (Throne-room 4p; server-clock think times measured by
-/// `scripts/analyze_record_think_time.py`). Additive rule bonuses still
+/// records** (Throne-room 4p; think times measured on the server-side
+/// action clock of decoded game records). Additive rule bonuses still
 /// default to 0 — the calibrated per-kind distributions already encode
 /// the human differences they were meant to approximate.
 #[derive(Debug, Clone, Serialize, Deserialize)]

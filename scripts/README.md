@@ -78,64 +78,6 @@ instead of downloading:
 python scripts/extract_liqi.py --from-raw <dir-with-lua-and-proto_config>
 ```
 
-## `analyze_autoplay_timing.py`
-
-Offline analysis of Akagi's own inspector logs, for tuning autoplay timing.
-Reads every `inspector.jsonl` under a directory (the inspector records each
-WebSocket frame unconditionally, with the protobuf already decoded) and
-reports two things:
-
-1. **Time budget** — which actions carry an `OptionalOperationList`, the
-   `time_fixed` / `time_add` they carry, whether the dealer's opening-hand
-   allowance is an absolute or a proportional bonus, and how `time_add`
-   moves across a game.
-2. **Think times** — decision latency per seat, split into the dimensions
-   the delay model needs: draw→discard, post-call discard, naki-window
-   reaction (discard→accepted call), tsumogiri/tedashi, riichi state, and
-   junme band (early/mid/late kyoku).
-
-```sh
-python3 scripts/analyze_autoplay_timing.py --logs <log-dir>
-```
-
-Sampling validity is the whole point of the tool, so it is opinionated
-about it. Opponent seats are the useful sample — three players per hanchan,
-drawn from the population rather than from whoever ran the capture. Rooms
-full of Mahjong Soul's own AI are detected from `game_config` and excluded
-from the think-time half, because that AI discards on a roughly 500ms grid
-and would poison any distribution fitted to it (`--force` overrides, for
-methodology checks only). It cannot detect a session recorded while the
-operator was doing something else, so only point it at real games.
-
-Requires nothing outside the standard library.
-
-## `analyze_record_think_time.py`
-
-The stronger sibling of `analyze_autoplay_timing.py`: instead of pairing
-live broadcast frames, it decodes Mahjong Soul **game records**
-(`fetchGameRecord` responses found in `inspector.jsonl`) — capture a
-session where you open a few replays in the game client, then point the
-script at the log directory:
-
-```sh
-python3 scripts/analyze_record_think_time.py --logs <log-dir>
-```
-
-Game records are a better calibration source because `GameDetailRecords`
-(v210715) timestamps every action with a cumulative **server-side game
-clock**, records each player's raw input separately from its resulting
-action, and carries every seat's `OptionalOperationList` — so per-seat
-think times (including declined call windows, which live captures cannot
-see) and per-seat time-bank drain are all directly observable. The
-report covers per-window base times, bank-drain granularity, bank reset
-behaviour across kyoku, and think-time distributions per decision type —
-including tile-class splits (routine honor flicks vs middle-tile
-decisions), defence reads while an opponent riichi is live, think time
-by remaining time bank, and the routine-vs-think mixture structure.
-
-Output contains seats and rank levels but no nicknames or account ids.
-Standard library only; the protobuf wire decoding is inlined.
-
 ## CI integration
 
 `.github/workflows/release.yml` ties `fetch-runtime.sh` and

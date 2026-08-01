@@ -34,8 +34,9 @@ Layers, in order:
    when the script fails. `legacy`: the historical uniform draw — the
    distribution is forced to Uniform and the script is not consulted.
    The default log-normal parameters are **calibrated against real
-   ranked-game records** (`scripts/analyze_record_think_time.py`);
-   change them only with new measurements. Bot confidence is normalized
+   ranked-game records** (think times measured on the server-side
+   action clock of decoded game records); change them only with new
+   measurements. Bot confidence is normalized
    first (`delay/probs.rs`): native-bot `show.items[].prob` is used raw,
    Mortal-style `q_values` are softmaxed. Never feed raw Q values to a
    probability threshold.
