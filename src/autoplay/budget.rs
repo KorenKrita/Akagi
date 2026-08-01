@@ -33,6 +33,11 @@ pub enum BudgetSource {
     DiscardTile,
     /// `ActionChiPengGang` — post-call windows (e.g. discard after a call).
     ChiPengGang,
+    /// `ActionAnGangAddGang` — chankan windows (ron on a kakan; kokushi
+    /// robbing an ankan).
+    AnGangAddGang,
+    /// `ActionBaBei` (3p) — 胡拔北 windows.
+    BaBei,
 }
 
 /// Time budget the server granted for the *current* decision window.

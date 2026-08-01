@@ -400,9 +400,19 @@ impl MajsoulBridge {
             ACTION_DEAL_TILE => BudgetSource::DealTile,
             ACTION_DISCARD_TILE => BudgetSource::DiscardTile,
             ACTION_CHI_PENG_GANG => BudgetSource::ChiPengGang,
+            // Chankan (ron on kakan / kokushi on ankan) and 3p 胡拔北
+            // windows also carry an operation for our seat.
+            ACTION_AN_GANG_ADD_GANG => BudgetSource::AnGangAddGang,
+            ACTION_BA_BEI => BudgetSource::BaBei,
             _ => return None,
         };
         let fixed_ms = op.get("time_fixed").and_then(JsonValue::as_u64)?;
+        // A zero base time means the semantics are unknown (possibly an
+        // unlimited-thinking room). Treat as "no budget" rather than
+        // producing a zero-width window that would floor every delay.
+        if fixed_ms == 0 {
+            return None;
+        }
         let add_ms = op
             .get("time_add")
             .and_then(JsonValue::as_u64)
@@ -3570,6 +3580,42 @@ mod tests {
             b.elapsed_ms()
         );
         assert!(!bridge.replaying, "replay flag must be reset");
+    }
+
+    /// Regression: chankan / babei windows (`ActionAnGangAddGang`,
+    /// `ActionBaBei`) carry an operation too — they must fill the slot,
+    /// not fall through and clear it.
+    #[test]
+    fn budget_covers_kan_and_babei_windows() {
+        let (mut bridge, slot) = budget_bridge(2);
+        bridge.dispatch(&action_msg(
+            "ActionAnGangAddGang",
+            json!({
+                "seat": 0,
+                "tiles": "1m",
+                "type": 2,
+                "operation": { "seat": 2, "time_fixed": 5000, "time_add": 0 },
+            }),
+        ));
+        let b = slot.read().unwrap().expect("chankan window must fill the slot");
+        assert_eq!(b.source, crate::autoplay::budget::BudgetSource::AnGangAddGang);
+    }
+
+    /// Regression: `time_fixed == 0` has unknown semantics (possibly an
+    /// unlimited room) — treat as no budget instead of creating a
+    /// zero-width window that floors every delay.
+    #[test]
+    fn budget_zero_fixed_time_means_no_budget() {
+        let (mut bridge, slot) = budget_bridge(2);
+        bridge.dispatch(&action_msg(
+            "ActionDealTile",
+            json!({
+                "seat": 2,
+                "tile": "1m",
+                "operation": { "seat": 2, "time_fixed": 0, "time_add": 20000 },
+            }),
+        ));
+        assert!(slot.read().unwrap().is_none());
     }
 
     /// New-game boundaries clear the slot: authGame response and

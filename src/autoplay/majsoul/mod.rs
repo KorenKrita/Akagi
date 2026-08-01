@@ -278,10 +278,25 @@ fn push_pre_delay(
         .and_then(|s| s.try_decide(&input))
         .unwrap_or_else(|| delay::decide(&input, &mut rand::rng()));
 
+    // The Path-B riichi follow-up dahai is a *second* plan inside the
+    // same (still open) decision window: its elapsed_ms already contains
+    // the reach-button pre-delay and click. Subtracting it would saturate
+    // the sleep to ~0 and snap the riichi tile robotically. Treat the
+    // follow-up as its own decision on a fresh clock — sleep the target
+    // verbatim — but still clamp so the window total never exceeds the
+    // budget cap.
+    let fresh_clock =
+        kind == DecisionKind::Dahai && ctx.reach_state == ReachState::AwaitingDahai;
+
     // Convert target total time to a sleep: subtract what the window has
     // already consumed. Without a budget there is no window clock — sleep
     // the target verbatim (legacy behaviour).
     let sleep = match ctx.budget {
+        Some(b) if fresh_clock => {
+            let remaining = delay::budget_cap(&input, decision.allow_bank)
+                .saturating_sub(b.elapsed_ms);
+            decision.total_target_ms.min(remaining)
+        }
         Some(b) => decision.total_target_ms.saturating_sub(b.elapsed_ms),
         None => decision.total_target_ms,
     };
@@ -1179,6 +1194,60 @@ mod tests {
         assert_eq!(sleep_with_elapsed(0), 1000);
         assert_eq!(sleep_with_elapsed(400), 600, "elapsed must be deducted");
         assert_eq!(sleep_with_elapsed(5000), 0, "sleep must saturate at zero");
+    }
+
+    /// Regression: the Path-B riichi follow-up dahai runs inside the same
+    /// still-open window whose elapsed already contains the reach-button
+    /// stage. It must sleep its own full target (fresh clock), not
+    /// `target - elapsed` saturated to ~0 — while never letting the
+    /// window total exceed the budget cap.
+    #[test]
+    fn riichi_followup_dahai_keeps_full_delay() {
+        let snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5p".into(),
+            tsumogiri: false,
+        };
+        let mut cfg_ref = cfg();
+        cfg_ref.pre_click_delay_min_ms = 1000;
+        cfg_ref.pre_click_delay_max_ms = 1000;
+
+        let sleep_for = |fixed_ms: u32, elapsed_ms: u32| {
+            let mut ctx = ctx_for(
+                &act,
+                &snap,
+                &[],
+                Some("1m"),
+                Some("5p"),
+                false,
+                ReachState::AwaitingDahai,
+                &cfg_ref,
+            );
+            ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
+                fixed_ms,
+                add_ms: 0,
+                elapsed_ms,
+            });
+            let result = MajsoulAutoplay::new().plan(&ctx);
+            match result.steps[0] {
+                Step::Sleep { duration_ms } => duration_ms,
+                _ => panic!("expected leading sleep"),
+            }
+        };
+
+        // Elapsed (2.5s of reach stage) larger than the 1s target: the
+        // old deduction would sleep 0; the follow-up must sleep 1s.
+        assert_eq!(sleep_for(10_000, 2500), 1000);
+        // But the window total is still capped: fixed 3000 - safety 1000
+        // leaves 2000 total; with 1500 already gone only 500 remain.
+        assert_eq!(sleep_for(3000, 1500), 500);
     }
 
     /// Build a 3-player snapshot for our seat with optional kita pool and

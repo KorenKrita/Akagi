@@ -186,10 +186,17 @@ pub fn budget_cap(input: &DelayInput, allow_bank: bool) -> u32 {
         }
         None => {
             if d.no_budget_cap_ms == 0 {
-                u32::MAX
-            } else {
-                d.no_budget_cap_ms
+                return u32::MAX;
             }
+            // Never bind below what the user's own base configuration can
+            // produce — a config with pre_click_delay_max_ms above the
+            // static cap must keep its legacy behaviour. The cap only
+            // trims rule bonuses and distribution tails.
+            let configured_base = input
+                .cfg
+                .pre_click_delay_max_ms
+                .saturating_add(functional_floor(input));
+            d.no_budget_cap_ms.max(configured_base)
         }
     }
 }
@@ -484,24 +491,45 @@ mod tests {
         );
     }
 
-    /// No budget known: the static ceiling applies (and can be disabled).
+    /// No budget known: the static ceiling trims rule bonuses, but never
+    /// binds below the user's own configured base window — a config with
+    /// pre_click_delay_max_ms above the cap keeps its legacy behaviour.
     #[test]
     fn static_cap_without_budget() {
-        let c = tight_budget_cfg();
-        let d = DelayModelConfig::default();
-        let i = input(&c, &d);
+        // Bonuses above the cap get trimmed to no_budget_cap_ms.
+        let c = cfg(); // max 3000
+        let d = DelayModelConfig {
+            riichi_extra_ms: 60_000,
+            ..Default::default()
+        };
+        let mut i = input(&c, &d);
+        i.can_riichi = true;
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let dec = decide(&i, &mut r);
         assert_eq!(dec.total_target_ms, d.no_budget_cap_ms);
 
-        let open = DelayModelConfig {
-            no_budget_cap_ms: 0,
-            ..Default::default()
-        };
-        let i = input(&c, &open);
+        // A configured base above the cap wins (legacy behaviour keeps).
+        let c = tight_budget_cfg(); // min = max = 100_000
+        let d = DelayModelConfig::default();
+        let i = input(&c, &d);
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let dec = decide(&i, &mut r);
-        assert_eq!(dec.total_target_ms, 100_000, "0 disables the static cap");
+        assert_eq!(
+            dec.total_target_ms, 100_000,
+            "static cap must not bind below the configured base"
+        );
+
+        // 0 disables the static cap entirely.
+        let open = DelayModelConfig {
+            no_budget_cap_ms: 0,
+            riichi_extra_ms: 60_000,
+            ..Default::default()
+        };
+        let mut i = input(&c, &open);
+        i.can_riichi = true;
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert_eq!(dec.total_target_ms, 160_000, "0 disables the static cap");
     }
 
     /// The functional floor (animation wait) wins over the cap: losing

@@ -207,13 +207,18 @@ def analyse_budget(paths: list[pathlib.Path]) -> None:
     for key, count in sorted(by_action.items(), key=lambda kv: (-kv[1], str(kv[0]))):
         print(f"  {key[0]:20} time_fixed={key[1]:<8} time_add={key[2]:<8} n={count}")
 
-    fixed_regular = [
-        k[1] for k in by_action if k[0] in ("ActionDealTile", "ActionDiscardTile")
-    ]
-    fixed_opening = [k[1] for k in by_action if k[0] == "ActionNewRound"]
+    # Weight by frame count, not by distinct (name, fixed, add) combos —
+    # otherwise one rare combo per value skews the mode.
+    fixed_regular = collections.Counter()
+    fixed_opening = collections.Counter()
+    for (name, fixed, _add), count in by_action.items():
+        if name in ("ActionDealTile", "ActionDiscardTile"):
+            fixed_regular[fixed] += count
+        elif name == "ActionNewRound":
+            fixed_opening[fixed] += count
     if fixed_regular and fixed_opening:
-        base = collections.Counter(fixed_regular).most_common(1)[0][0]
-        opening = collections.Counter(fixed_opening).most_common(1)[0][0]
+        base = fixed_regular.most_common(1)[0][0]
+        opening = fixed_opening.most_common(1)[0][0]
         delta = opening - base
         ratio = opening / base if base else float("nan")
         print(f"\n[Q1] opening-hand allowance: base={base} opening={opening}")
@@ -311,7 +316,6 @@ def analyse_think_times(paths: list[pathlib.Path]) -> None:
                     buckets[(who, "dealer-opening", "-", "-", "-")].append(
                         ts - new_round_at[0]
                     )
-                    new_round_at = None
                 elif seat in called:
                     # Discard following the seat's own chi/pon/daiminkan.
                     # Separate decision type: fewer options, and the clock
@@ -326,6 +330,12 @@ def analyse_think_times(paths: list[pathlib.Path]) -> None:
 
                 discards[seat] += 1
                 last_discard_ts = ts
+                # The dealer-opening sample is only valid for the very
+                # first discard of the kyoku. Clear unconditionally: if the
+                # dealer's first action was e.g. an ankan, a stale marker
+                # would later misclassify a mid-kyoku discard as a
+                # multi-turn "dealer-opening" interval.
+                new_round_at = None
                 if data.get("is_liqi") or data.get("is_wliqi"):
                     riichi.add(seat)
 
