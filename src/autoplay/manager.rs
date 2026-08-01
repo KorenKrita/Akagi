@@ -40,6 +40,12 @@ pub struct AutoplayManager {
     mjai_bus: MjaiBus,
     platform: Arc<dyn PlatformAutoplay>,
     state: ManagerState,
+    /// User Lua delay policy (hot-reloaded from disk; see
+    /// `autoplay::delay::script`).
+    delay_script: crate::autoplay::delay::ScriptHost,
+    /// Directory holding the loaded config file; the default script
+    /// location is `<config_dir>/scripts/delay.lua`.
+    config_dir: std::path::PathBuf,
 }
 
 #[derive(Default)]
@@ -63,6 +69,7 @@ impl AutoplayManager {
         ctx: Arc<AutoplayContext>,
         tracker: Arc<Mutex<GameTracker>>,
         mjai_bus: MjaiBus,
+        config_dir: std::path::PathBuf,
     ) -> Self {
         Self {
             cfg,
@@ -73,6 +80,8 @@ impl AutoplayManager {
             // here based on config.platform.kind at run start.
             platform: Arc::new(MajsoulAutoplay::new()),
             state: ManagerState::default(),
+            delay_script: crate::autoplay::delay::ScriptHost::default(),
+            config_dir,
         }
     }
 
@@ -132,6 +141,17 @@ impl AutoplayManager {
             });
         let probs = crate::autoplay::delay::probs::normalize_meta(resp.meta.as_ref());
 
+        // Hot-reload the user delay script when its file appeared, changed
+        // or vanished (cheap mtime stat; a missing file is the normal
+        // no-script state).
+        let script_path = delay_cfg
+            .script_path
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.config_dir.join("scripts").join("delay.lua"));
+        self.delay_script
+            .maybe_reload(&script_path, delay_cfg.script_enabled);
+
         // Pull our seat + legal actions from the live engine state. This
         // bracket releases the tracker mutex before we sleep/click.
         let (our_seat, legal_actions, snapshot, num_players) = {
@@ -175,6 +195,7 @@ impl AutoplayManager {
             delay_cfg,
             budget,
             probs,
+            delay_script: self.delay_script.script(),
         };
 
         let plan = self.platform.plan(&action_ctx);
@@ -370,8 +391,9 @@ pub async fn run_autoplay_manager(
     tracker: Arc<Mutex<GameTracker>>,
     mjai_bus: MjaiBus,
     response_bus: BotResponseBus,
+    config_dir: std::path::PathBuf,
 ) -> anyhow::Result<()> {
-    AutoplayManager::new(cfg, ctx, tracker, mjai_bus)
+    AutoplayManager::new(cfg, ctx, tracker, mjai_bus, config_dir)
         .run(response_bus)
         .await
 }
@@ -394,6 +416,7 @@ mod tests {
             Arc::new(AutoplayContext::default()),
             tracker,
             bus,
+            std::env::temp_dir(),
         )
     }
 

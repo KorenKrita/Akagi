@@ -84,6 +84,9 @@ pub struct ActionContext<'a> {
     /// Normalized bot confidence for this decision, if the bot's meta
     /// could be interpreted (see `autoplay::delay::probs`).
     pub probs: Option<DecisionProbs>,
+    /// User Lua delay policy, when loaded. Consulted by the delay model;
+    /// on any script failure the built-in policy runs instead.
+    pub delay_script: Option<&'a crate::autoplay::delay::DelayScript>,
 }
 
 /// Output of `PlatformAutoplay::plan`. Captures both the click sequence

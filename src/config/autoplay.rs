@@ -72,6 +72,13 @@ pub struct DelayModelConfig {
     /// Static cap applied when no server budget is known (non-Majsoul
     /// platform, or before the first operation list), ms. 0 = no cap.
     pub no_budget_cap_ms: u32,
+    /// Lua override (`autoplay::delay::script`). When enabled and the
+    /// script file exists, its `decide_delay(ctx)` replaces the built-in
+    /// policy; any script failure falls back to the built-in model. The
+    /// file being absent is the normal no-script state, not an error.
+    pub script_enabled: bool,
+    /// Path to the delay script. `None` = `<config dir>/scripts/delay.lua`.
+    pub script_path: Option<String>,
 }
 
 impl Default for DelayModelConfig {
@@ -95,6 +102,8 @@ impl Default for DelayModelConfig {
             // distribution produces, low enough to survive even a 5s+20
             // room's base window if the budget is somehow unknown.
             no_budget_cap_ms: 15_000,
+            script_enabled: true,
+            script_path: None,
         }
     }
 }

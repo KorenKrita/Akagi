@@ -1,0 +1,85 @@
+-- Akagi autoplay delay script — example policy.
+--
+-- Install: copy this file to `<config dir>/scripts/delay.lua` (next to
+-- config.toml), or set `autoplay.delay.script_path` in config.toml.
+-- The file is hot-reloaded on save; deleting it returns to the built-in
+-- model. Any error in the script falls back to the built-in model.
+--
+-- IMPORTANT: `delay_ms` is the target TOTAL thinking time for the
+-- decision window — the time the *server* observes between offering the
+-- decision and receiving your action. It is NOT a sleep length: Akagi
+-- subtracts the time already consumed by networking and bot inference.
+--
+-- Akagi always enforces, regardless of what this script returns:
+--   * the dealing-animation floor (clicking earlier would lose the click)
+--   * the server time budget (soft cap; the extra time pool is spent
+--     only when you return `allow_bank = true`)
+--
+-- Available context fields:
+--   ctx.action        "dahai" | "reach" | "chi" | "pon" | "daiminkan"
+--                     | "ankan" | "kakan" | "hora" | "ryukyoku" | "kita"
+--                     | "none"  (declining a call window)
+--   ctx.first_action  true on the first action of a kyoku
+--   ctx.dealer_opening true for the dealer's 14-tile opening discard
+--                     (and a kita on the opening draw)
+--   ctx.can_riichi    riichi is declarable this turn
+--   ctx.is_kan        the action is a kan declaration
+--   ctx.in_riichi     we are in accepted riichi
+--   ctx.legal_count   number of legal actions (difficulty proxy)
+--   ctx.top_prob      bot's top candidate probability (0..1), or nil
+--   ctx.second_prob   second candidate probability, or nil
+--   ctx.margin        top_prob - second_prob, or nil
+--   ctx.budget        { fixed_ms, add_ms, elapsed_ms } or nil
+--   ctx.rng()         uniform random in [0, 1)
+--   ctx.lognormal(mu, sigma)  log-normal sample in SECONDS
+
+function decide_delay(ctx)
+  -- Rule 1: in riichi with nothing to decide (the only clickable window
+  -- is Skip) -> act immediately. Majsoul auto-discards our draws in
+  -- riichi, so this only ever applies to claim windows.
+  if ctx.in_riichi then
+    return { delay_ms = 0 }
+  end
+
+  -- Rule 2: start from 0, cap at 8s by default.
+  local delay = 0.0
+  local max_delay = 8.0
+  local allow_bank = false
+
+  -- Rule 3: first discard of a kyoku — humans survey the hand.
+  if ctx.first_action then
+    delay = delay + 4.0
+  end
+
+  -- Rule 4: a declarable riichi is a real decision.
+  if ctx.can_riichi then
+    delay = delay + 2.0
+  end
+
+  -- Rule 5: top two candidates nearly tied — genuinely hard, think
+  -- longer and allow spending the server's extra time pool.
+  if ctx.margin ~= nil and ctx.margin < 0.005 then
+    delay = delay + 2.0
+    allow_bank = true
+  end
+
+  -- Rule 6: an obvious decision — snappier ceiling.
+  if ctx.top_prob ~= nil and ctx.top_prob > 0.995 then
+    max_delay = 2.0
+  end
+
+  -- Rule 7: kan declarations take a beat longer.
+  if ctx.is_kan then
+    delay = delay + 0.5
+  end
+
+  -- Rule 8: base human jitter.
+  delay = delay + 1.0 + 2.0 * ctx.rng()
+
+  -- Rule 9: clamp to [0, max_delay].
+  if delay > max_delay then
+    delay = max_delay
+  end
+
+  return { delay_ms = delay * 1000, allow_bank = allow_bank }
+end

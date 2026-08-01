@@ -25,8 +25,10 @@
 //! All quantities are milliseconds unless stated otherwise.
 
 pub mod probs;
+pub mod script;
 
 pub use probs::DecisionProbs;
+pub use script::{DelayScript, ScriptHost};
 
 use crate::config::{DelayDistribution, DelayModelConfig, MajsoulAutoplayConfig};
 use rand::Rng;
@@ -325,9 +327,11 @@ mod tests {
     #[test]
     fn rule_bonuses_apply_when_configured() {
         let c = cfg();
-        let mut d = DelayModelConfig::default();
-        d.riichi_extra_ms = 2000;
-        d.kan_extra_ms = 500;
+        let d = DelayModelConfig {
+            riichi_extra_ms: 2000,
+            kan_extra_ms: 500,
+            ..Default::default()
+        };
         let mut i = input(&c, &d);
         i.kind = DecisionKind::Ankan;
         i.can_riichi = true;
@@ -345,8 +349,10 @@ mod tests {
     #[test]
     fn close_margin_marks_hard_decision() {
         let c = cfg();
-        let mut d = DelayModelConfig::default();
-        d.close_margin_extra_ms = 2000;
+        let d = DelayModelConfig {
+            close_margin_extra_ms: 2000,
+            ..Default::default()
+        };
         let mut i = input(&c, &d);
         i.probs = Some(DecisionProbs {
             top: 0.41,
@@ -376,8 +382,10 @@ mod tests {
         let dec = decide(&i, &mut r);
         assert!(dec.total_target_ms >= c.pre_click_delay_min_ms);
 
-        let mut capped = DelayModelConfig::default();
-        capped.obvious_max_ms = 800;
+        let capped = DelayModelConfig {
+            obvious_max_ms: 800,
+            ..Default::default()
+        };
         let mut i = input(&c, &capped);
         i.probs = probs;
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
@@ -440,8 +448,11 @@ mod tests {
     #[test]
     fn hard_cap_requires_bank_permission() {
         let c = tight_budget_cfg();
-        let mut d = DelayModelConfig::default();
-        d.close_margin_extra_ms = 1; // near-tie marks allow_bank
+        // Near-tie marks allow_bank (a non-zero bonus keeps the rule on).
+        let d = DelayModelConfig {
+            close_margin_extra_ms: 1,
+            ..Default::default()
+        };
         let budget = BudgetSnapshot {
             fixed_ms: 5000,
             add_ms: 20_000,
@@ -483,8 +494,10 @@ mod tests {
         let dec = decide(&i, &mut r);
         assert_eq!(dec.total_target_ms, d.no_budget_cap_ms);
 
-        let mut open = DelayModelConfig::default();
-        open.no_budget_cap_ms = 0;
+        let open = DelayModelConfig {
+            no_budget_cap_ms: 0,
+            ..Default::default()
+        };
         let i = input(&c, &open);
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let dec = decide(&i, &mut r);
@@ -517,10 +530,12 @@ mod tests {
     #[test]
     fn lognormal_distribution_sanity() {
         let c = cfg();
-        let mut d = DelayModelConfig::default();
-        d.distribution = DelayDistribution::LogNormal;
-        d.lognormal_mu = 0.6; // e^0.6 ≈ 1.82s
-        d.lognormal_sigma = 0.5;
+        let d = DelayModelConfig {
+            distribution: DelayDistribution::LogNormal,
+            lognormal_mu: 0.6, // e^0.6 ≈ 1.82s
+            lognormal_sigma: 0.5,
+            ..Default::default()
+        };
         let i = input(&c, &d);
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let mut samples: Vec<u32> = (0..10_000)

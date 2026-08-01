@@ -178,6 +178,11 @@ pub async fn update_config(
         let tracker_for_ap = state.game_tracker.clone();
         let mjai_for_ap = state.mjai_bus.clone();
         let resp_for_ap = state.bot_response_bus.clone();
+        let config_dir_for_ap = state
+            .config_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
         let started_flag = state.autoplay_manager_started.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(e) = crate::autoplay::run_autoplay_manager(
@@ -186,6 +191,7 @@ pub async fn update_config(
                 tracker_for_ap,
                 mjai_for_ap,
                 resp_for_ap,
+                config_dir_for_ap,
             )
             .await
             {

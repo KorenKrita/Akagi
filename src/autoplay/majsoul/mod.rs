@@ -271,7 +271,12 @@ fn push_pre_delay(
         cfg,
         delay_cfg: &ctx.delay_cfg,
     };
-    let decision = delay::decide(&input, &mut rand::rng());
+    // User Lua policy first (falls back internally on any failure), then
+    // the built-in model. Both are bound by the same caps and floors.
+    let decision = ctx
+        .delay_script
+        .and_then(|s| s.try_decide(&input))
+        .unwrap_or_else(|| delay::decide(&input, &mut rand::rng()));
 
     // Convert target total time to a sleep: subtract what the window has
     // already consumed. Without a budget there is no window clock — sleep
@@ -711,6 +716,7 @@ mod tests {
             delay_cfg: crate::config::DelayModelConfig::default(),
             budget: None,
             probs: None,
+            delay_script: None,
         }
     }
 
