@@ -18,32 +18,42 @@ pub struct AutoplayConfig {
 #[serde(rename_all = "snake_case")]
 pub enum DelayDistribution {
     /// `uniform(pre_click_delay_min_ms, pre_click_delay_max_ms)` — the
-    /// historical Akagi behaviour. Default.
-    #[default]
+    /// historical Akagi behaviour.
     Uniform,
-    /// Log-normal over seconds (`exp(N(mu, sigma))`), clamped to the
-    /// `[pre_click_delay_min_ms, pre_click_delay_max_ms]` window scaled by
-    /// 0.5x/4x so a fat tail can exceed the old bounds without running
-    /// away. Human reaction times are generally log-normal-ish; the
-    /// concrete parameters should come from calibration data.
+    /// Per-decision-kind log-normal over seconds (`exp(N(mu, sigma))`),
+    /// clamped to the `[pre_click_delay_min_ms, pre_click_delay_max_ms]`
+    /// window scaled by 0.5x/4x so the fat tail can exceed the old bounds
+    /// without running away. Default: real players' think times are
+    /// log-normal with sigma ~0.5–0.6 (measured from ranked game
+    /// records — see `scripts/analyze_record_think_time.py`).
+    #[default]
     LogNormal,
 }
 
 /// Parameters of the built-in pre-click delay model (`autoplay::delay`).
 ///
-/// Defaults are chosen to be **behaviour-equivalent** with the historical
-/// fixed `uniform(min, max)` delay: additive rule bonuses default to 0 and
-/// the obvious-decision cap is disabled. Turning the knobs is deliberate
-/// opt-in until calibration data justifies different defaults.
+/// The log-normal defaults are **calibrated against real ranked-game
+/// records** (Throne-room 4p; server-clock think times measured by
+/// `scripts/analyze_record_think_time.py`). Additive rule bonuses still
+/// default to 0 — the calibrated per-kind distributions already encode
+/// the human differences they were meant to approximate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DelayModelConfig {
     /// Base distribution shape.
     pub distribution: DelayDistribution,
-    /// Log-normal mu, in ln(seconds). Only used for `LogNormal`.
-    pub lognormal_mu: f64,
-    /// Log-normal sigma. Only used for `LogNormal`.
-    pub lognormal_sigma: f64,
+    /// Per-decision-kind log-normal parameters `[mu, sigma]` in
+    /// ln(seconds). Keys: `dahai_tedashi`, `dahai_tsumogiri`,
+    /// `post_call_dahai`, `reach`, `claim`, `hora`. A missing key falls
+    /// back to `dahai_tedashi`. Only used for `LogNormal`.
+    pub lognormal: std::collections::BTreeMap<String, [f64; 2]>,
+    /// Let a long-thought sample (one exceeding the soft cap) dip into
+    /// the server's extra time pool even without a top-two near-tie.
+    /// Real players do this routinely; the bank refills every kyoku.
+    /// The spend stays bounded by `bank_use_fraction` /
+    /// `bank_max_single_ms`. `false` restores the strict
+    /// near-tie-only gate.
+    pub bank_on_long_thought: bool,
     /// Extra target time when riichi can be declared this turn (a genuine
     /// decision), ms. 0 = off.
     pub riichi_extra_ms: u32,
@@ -81,14 +91,33 @@ pub struct DelayModelConfig {
     pub script_path: Option<String>,
 }
 
+/// Calibrated per-kind log-normal parameters, ln(seconds).
+///
+/// Source: 6 Throne-room ranked 4p records (~4100 decision windows),
+/// think time on the server's game clock (includes each player's own
+/// client→server latency — a bias in the human direction). Medians:
+/// tedashi ≈2.4s, tsumogiri ≈1.85s, post-call discard ≈1.5s, riichi
+/// declaration ≈2.7s, claim windows (mostly passes) ≈1.3s.
+fn default_lognormal() -> std::collections::BTreeMap<String, [f64; 2]> {
+    [
+        ("dahai_tedashi", [0.90, 0.60]),
+        ("dahai_tsumogiri", [0.62, 0.55]),
+        ("post_call_dahai", [0.44, 0.35]),
+        ("reach", [1.00, 0.45]),
+        ("claim", [0.27, 0.55]),
+        ("hora", [0.15, 0.50]),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect()
+}
+
 impl Default for DelayModelConfig {
     fn default() -> Self {
         Self {
-            distribution: DelayDistribution::Uniform,
-            // Median ~1.8s, mildly fat tail — a placeholder pending
-            // calibration; unused while `distribution` is Uniform.
-            lognormal_mu: 0.6,
-            lognormal_sigma: 0.5,
+            distribution: DelayDistribution::LogNormal,
+            lognormal: default_lognormal(),
+            bank_on_long_thought: true,
             riichi_extra_ms: 0,
             kan_extra_ms: 0,
             close_margin: 0.005,

@@ -886,9 +886,16 @@ function AutoplayCard({
 /** Mirror of `DelayModelConfig::default()` on the Rust side. */
 function defaultDelayModel(): DelayModelConfig {
   return {
-    distribution: 'uniform',
-    lognormal_mu: 0.6,
-    lognormal_sigma: 0.5,
+    distribution: 'log_normal',
+    lognormal: {
+      dahai_tedashi: [0.9, 0.6],
+      dahai_tsumogiri: [0.62, 0.55],
+      post_call_dahai: [0.44, 0.35],
+      reach: [1.0, 0.45],
+      claim: [0.27, 0.55],
+      hora: [0.15, 0.5],
+    },
+    bank_on_long_thought: true,
     riichi_extra_ms: 0,
     kan_extra_ms: 0,
     close_margin: 0.005,

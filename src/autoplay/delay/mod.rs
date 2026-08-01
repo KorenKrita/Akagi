@@ -74,6 +74,12 @@ pub struct BudgetSnapshot {
 #[derive(Debug, Clone)]
 pub struct DelayInput<'a> {
     pub kind: DecisionKind,
+    /// For `Dahai`: the discard is the just-drawn tile. Real players
+    /// tsumogiri ~500ms faster (median) than tedashi.
+    pub is_tsumogiri: bool,
+    /// For `Dahai`: a discard following our own chi/pon (hand size
+    /// 3n+1, no draw) — a distinctly faster decision in real play.
+    pub is_post_call: bool,
     /// No tile in any kawa yet — the very first action of a kyoku.
     pub first_action_of_kyoku: bool,
     /// The click must wait out a dealing/sorting animation (dealer's
@@ -114,6 +120,17 @@ pub fn decide<R: Rng + ?Sized>(input: &DelayInput, rng: &mut R) -> DelayDecision
 
     let mut target = base_sample(input, rng);
     let mut allow_bank = false;
+
+    // A naturally long-thought sample may spend bank (bounded by the
+    // hard cap): real players dip into the pool routinely and it refills
+    // every kyoku. Decided on the *base* sample so a huge additive bonus
+    // alone doesn't unlock the bank when the gate is off.
+    if d.bank_on_long_thought
+        && input.budget.is_some()
+        && target > budget_cap(input, false)
+    {
+        allow_bank = true;
+    }
 
     if input.opening_animation {
         // Historical behaviour: the animation wait is added on top of the
@@ -231,8 +248,8 @@ fn base_sample<R: Rng + ?Sized>(input: &DelayInput, rng: &mut R) -> u32 {
             }
         }
         DelayDistribution::LogNormal => {
-            let d = input.delay_cfg;
-            match rand_distr::LogNormal::new(d.lognormal_mu, d.lognormal_sigma) {
+            let [mu, sigma] = lognormal_params(input);
+            match rand_distr::LogNormal::new(mu, sigma) {
                 Ok(dist) => {
                     let secs: f64 = rng.sample(dist);
                     let ms = (secs * 1000.0).round().clamp(0.0, u32::MAX as f64) as u32;
@@ -247,6 +264,46 @@ fn base_sample<R: Rng + ?Sized>(input: &DelayInput, rng: &mut R) -> u32 {
             }
         }
     }
+}
+
+/// Which calibrated parameter set applies to this decision.
+pub fn kind_key(input: &DelayInput) -> &'static str {
+    match input.kind {
+        DecisionKind::Dahai => {
+            if input.is_post_call {
+                "post_call_dahai"
+            } else if input.is_tsumogiri {
+                "dahai_tsumogiri"
+            } else {
+                "dahai_tedashi"
+            }
+        }
+        DecisionKind::Reach => "reach",
+        // Claim-window responses: chi/pon/daiminkan, declining one, and
+        // the (rare) kyuushu declaration all share the reaction-window
+        // distribution.
+        DecisionKind::Chi
+        | DecisionKind::Pon
+        | DecisionKind::Daiminkan
+        | DecisionKind::Pass
+        | DecisionKind::Ryukyoku => "claim",
+        // Own-turn kan declarations think like a tedashi.
+        DecisionKind::Ankan | DecisionKind::Kakan => "dahai_tedashi",
+        DecisionKind::Hora => "hora",
+        DecisionKind::Kita => "dahai_tsumogiri",
+    }
+}
+
+/// `[mu, sigma]` for this decision, falling back to `dahai_tedashi`,
+/// then to the hardcoded calibrated tedashi values for a hand-edited
+/// config with the whole table removed.
+fn lognormal_params(input: &DelayInput) -> [f64; 2] {
+    let table = &input.delay_cfg.lognormal;
+    table
+        .get(kind_key(input))
+        .or_else(|| table.get("dahai_tedashi"))
+        .copied()
+        .unwrap_or([0.90, 0.60])
 }
 
 #[cfg(test)]
@@ -265,6 +322,8 @@ mod tests {
     ) -> DelayInput<'a> {
         DelayInput {
             kind: DecisionKind::Dahai,
+            is_tsumogiri: false,
+            is_post_call: false,
             first_action_of_kyoku: false,
             opening_animation: false,
             can_riichi: false,
@@ -278,14 +337,22 @@ mod tests {
         }
     }
 
+    /// Delay config in legacy uniform mode (the pre-calibration default).
+    fn uniform() -> DelayModelConfig {
+        DelayModelConfig {
+            distribution: DelayDistribution::Uniform,
+            ..Default::default()
+        }
+    }
+
     const AKAGI_SEED: u64 = 0xA4A61;
 
-    /// Default config must reproduce the historical behaviour: a uniform
+    /// Uniform mode must reproduce the historical behaviour: a uniform
     /// draw inside [min, max].
     #[test]
-    fn default_model_matches_legacy_uniform() {
+    fn uniform_mode_matches_legacy() {
         let c = cfg();
-        let d = DelayModelConfig::default();
+        let d = uniform();
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         for _ in 0..1000 {
             let dec = decide(&input(&c, &d), &mut r);
@@ -297,6 +364,54 @@ mod tests {
             );
             assert!(!dec.allow_bank);
         }
+    }
+
+    /// The calibrated default: per-kind log-normal whose medians land on
+    /// the Throne-room measurements (tedashi ~2.4s, tsumogiri ~1.85s,
+    /// claim ~1.3s, post-call ~1.55s).
+    #[test]
+    fn calibrated_default_matches_measured_medians() {
+        let c = cfg();
+        let d = DelayModelConfig::default();
+        assert_eq!(d.distribution, DelayDistribution::LogNormal);
+
+        let median_for = |set: fn(&mut DelayInput)| {
+            let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+            let mut samples: Vec<u32> = (0..4000)
+                .map(|_| {
+                    let mut i = input(&c, &d);
+                    set(&mut i);
+                    decide(&i, &mut r).total_target_ms
+                })
+                .collect();
+            samples.sort_unstable();
+            samples[samples.len() / 2]
+        };
+
+        let tedashi = median_for(|_| {});
+        assert!(
+            (2100..=2900).contains(&tedashi),
+            "tedashi median {tedashi} off calibration (e^0.90 ≈ 2460ms)"
+        );
+        let tsumogiri = median_for(|i| i.is_tsumogiri = true);
+        assert!(
+            (1600..=2200).contains(&tsumogiri),
+            "tsumogiri median {tsumogiri} off calibration (e^0.62 ≈ 1860ms)"
+        );
+        let claim = median_for(|i| i.kind = DecisionKind::Pass);
+        assert!(
+            (1100..=1600).contains(&claim),
+            "claim median {claim} off calibration (e^0.27 ≈ 1310ms)"
+        );
+        let post_call = median_for(|i| i.is_post_call = true);
+        assert!(
+            (1300..=1800).contains(&post_call),
+            "post-call median {post_call} off calibration (e^0.44 ≈ 1550ms)"
+        );
+        assert!(
+            tsumogiri < tedashi && claim < post_call && post_call < tedashi,
+            "measured ordering must hold: claim < post-call < tsumogiri/tedashi"
+        );
     }
 
     /// First action of a kyoku pins the base to the upper bound (legacy).
@@ -337,7 +452,7 @@ mod tests {
         let d = DelayModelConfig {
             riichi_extra_ms: 2000,
             kan_extra_ms: 500,
-            ..Default::default()
+            ..uniform()
         };
         let mut i = input(&c, &d);
         i.kind = DecisionKind::Ankan;
@@ -358,7 +473,7 @@ mod tests {
         let c = cfg();
         let d = DelayModelConfig {
             close_margin_extra_ms: 2000,
-            ..Default::default()
+            ..uniform()
         };
         let mut i = input(&c, &d);
         i.probs = Some(DecisionProbs {
@@ -382,7 +497,7 @@ mod tests {
         });
 
         // Disabled by default: behaves like legacy.
-        let d = DelayModelConfig::default();
+        let d = uniform();
         let mut i = input(&c, &d);
         i.probs = probs;
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
@@ -391,7 +506,7 @@ mod tests {
 
         let capped = DelayModelConfig {
             obvious_max_ms: 800,
-            ..Default::default()
+            ..uniform()
         };
         let mut i = input(&c, &capped);
         i.probs = probs;
@@ -418,7 +533,7 @@ mod tests {
     #[test]
     fn soft_cap_binds_without_bank() {
         let c = tight_budget_cfg();
-        let d = DelayModelConfig::default();
+        let d = uniform();
         let mut i = input(&c, &d);
         i.budget = Some(BudgetSnapshot {
             fixed_ms: 5000,
@@ -436,7 +551,7 @@ mod tests {
     #[test]
     fn click_overhead_reserved_from_cap() {
         let c = tight_budget_cfg();
-        let d = DelayModelConfig::default();
+        let d = uniform();
         let mut i = input(&c, &d);
         i.budget = Some(BudgetSnapshot {
             fixed_ms: 5000,
@@ -449,16 +564,17 @@ mod tests {
         assert_eq!(dec.total_target_ms, 5000 - d.safety_margin_ms - 700);
     }
 
-    /// Only an `allow_bank` decision (top-two near-tie) may spend the
+    /// With the long-thought gate off, only a near-tie may spend the
     /// extra pool, bounded by fraction and absolute single-spend cap —
     /// and never beyond the hard cap.
     #[test]
-    fn hard_cap_requires_bank_permission() {
+    fn hard_cap_requires_bank_permission_in_strict_mode() {
         let c = tight_budget_cfg();
         // Near-tie marks allow_bank (a non-zero bonus keeps the rule on).
         let d = DelayModelConfig {
             close_margin_extra_ms: 1,
-            ..Default::default()
+            bank_on_long_thought: false,
+            ..uniform()
         };
         let budget = BudgetSnapshot {
             fixed_ms: 5000,
@@ -491,6 +607,31 @@ mod tests {
         );
     }
 
+    /// Default (calibrated) behaviour: a base sample that naturally
+    /// exceeds the soft cap is allowed to spend bank — real players dip
+    /// into the pool routinely and it refills every kyoku — still
+    /// bounded by the hard cap.
+    #[test]
+    fn long_thought_spends_bank_by_default() {
+        let c = tight_budget_cfg(); // forces a 100s sample
+        let d = uniform();
+        assert!(d.bank_on_long_thought, "calibrated default must be on");
+        let mut i = input(&c, &d);
+        i.budget = Some(BudgetSnapshot {
+            fixed_ms: 5000,
+            add_ms: 20_000,
+            elapsed_ms: 0,
+        });
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert!(dec.allow_bank, "long thought must unlock the bank");
+        assert_eq!(
+            dec.total_target_ms,
+            5000 - d.safety_margin_ms + 5000u32.min(d.bank_max_single_ms),
+            "and stay bounded by the hard cap"
+        );
+    }
+
     /// No budget known: the static ceiling trims rule bonuses, but never
     /// binds below the user's own configured base window — a config with
     /// pre_click_delay_max_ms above the cap keeps its legacy behaviour.
@@ -500,7 +641,7 @@ mod tests {
         let c = cfg(); // max 3000
         let d = DelayModelConfig {
             riichi_extra_ms: 60_000,
-            ..Default::default()
+            ..uniform()
         };
         let mut i = input(&c, &d);
         i.can_riichi = true;
@@ -510,7 +651,7 @@ mod tests {
 
         // A configured base above the cap wins (legacy behaviour keeps).
         let c = tight_budget_cfg(); // min = max = 100_000
-        let d = DelayModelConfig::default();
+        let d = uniform();
         let i = input(&c, &d);
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let dec = decide(&i, &mut r);
@@ -523,7 +664,7 @@ mod tests {
         let open = DelayModelConfig {
             no_budget_cap_ms: 0,
             riichi_extra_ms: 60_000,
-            ..Default::default()
+            ..uniform()
         };
         let mut i = input(&c, &open);
         i.can_riichi = true;
@@ -558,12 +699,10 @@ mod tests {
     #[test]
     fn lognormal_distribution_sanity() {
         let c = cfg();
-        let d = DelayModelConfig {
-            distribution: DelayDistribution::LogNormal,
-            lognormal_mu: 0.6, // e^0.6 ≈ 1.82s
-            lognormal_sigma: 0.5,
-            ..Default::default()
-        };
+        let mut d = DelayModelConfig::default();
+        // e^0.6 ≈ 1.82s
+        d.lognormal
+            .insert("dahai_tedashi".into(), [0.6, 0.5]);
         let i = input(&c, &d);
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let mut samples: Vec<u32> = (0..10_000)

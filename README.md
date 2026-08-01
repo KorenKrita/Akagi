@@ -264,10 +264,15 @@ With AutoPlay on, Akagi waits a "thinking" delay before each click. The
 delay is produced by a model that can take the decision itself into
 account (`[autoplay.delay]` in `config.toml`):
 
-- **Base distribution** — `distribution = "uniform"` (default; the
-  classic `pre_click_delay_min_ms..max_ms` draw) or `"log_normal"`
-  (`lognormal_mu`/`lognormal_sigma`, in ln-seconds) for a human-like
-  fat tail.
+- **Base distribution** — the default `distribution = "log_normal"`
+  draws from per-decision-kind log-normal distributions **calibrated
+  against real ranked-game records** (think times measured on the
+  server's own clock — see `scripts/analyze_record_think_time.py`).
+  The `[autoplay.delay.lognormal]` table maps decision kinds to
+  `[mu, sigma]` in ln-seconds: `dahai_tedashi` (median ≈2.4s),
+  `dahai_tsumogiri` (≈1.85s), `post_call_dahai` (≈1.5s), `reach`
+  (≈2.7s), `claim` (≈1.3s), `hora`. `distribution = "uniform"` restores
+  the classic `pre_click_delay_min_ms..max_ms` draw.
 - **Decision bonuses** (all default 0 = off): `riichi_extra_ms` when
   riichi is declarable, `kan_extra_ms` for kan declarations, and
   `close_margin_extra_ms` when the bot's top two candidates are within
@@ -275,10 +280,12 @@ account (`[autoplay.delay]` in `config.toml`):
   top candidate exceeds `obvious_top_prob` (0 = no cap).
 - **Server-budget awareness** — on Mahjong Soul, Akagi reads the per-turn
   time budget from the wire and clamps the delay so it never runs into
-  an auto-discard: it stays `safety_margin_ms` short of the base time,
-  and only dips into the extra time bank on genuinely hard calls
-  (bounded by `bank_use_fraction` / `bank_max_single_ms`). Off-Majsoul
-  (or before a game starts) a static `no_budget_cap_ms` applies.
+  an auto-discard: it stays `safety_margin_ms` short of the base time.
+  The extra time bank (which refills every kyoku) is spent only when a
+  sampled think naturally runs long (`bank_on_long_thought`, default on)
+  or on a genuinely hard call, bounded by `bank_use_fraction` /
+  `bank_max_single_ms`. Off-Majsoul (or before a game starts) a static
+  `no_budget_cap_ms` applies.
 
 ### Lua delay script
 
@@ -302,6 +309,8 @@ extra time pool.
 | `ctx` field | Meaning |
 |---|---|
 | `action` | `"dahai"`, `"reach"`, `"chi"`, `"pon"`, `"daiminkan"`, `"ankan"`, `"kakan"`, `"hora"`, `"ryukyoku"`, `"kita"`, `"none"` (declining a call) |
+| `tsumogiri` | the discard is the just-drawn tile |
+| `post_call` | discard following our own chi/pon |
 | `first_action` | first action of the kyoku |
 | `dealer_opening` | dealer's 14-tile opening discard (or opening-draw kita) |
 | `can_riichi` | riichi is declarable this turn |

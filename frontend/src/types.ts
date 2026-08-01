@@ -111,8 +111,10 @@ export type MajsoulAutoplayConfig = {
  *  config-file-only — the Settings UI exposes the Lua script fields. */
 export type DelayModelConfig = {
   distribution: 'uniform' | 'log_normal'
-  lognormal_mu: number
-  lognormal_sigma: number
+  /** Per-decision-kind log-normal `[mu, sigma]` in ln(seconds); keys like
+   *  `dahai_tedashi`, `claim`. Calibrated from ranked-game records. */
+  lognormal: Record<string, [number, number]>
+  bank_on_long_thought: boolean
   riichi_extra_ms: number
   kan_extra_ms: number
   close_margin: number

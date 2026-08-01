@@ -27,11 +27,13 @@ consumed (network, proxy, bot inference) before emitting the
 Layers, in order:
 
 1. **Policy** — a user Lua script (`delay/script.rs`, mlua) if loaded,
-   else the built-in model (base distribution + decision-type bonuses,
-   `delay/mod.rs`). Bot confidence is normalized first
-   (`delay/probs.rs`): native-bot `show.items[].prob` is used raw,
-   Mortal-style `q_values` are softmaxed. Never feed raw Q values to a
-   probability threshold.
+   else the built-in model (per-decision-kind log-normal base +
+   decision-type bonuses, `delay/mod.rs`). The default log-normal
+   parameters are **calibrated against real ranked-game records**
+   (`scripts/analyze_record_think_time.py`); change them only with new
+   measurements. Bot confidence is normalized first (`delay/probs.rs`):
+   native-bot `show.items[].prob` is used raw, Mortal-style `q_values`
+   are softmaxed. Never feed raw Q values to a probability threshold.
 2. **Budget caps** (`budget_cap`) — `soft = time_fixed - safety_margin -
    click_overhead`; `hard = soft + bounded bank spend`, bank only when
    the policy returned `allow_bank`. Unconditional: overrunning the
@@ -43,9 +45,9 @@ Layers, in order:
 
 1. Add the field to `DelayInput` (`delay/mod.rs`) and derive it in
    `majsoul::push_pre_delay` (or the manager, if it needs async state).
-2. Consume it in `decide`, defaulting to **behaviour-equivalent off** —
-   default-config behaviour changes only with calibration data to back
-   it.
+2. Consume it in `decide`. Default parameter values must be backed by
+   calibration data (record measurements); a knob without data defaults
+   to off/no-op.
 3. Expose it to Lua in `script::DelayScript::build_ctx` and document it
    in `assets/delay.lua.example` + the README's ctx table.
 4. Config knobs go in `config/autoplay.rs::DelayModelConfig` (serde

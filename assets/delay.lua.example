@@ -19,6 +19,8 @@
 --   ctx.action        "dahai" | "reach" | "chi" | "pon" | "daiminkan"
 --                     | "ankan" | "kakan" | "hora" | "ryukyoku" | "kita"
 --                     | "none"  (declining a call window)
+--   ctx.tsumogiri     the discard is the just-drawn tile
+--   ctx.post_call     discard following our own chi/pon
 --   ctx.first_action  true on the first action of a kyoku
 --   ctx.dealer_opening true for the dealer's 14-tile opening discard
 --                     (and a kita on the opening draw)
@@ -75,6 +77,17 @@ function decide_delay(ctx)
 
   -- Rule 8: base human jitter.
   delay = delay + 1.0 + 2.0 * ctx.rng()
+  -- Calibrated alternative: real ranked players are log-normal, not
+  -- uniform (measured medians: tedashi ~2.4s, tsumogiri ~1.85s,
+  -- call windows ~1.3s). To mimic them, replace the line above with:
+  --   if ctx.action == "dahai" then
+  --     delay = delay + (ctx.tsumogiri and ctx.lognormal(0.62, 0.55)
+  --                                     or  ctx.lognormal(0.90, 0.60))
+  --   else
+  --     delay = delay + ctx.lognormal(0.27, 0.55)
+  --   end
+  -- (The built-in model already does this by default — a script is only
+  -- needed if you want different behaviour.)
 
   -- Rule 9: clamp to [0, max_delay].
   if delay > max_delay then

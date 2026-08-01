@@ -255,8 +255,26 @@ fn push_pre_delay(
         _ => false,
     };
 
+    // Discard sub-kind: tsumogiri comes straight off the event; a
+    // post-call discard is recognisable by hand size 3n+1 (no draw
+    // after our own chi/pon).
+    let (is_tsumogiri, is_post_call) = match ctx.action {
+        MjaiEvent::Dahai { tsumogiri, .. } => {
+            let hand_len = ctx
+                .snapshot
+                .players
+                .get(ctx.our_seat as usize)
+                .map(|p| p.tehai.len())
+                .unwrap_or(0);
+            (*tsumogiri, hand_len % 3 == 1)
+        }
+        _ => (false, false),
+    };
+
     let input = DelayInput {
         kind,
+        is_tsumogiri,
+        is_post_call,
         first_action_of_kyoku: ctx.last_kawa_tile.is_none(),
         opening_animation,
         can_riichi: ctx
@@ -1163,7 +1181,7 @@ mod tests {
             pai: "5p".into(),
             tsumogiri: false,
         };
-        // Deterministic target: min == max == 1000ms.
+        // Deterministic target: min == max == 1000ms, uniform mode.
         let mut cfg_ref = cfg();
         cfg_ref.pre_click_delay_min_ms = 1000;
         cfg_ref.pre_click_delay_max_ms = 1000;
@@ -1179,6 +1197,10 @@ mod tests {
                 ReachState::Idle,
                 &cfg_ref,
             );
+            ctx.delay_cfg = crate::config::DelayModelConfig {
+                distribution: crate::config::DelayDistribution::Uniform,
+                ..Default::default()
+            };
             ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
                 fixed_ms: 5000,
                 add_ms: 0,
@@ -1230,6 +1252,10 @@ mod tests {
                 ReachState::AwaitingDahai,
                 &cfg_ref,
             );
+            ctx.delay_cfg = crate::config::DelayModelConfig {
+                distribution: crate::config::DelayDistribution::Uniform,
+                ..Default::default()
+            };
             ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
                 fixed_ms,
                 add_ms: 0,

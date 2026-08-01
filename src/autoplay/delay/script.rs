@@ -164,6 +164,8 @@ impl DelayScript {
         let lua = &self.lua;
         let ctx = lua.create_table()?;
         ctx.set("action", kind_name(input.kind))?;
+        ctx.set("tsumogiri", input.is_tsumogiri)?;
+        ctx.set("post_call", input.is_post_call)?;
         ctx.set("first_action", input.first_action_of_kyoku)?;
         ctx.set("dealer_opening", input.opening_animation)?;
         ctx.set("can_riichi", input.can_riichi)?;
@@ -302,6 +304,8 @@ mod tests {
     ) -> DelayInput<'a> {
         DelayInput {
             kind: DecisionKind::Dahai,
+            is_tsumogiri: false,
+            is_post_call: false,
             first_action_of_kyoku: false,
             opening_animation: false,
             can_riichi: false,

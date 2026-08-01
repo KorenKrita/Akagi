@@ -55,8 +55,8 @@ function makeConfig(over: {
       },
       delay: {
         distribution: 'uniform',
-        lognormal_mu: 0,
-        lognormal_sigma: 0,
+        lognormal: {},
+        bank_on_long_thought: false,
         riichi_extra_ms: 0,
         kan_extra_ms: 0,
         close_margin: 0,
