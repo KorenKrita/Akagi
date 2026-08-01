@@ -64,12 +64,19 @@ Layers, in order:
 
 ### Lua host invariants (`delay/script.rs`)
 
-- Restricted stdlib (math/string/table). No io/os.
-- Instruction budget + wall-clock deadline via VM hook; if the hook
-  cannot be installed the script is not run at all.
+- Restricted stdlib: math/string/table, plus the base library scrubbed
+  of `load`/`loadstring`/`dofile`/`loadfile` (bytecode and filesystem
+  escapes), `pcall`/`xpcall` (they could swallow the runaway-guard
+  abort) and `string.dump`. No io/os/debug.
+- Hard allocation ceiling (`set_memory_limit`) — an allocation bomb is
+  a catchable Lua error, not a process abort.
+- Instruction budget + wall-clock deadline via VM hook, active for the
+  chunk's top level at load time and for every call; if the hook cannot
+  be installed the script is not run at all.
 - Every failure falls back to the built-in model and logs **once** per
   distinct error. A missing script file is a normal state, not an error.
-- Hot reload by mtime; a broken file is not recompiled until it changes.
+- Hot reload by mtime+size; a broken file is not recompiled until it
+  changes.
 - The script decides *when*, never *what*: it gets no coordinates, no
   action choice, and its output is clamped by caps and floors.
 

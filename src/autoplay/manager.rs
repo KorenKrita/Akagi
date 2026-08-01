@@ -43,8 +43,8 @@ pub struct AutoplayManager {
     /// User Lua delay policy (hot-reloaded from disk; see
     /// `autoplay::delay::script`).
     delay_script: crate::autoplay::delay::ScriptHost,
-    /// Directory holding the loaded config file; the default script
-    /// location is `<config_dir>/scripts/delay.lua`.
+    /// Directory holding the loaded config file; the script lives at
+    /// `<config_dir>/delay.lua`.
     config_dir: std::path::PathBuf,
 }
 
@@ -127,18 +127,14 @@ impl AutoplayManager {
         // Snapshot the server time budget for the current decision window
         // (written by the Majsoul bridge; None off-Majsoul or pre-game) and
         // normalize the bot's confidence metadata. Both feed the delay
-        // model — neither can alter the chosen action.
-        let budget = self
-            .ctx
-            .time_budget
-            .read()
-            .ok()
-            .and_then(|g| *g)
-            .map(|b| crate::autoplay::delay::BudgetSnapshot {
-                fixed_ms: b.fixed_ms,
-                add_ms: b.add_ms,
-                elapsed_ms: b.elapsed_ms(),
-            });
+        // model — neither can alter the chosen action. `opened_at` is kept
+        // as the window's identity for the post-sleep staleness check.
+        let planned_budget = self.ctx.time_budget.read().ok().and_then(|g| *g);
+        let budget = planned_budget.map(|b| crate::autoplay::delay::BudgetSnapshot {
+            fixed_ms: b.fixed_ms,
+            add_ms: b.add_ms,
+            elapsed_ms: b.elapsed_ms(),
+        });
         let probs = crate::autoplay::delay::probs::normalize_meta(resp.meta.as_ref());
 
         // The delay script lives at a fixed path next to the config file.
@@ -225,12 +221,40 @@ impl AutoplayManager {
             }
         };
 
+        let mut window_checked = false;
         for step in &plan.steps {
             match step {
                 Step::Sleep { duration_ms } => {
                     tokio::time::sleep(Duration::from_millis(*duration_ms as u64)).await;
                 }
                 Step::Click { x_norm, y_norm } => {
+                    // The decision window can close while we sleep: a
+                    // higher-priority claimant (ron over our chi window)
+                    // resolves it early, and the *next* window's buttons
+                    // render at the same coordinates — a stale click
+                    // would press a live button of the wrong decision.
+                    // The bridge rewrites the budget slot exactly when
+                    // that happens, so the slot still holding the window
+                    // we planned against is the cheap validity check.
+                    // Checked once, before the first click: later steps
+                    // of one plan run inside our own action's window.
+                    // With no budget tracked (off-Majsoul) there is no
+                    // signal — behaviour is unchanged there.
+                    if !window_checked {
+                        window_checked = true;
+                        if planned_budget.is_some() {
+                            let current = self.ctx.time_budget.read().ok().and_then(|g| *g);
+                            if current.map(|b| b.opened_at)
+                                != planned_budget.map(|b| b.opened_at)
+                            {
+                                warn!(
+                                    "autoplay: decision window closed mid-delay — dropping stale click for {:?}",
+                                    resp.action
+                                );
+                                return;
+                            }
+                        }
+                    }
                     let (px, py) = rect.pixel(*x_norm, *y_norm);
                     if !rect.contains(px, py) {
                         warn!(

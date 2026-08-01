@@ -51,12 +51,17 @@
 -- what is being discarded, how deep the hand is, and whether someone
 -- has declared riichi.
 
--- Probability that a discard is routine (no real thought). Measured
--- fast-fraction (<1.2s): lone honors get flicked away, middle tiles
--- almost never do.
+-- Probability that a discard is routine (no real thought). These are
+-- MIXTURE WEIGHTS, not the measured fast-fractions directly: the
+-- routine cluster only puts ~84% of its own mass under 1.2s and the
+-- genuine-think cluster contributes sub-1.2s mass too, so each weight
+-- w solves  w*0.844 + (1-w)*P_think(<1.2s) = measured fast-fraction
+-- (tedashi h/t/m: 21%/10%/4%; tsumogiri h/t/m: 31%/26%/20%). Tedashi
+-- terminal/middle round to zero — their think cluster alone already
+-- covers the measured fast mass.
 local ROUTINE = {
-  tedashi   = { honor = 0.21, terminal = 0.10, middle = 0.04 },
-  tsumogiri = { honor = 0.31, terminal = 0.26, middle = 0.20 },
+  tedashi   = { honor = 0.12, terminal = 0.00, middle = 0.00 },
+  tsumogiri = { honor = 0.15, terminal = 0.10, middle = 0.04 },
 }
 
 -- Log-normal { mu, sigma } (ln-seconds) of the *genuine-think* cluster.
@@ -77,7 +82,7 @@ local OTHER = {
 }
 
 local function routine_probability(ctx, giri)
-  local p = (ROUTINE[giri] or {})[ctx.tile_class or "middle"] or 0.05
+  local p = (ROUTINE[giri] or {})[ctx.tile_class or "middle"] or 0.04
   -- The bot's confidence is a good proxy for "this tile was already
   -- decided": a dominant top candidate doubles the routine odds, a
   -- contested one collapses them.
@@ -174,7 +179,11 @@ function decide_delay(ctx)
   -- normal play, not an emergency. But when the bank is nearly dry,
   -- humans wrap up instead of risking the auto-discard timer.
   if ctx.budget ~= nil then
-    local free_s = ctx.budget.fixed_ms / 1000 - 1.0
+    -- Floored at 0: a sub-second fixed_ms must degrade to "answer at
+    -- the enforced minimum", not to a negative delay_ms that Akagi
+    -- would reject (which would silently disable this script for the
+    -- whole room).
+    local free_s = math.max(ctx.budget.fixed_ms / 1000 - 1.0, 0)
     local bank_s = ctx.budget.add_ms / 1000
     if think > free_s then
       if bank_s >= 3.0 then

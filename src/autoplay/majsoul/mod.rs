@@ -256,19 +256,19 @@ fn push_pre_delay(
     };
 
     // Discard sub-kind: tsumogiri comes straight off the event; a
-    // post-call discard is recognisable by hand size 3n+1 (no draw
-    // after our own chi/pon).
+    // post-call discard is the only dahai decision with no just-drawn
+    // tile — the meld consumed the turn's draw. (Hand size cannot tell
+    // the cases apart: with the drawn tile in `tehai`, both post-draw
+    // and post-call hands are ≡ 2 mod 3.) `drawn_tile` is tracked for
+    // the active seat, which we are when discarding; requiring a meld
+    // guards states where no draw is tracked for other reasons, e.g.
+    // the dealer's opening hand.
     let (is_tsumogiri, is_post_call, tile_class) = match ctx.action {
         MjaiEvent::Dahai { tsumogiri, pai, .. } => {
-            let hand_len = ctx
-                .snapshot
-                .players
-                .get(ctx.our_seat as usize)
-                .map(|p| p.tehai.len())
-                .unwrap_or(0);
+            let me = ctx.snapshot.players.get(ctx.our_seat as usize);
             (
                 *tsumogiri,
-                hand_len % 3 == 1,
+                me.is_some_and(|p| !p.melds.is_empty() && p.drawn_tile.is_none()),
                 crate::autoplay::delay::TileClass::of_mjai(pai),
             )
         }
@@ -325,25 +325,32 @@ fn push_pre_delay(
         .unwrap_or_else(|| delay::decide(&input, &mut rand::rng()));
 
     // The Path-B riichi follow-up dahai is a *second* plan inside the
-    // same (still open) decision window: its elapsed_ms already contains
-    // the reach-button pre-delay and click. Subtracting it would saturate
-    // the sleep to ~0 and snap the riichi tile robotically. Treat the
-    // follow-up as its own decision on a fresh clock — sleep the target
-    // verbatim — but still clamp so the window total never exceeds the
-    // budget cap.
-    let fresh_clock =
+    // same (still open) decision window: the reach-stage pre-delay and
+    // click already consumed the think time the model targeted for the
+    // whole riichi action (the calibration source measures declaration
+    // plus tile as ONE server-observed interval). Sleeping a full fresh
+    // target here would roughly double the human riichi median, so the
+    // follow-up gets only the residual of its target — usually zero —
+    // floored at the tile-click UI-readiness pause (`min_delay_ms`,
+    // on a clock that restarts at our reach click: the hand re-renders
+    // highlighted before the tile exists to click), and still clamped
+    // so the window total never exceeds the budget cap. Floor last —
+    // losing the click is worse than shaving budget headroom.
+    let follow_up =
         kind == DecisionKind::Dahai && ctx.reach_state == ReachState::AwaitingDahai;
 
     // Convert target total time to a sleep: subtract what the window has
     // already consumed. Without a budget there is no window clock — sleep
     // the target verbatim (legacy behaviour).
     let sleep = match ctx.budget {
-        Some(b) if fresh_clock => {
+        Some(b) if follow_up => {
+            let residual = decision.total_target_ms.saturating_sub(b.elapsed_ms);
             let remaining = delay::budget_cap(&input, decision.allow_bank)
                 .saturating_sub(b.elapsed_ms);
-            decision.total_target_ms.min(remaining)
+            residual.min(remaining).max(delay_cfg.min_delay_ms)
         }
         Some(b) => decision.total_target_ms.saturating_sub(b.elapsed_ms),
+        None if follow_up => delay_cfg.min_delay_ms,
         None => decision.total_target_ms,
     };
     steps.push(Step::Sleep { duration_ms: sleep });
@@ -886,6 +893,158 @@ mod tests {
         );
     }
 
+    /// Regression: `is_post_call` was derived from `hand_len % 3 == 1`,
+    /// which is never true — with the drawn tile inside `tehai`, both
+    /// post-draw and post-call hands are ≡ 2 (mod 3) — so the calibrated
+    /// post-call distribution and the script's `ctx.post_call` never
+    /// fired. The real signal is a melded hand with no tracked draw.
+    #[test]
+    fn post_call_discard_is_detected_by_missing_draw() {
+        use crate::game_state::snapshot::{MeldKind, MeldSnapshot};
+
+        let assert_script = |expected: bool| {
+            crate::autoplay::delay::DelayScript::compile(
+                &format!(
+                    "function decide_delay(ctx)
+                       assert(ctx.post_call == {expected}, 'post_call must be {expected}')
+                       return {{ delay_ms = 3456 }}
+                     end"
+                ),
+                "test",
+            )
+            .unwrap()
+        };
+
+        // Post-call: one meld, no drawn tile (the pon consumed the draw).
+        let mut snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p",
+            ],
+        );
+        snap.players[0].melds.push(MeldSnapshot {
+            kind: MeldKind::Pon,
+            tiles: vec!["P".into(), "P".into(), "P".into()],
+            from_who: 1,
+            called_tile: Some("P".into()),
+        });
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "2p".into(),
+            tsumogiri: false,
+        };
+        let cfg_ref = cfg();
+        let script = assert_script(true);
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms: 3456 })
+            ),
+            "script must see post_call=true (a fallback means its assert fired): {:?}",
+            result.steps.first()
+        );
+
+        // Post-draw discard on the same melded hand: draw tracked.
+        snap.players[0].drawn_tile = Some("2p".into());
+        let script = assert_script(false);
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms: 3456 })
+            ),
+            "script must see post_call=false: {:?}",
+            result.steps.first()
+        );
+    }
+
+    /// Regression: the Path-B riichi follow-up dahai used to sleep a
+    /// full fresh target on top of the reach-stage delay, roughly
+    /// doubling the human riichi median. The follow-up gets only the
+    /// residual of its target (usually zero) floored at the tile-click
+    /// UI-readiness pause.
+    #[test]
+    fn follow_up_riichi_dahai_sleeps_only_the_ui_floor() {
+        let script = crate::autoplay::delay::DelayScript::compile(
+            "function decide_delay(ctx) return { delay_ms = 2000 } end",
+            "test",
+        )
+        .unwrap();
+        let snap = snapshot_with_hand(0, vec!["1m", "2m", "3m"]);
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "3m".into(),
+            tsumogiri: false,
+        };
+        let cfg_ref = cfg();
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::AwaitingDahai,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+        let floor = ctx.delay_cfg.min_delay_ms;
+
+        // With a budget clock: the reach stage already consumed more
+        // than the 2000ms target — only the UI floor remains.
+        ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
+            fixed_ms: 20_000,
+            add_ms: 0,
+            elapsed_ms: 10_000,
+        });
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms }) if *duration_ms == floor
+            ),
+            "budgeted follow-up must sleep exactly the UI floor: {:?}",
+            result.steps.first()
+        );
+
+        // Without a budget clock there is nothing to subtract from —
+        // the follow-up still must not sleep a second full target.
+        ctx.budget = None;
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms }) if *duration_ms == floor
+            ),
+            "unbudgeted follow-up must sleep exactly the UI floor: {:?}",
+            result.steps.first()
+        );
+    }
+
     #[test]
     fn reach_path_a_two_clicks() {
         let snap = snapshot_with_hand(
@@ -1246,13 +1405,16 @@ mod tests {
         assert_eq!(sleep_with_elapsed(5000), 0, "sleep must saturate at zero");
     }
 
-    /// Regression: the Path-B riichi follow-up dahai runs inside the same
-    /// still-open window whose elapsed already contains the reach-button
-    /// stage. It must sleep its own full target (fresh clock), not
-    /// `target - elapsed` saturated to ~0 — while never letting the
-    /// window total exceed the budget cap.
+    /// The Path-B riichi follow-up dahai runs inside the same still-open
+    /// window whose elapsed already contains the reach-button stage — the
+    /// stage that consumed the think time targeted for the whole riichi
+    /// action. It sleeps only the residual of its own target (usually
+    /// zero), floored at the tile-click UI pause. (Regression both ways:
+    /// plain `target - elapsed` saturates to 0 and snaps the tile before
+    /// the UI re-renders; a full fresh target doubles the human riichi
+    /// median.)
     #[test]
-    fn riichi_followup_dahai_keeps_full_delay() {
+    fn riichi_followup_dahai_sleeps_residual_with_ui_floor() {
         let snap = snapshot_with_oya(
             0,
             1,
@@ -1282,6 +1444,9 @@ mod tests {
             );
             ctx.delay_cfg = crate::config::DelayModelConfig {
                 distribution: crate::config::DelayDistribution::Uniform,
+                // Lower than the 1s target so the floor and the residual
+                // are distinguishable in the assertions below.
+                min_delay_ms: 200,
                 ..Default::default()
             };
             ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
@@ -1296,12 +1461,12 @@ mod tests {
             }
         };
 
-        // Elapsed (2.5s of reach stage) larger than the 1s target: the
-        // old deduction would sleep 0; the follow-up must sleep 1s.
-        assert_eq!(sleep_for(10_000, 2500), 1000);
-        // But the window total is still capped: fixed 3000 - safety 1000
-        // leaves 2000 total; with 1500 already gone only 500 remain.
-        assert_eq!(sleep_for(3000, 1500), 500);
+        // The reach stage (2.5s) already consumed the whole 1s target:
+        // only the UI-readiness floor remains — not a second full
+        // target, and not a raw 0 that would click into the re-render.
+        assert_eq!(sleep_for(10_000, 2500), 200);
+        // A target not yet fully consumed sleeps its residual.
+        assert_eq!(sleep_for(10_000, 400), 600);
     }
 
     /// Legacy mode must reproduce the historical fixed model even when

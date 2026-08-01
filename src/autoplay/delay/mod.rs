@@ -314,6 +314,14 @@ fn base_sample<R: Rng + ?Sized>(input: &DelayInput, rng: &mut R) -> u32 {
         }
         DelayDistribution::LogNormal => {
             let [mu, sigma] = lognormal_params(input);
+            // Invalid parameters from a hand-edited config fall back to
+            // the uniform behaviour rather than panicking mid-game. The
+            // explicit checks matter: `LogNormal::new` accepts a NaN mu
+            // (which would collapse every sample to 0 — silently pinning
+            // all delays to the floor) and even a negative sigma.
+            if !mu.is_finite() || !sigma.is_finite() || sigma < 0.0 {
+                return if hi == lo { lo } else { rng.random_range(lo..=hi) };
+            }
             match rand_distr::LogNormal::new(mu, sigma) {
                 Ok(dist) => {
                     let secs: f64 = rng.sample(dist);
@@ -323,9 +331,13 @@ fn base_sample<R: Rng + ?Sized>(input: &DelayInput, rng: &mut R) -> u32 {
                     // bounded, and never go implausibly fast.
                     ms.clamp(lo / 2, hi.saturating_mul(4))
                 }
-                // Invalid sigma from a hand-edited config — fall back to
-                // the uniform behaviour rather than panicking mid-game.
-                Err(_) => rng.random_range(lo..=hi.max(lo + 1)),
+                Err(_) => {
+                    if hi == lo {
+                        lo
+                    } else {
+                        rng.random_range(lo..=hi)
+                    }
+                }
             }
         }
     }
@@ -414,6 +426,30 @@ mod tests {
     }
 
     const AKAGI_SEED: u64 = 0xA4A61;
+
+    /// Regression: a NaN mu passes `LogNormal::new` (it only validates
+    /// sigma) and used to collapse every sample to 0 — pinning all
+    /// delays to the floor. Invalid params must fall back to a uniform
+    /// draw inside the configured window instead.
+    #[test]
+    fn invalid_lognormal_params_fall_back_to_uniform() {
+        let c = cfg();
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        for params in [[f64::NAN, 0.5], [0.9, f64::NAN], [0.9, -1.0]] {
+            let mut d = DelayModelConfig::default();
+            for v in d.lognormal.values_mut() {
+                *v = params;
+            }
+            let i = input(&c, &d);
+            for _ in 0..200 {
+                let ms = base_sample(&i, &mut r);
+                assert!(
+                    (c.pre_click_delay_min_ms..=c.pre_click_delay_max_ms).contains(&ms),
+                    "params {params:?}: sample {ms} outside the uniform window"
+                );
+            }
+        }
+    }
 
     /// Uniform mode must reproduce the historical behaviour: a uniform
     /// draw inside [min, max].

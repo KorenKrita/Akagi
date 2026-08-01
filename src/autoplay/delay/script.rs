@@ -1,7 +1,6 @@
 //! Lua override for the pre-click delay policy.
 //!
-//! Users drop a `delay.lua` next to their config (or point
-//! `autoplay.delay.script_path` anywhere) defining:
+//! Users drop a `delay.lua` next to their config file defining:
 //!
 //! ```lua
 //! function decide_delay(ctx)
@@ -14,8 +13,15 @@
 //! caller subtracts time already consumed.
 //!
 //! Safety contract (all enforced here, not trusted to the script):
-//! - Restricted stdlib (math/string/table only — no io/os).
-//! - Instruction budget + wall-clock deadline via a VM hook.
+//! - Restricted stdlib: math/string/table plus a scrubbed base library —
+//!   no io/os/debug, no `load`/`dofile`/`loadfile` (bytecode and
+//!   filesystem escapes), no `pcall`/`xpcall` (they could swallow the
+//!   runaway-guard abort), no `string.dump`.
+//! - A hard allocation ceiling ([`MEMORY_LIMIT_BYTES`]) — allocation
+//!   failure becomes a normal Lua error, not a process abort.
+//! - Instruction budget + wall-clock deadline via a VM hook, active
+//!   both while the chunk's top level runs at load time and during
+//!   every `decide_delay` call.
 //! - Any failure (missing file is not a failure; syntax error, runtime
 //!   error, timeout, wrong return shape, out-of-range delay) falls back
 //!   to the built-in model and is logged **once** per distinct error,
@@ -29,7 +35,6 @@ use super::{budget_cap, functional_floor, DelayDecision, DelayInput};
 use mlua::{Function, Lua, LuaOptions, StdLib, Table, Value, VmState};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{info, warn};
 
@@ -43,10 +48,29 @@ pub const DEFAULT_SCRIPT: &str =
 const MAX_SCRIPT_DELAY_MS: f64 = 600_000.0;
 /// Wall-clock deadline for one script call.
 const CALL_DEADLINE: Duration = Duration::from_millis(50);
+/// Wall-clock deadline for running the chunk's top level at load time.
+/// More generous than [`CALL_DEADLINE`]: precomputing tables at file
+/// scope is legitimate, and a load happens once per edit, not per hand.
+const COMPILE_DEADLINE: Duration = Duration::from_millis(250);
 /// The VM hook fires every N instructions to check the deadline.
 const HOOK_EVERY_N_INSTRUCTIONS: u32 = 1_000;
 /// Instruction budget for one call (hook fires × N).
 const MAX_HOOK_FIRES: u64 = 10_000; // = 10M instructions
+/// Lua allocation ceiling. Far above anything a delay policy needs, but
+/// it turns a runaway `string.rep`-style allocation into a catchable
+/// Lua error — without a limit, mlua's allocator aborts the whole
+/// process when the system allocation fails, and the VM hook cannot
+/// intervene because C functions never tick it.
+const MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
+/// Base-library globals scrubbed from the VM. `Lua::new_with` always
+/// loads the base library regardless of the `StdLib` mask, and these
+/// break the sandbox or the runaway guard: `load`/`loadstring` accept
+/// precompiled bytecode which Lua 5.4 does not validate (crafted
+/// bytecode is native-code execution), `dofile`/`loadfile` reach the
+/// filesystem (`dofile()` with no argument blocks reading stdin), and
+/// `pcall`/`xpcall` would let a script catch the guard's abort error
+/// and keep spinning.
+const SCRUBBED_GLOBALS: &[&str] = &["load", "loadstring", "dofile", "loadfile", "pcall", "xpcall"];
 
 /// A loaded, compiled delay script.
 pub struct DelayScript {
@@ -59,6 +83,30 @@ pub struct DelayScript {
     last_error: std::sync::Mutex<Option<String>>,
 }
 
+/// Install the runaway guard (instruction budget + wall-clock deadline)
+/// on `lua`. The hook only ticks pure Lua execution — C functions never
+/// fire it — so allocation is bounded separately by the memory limit.
+fn install_guard(lua: &Lua, budget: Duration) -> Result<(), mlua::Error> {
+    let deadline = Instant::now() + budget;
+    let fires = AtomicU64::new(0);
+    lua.set_hook(
+        mlua::HookTriggers::new().every_nth_instruction(HOOK_EVERY_N_INSTRUCTIONS),
+        move |_lua, _debug| {
+            if fires.fetch_add(1, Ordering::Relaxed) >= MAX_HOOK_FIRES {
+                return Err(mlua::Error::RuntimeError(
+                    "delay script exceeded instruction budget".into(),
+                ));
+            }
+            if Instant::now() > deadline {
+                return Err(mlua::Error::RuntimeError(
+                    "delay script exceeded time budget".into(),
+                ));
+            }
+            Ok(VmState::Continue)
+        },
+    )
+}
+
 impl DelayScript {
     /// Compile `source` and resolve the `decide_delay` global.
     pub fn compile(source: &str, chunk_name: &str) -> Result<Self, String> {
@@ -67,10 +115,26 @@ impl DelayScript {
             LuaOptions::default(),
         )
         .map_err(|e| format!("lua init: {e}"))?;
-        lua.load(source)
-            .set_name(chunk_name)
-            .exec()
-            .map_err(|e| format!("script load: {e}"))?;
+        let globals = lua.globals();
+        for name in SCRUBBED_GLOBALS {
+            globals
+                .raw_set(*name, Value::Nil)
+                .map_err(|e| format!("lua sandbox: {e}"))?;
+        }
+        // Bytecode has no legitimate producer once `load` is gone, but
+        // strip the producer too so none ever exists in this VM.
+        if let Ok(string_lib) = globals.get::<Table>("string") {
+            let _ = string_lib.raw_set("dump", Value::Nil);
+        }
+        lua.set_memory_limit(MEMORY_LIMIT_BYTES)
+            .map_err(|e| format!("lua memory limit: {e}"))?;
+        // The chunk's top level is user code too: run it under the same
+        // guard as decide_delay calls, so `while true do end` at file
+        // scope rejects the script instead of hanging the autoplay task.
+        install_guard(&lua, COMPILE_DEADLINE).map_err(|e| format!("lua hook: {e}"))?;
+        let loaded = lua.load(source).set_name(chunk_name).exec();
+        lua.remove_hook();
+        loaded.map_err(|e| format!("script load: {e}"))?;
         let func: Function = lua
             .globals()
             .get("decide_delay")
@@ -85,26 +149,7 @@ impl DelayScript {
     /// Run the script for one decision. `None` means "fall back to the
     /// built-in model" (and the cause has been logged once).
     pub fn try_decide(&self, input: &DelayInput) -> Option<DelayDecision> {
-        let deadline = Instant::now() + CALL_DEADLINE;
-        let fires = Arc::new(AtomicU64::new(0));
-        let fires_hook = fires.clone();
-        let hook_installed = self.lua.set_hook(
-            mlua::HookTriggers::new().every_nth_instruction(HOOK_EVERY_N_INSTRUCTIONS),
-            move |_lua, _debug| {
-                if fires_hook.fetch_add(1, Ordering::Relaxed) >= MAX_HOOK_FIRES {
-                    return Err(mlua::Error::RuntimeError(
-                        "delay script exceeded instruction budget".into(),
-                    ));
-                }
-                if Instant::now() > deadline {
-                    return Err(mlua::Error::RuntimeError(
-                        "delay script exceeded time budget".into(),
-                    ));
-                }
-                Ok(VmState::Continue)
-            },
-        );
-        if hook_installed.is_err() {
+        if install_guard(&self.lua, CALL_DEADLINE).is_err() {
             // No hook means no runaway protection — refuse to run the
             // script rather than risk blocking the autoplay loop.
             warn!("delay script: could not install VM hook — using built-in model");
@@ -156,11 +201,18 @@ impl DelayScript {
                 "decide_delay returned out-of-range delay_ms {delay_ms}"
             )));
         }
-        let allow_bank = t
-            .get::<Option<bool>>("allow_bank")
-            .ok()
-            .flatten()
-            .unwrap_or(false);
+        // Strict boolean: Lua truthiness would read `allow_bank = 0`
+        // (C-style false) as *true* and silently unlock bank spending.
+        let allow_bank = match t.get::<Value>("allow_bank") {
+            Ok(Value::Nil) | Err(_) => false,
+            Ok(Value::Boolean(b)) => b,
+            Ok(other) => {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "decide_delay `allow_bank` must be a boolean or nil, got {}",
+                    other.type_name()
+                )));
+            }
+        };
         Ok((delay_ms as u32, allow_bank))
     }
 
@@ -243,12 +295,12 @@ fn kind_name(kind: super::DecisionKind) -> &'static str {
 #[derive(Default)]
 pub struct ScriptHost {
     script: Option<DelayScript>,
-    /// mtime of the last load *attempt* (successful or not) — a broken
-    /// file is not recompiled until it changes.
-    attempted_mtime: Option<SystemTime>,
+    /// mtime + size of the last load *attempt* (successful or not) — a
+    /// broken file is not recompiled until it changes. Size is part of
+    /// the stamp because coarse-timestamp filesystems can give a
+    /// truncate-then-write the same mtime as the version we rejected.
+    attempted_stamp: Option<(SystemTime, u64)>,
     attempted_path: Option<PathBuf>,
-    /// Whether the last attempt failed (logged already).
-    load_failed: bool,
     /// Default-file generation failed (read-only fs) — logged once,
     /// not retried every hand.
     generate_failed: bool,
@@ -268,7 +320,12 @@ impl ScriptHost {
                     std::fs::create_dir_all(parent)?;
                 }
             }
-            std::fs::write(path, DEFAULT_SCRIPT)
+            // Write-then-rename: a crash or full disk mid-write must not
+            // leave a truncated delay.lua that the `path.exists()` gate
+            // above would then treat as the user's file forever.
+            let tmp = path.with_extension("lua.tmp");
+            std::fs::write(&tmp, DEFAULT_SCRIPT)?;
+            std::fs::rename(&tmp, path)
         };
         match write() {
             Ok(()) => info!("generated default delay script: {}", path.display()),
@@ -287,20 +344,21 @@ impl ScriptHost {
     pub fn maybe_reload(&mut self, path: &Path, enabled: bool) {
         if !enabled {
             self.script = None;
-            self.attempted_mtime = None;
+            self.attempted_stamp = None;
             self.attempted_path = None;
             return;
         }
-        let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let stamp = std::fs::metadata(path)
+            .ok()
+            .and_then(|m| Some((m.modified().ok()?, m.len())));
         let path_changed = self.attempted_path.as_deref() != Some(path);
-        if !path_changed && mtime == self.attempted_mtime {
+        if !path_changed && stamp == self.attempted_stamp {
             return; // nothing new — keep current state (script or None)
         }
         self.attempted_path = Some(path.to_path_buf());
-        self.attempted_mtime = mtime;
-        self.load_failed = false;
+        self.attempted_stamp = stamp;
 
-        let Some(_) = mtime else {
+        let Some(_) = stamp else {
             if self.script.is_some() {
                 info!("delay script removed — using built-in model");
             }
@@ -316,13 +374,11 @@ impl ScriptHost {
                 Err(e) => {
                     warn!("delay script rejected ({}): {e}", path.display());
                     self.script = None;
-                    self.load_failed = true;
                 }
             },
             Err(e) => {
                 warn!("delay script unreadable ({}): {e}", path.display());
                 self.script = None;
-                self.load_failed = true;
             }
         }
     }
@@ -462,6 +518,139 @@ mod tests {
             start.elapsed() < Duration::from_secs(2),
             "hook must abort the loop quickly"
         );
+    }
+
+    /// Regression: a `while true do end` at file scope used to hang
+    /// `compile` forever (the guard hook was only installed for
+    /// `decide_delay` calls, not for the chunk's top level).
+    #[test]
+    fn top_level_infinite_loop_is_rejected_at_compile() {
+        let start = Instant::now();
+        assert!(DelayScript::compile("while true do end", "test").is_err());
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "compile must abort a top-level loop quickly"
+        );
+    }
+
+    /// Regression: `pcall` used to be reachable and could catch the
+    /// guard's abort error, making the instruction budget escapable.
+    /// With `pcall` scrubbed, the shielded loop dies on the nil call.
+    #[test]
+    fn pcall_cannot_shield_a_runaway_loop() {
+        let s = DelayScript::compile(
+            r#"
+            function decide_delay(ctx)
+              while true do pcall(function() while true do end end) end
+            end
+            "#,
+            "test",
+        )
+        .unwrap();
+        let cfg = MajsoulAutoplayConfig::default();
+        let d = DelayModelConfig::default();
+        let start = Instant::now();
+        assert!(s.try_decide(&base_input(&cfg, &d)).is_none());
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "a pcall-shielded loop must still abort quickly"
+        );
+    }
+
+    /// Regression: `load` accepted unvalidated precompiled bytecode
+    /// (native-code execution) and `dofile()` blocked reading stdin.
+    /// All loaders and `string.dump` must be gone; io/os/debug stay out.
+    #[test]
+    fn sandbox_scrubs_loaders_and_dump() {
+        let s = DelayScript::compile(
+            r#"
+            assert(load == nil, "load must be nil")
+            assert(loadstring == nil, "loadstring must be nil")
+            assert(dofile == nil, "dofile must be nil")
+            assert(loadfile == nil, "loadfile must be nil")
+            assert(pcall == nil, "pcall must be nil")
+            assert(xpcall == nil, "xpcall must be nil")
+            assert(string.dump == nil, "string.dump must be nil")
+            assert(os == nil and io == nil and debug == nil, "no io/os/debug")
+            function decide_delay(ctx) return { delay_ms = 2000 } end
+            "#,
+            "test",
+        )
+        .unwrap();
+        let cfg = MajsoulAutoplayConfig::default();
+        let d = DelayModelConfig::default();
+        assert!(s.try_decide(&base_input(&cfg, &d)).is_some());
+    }
+
+    /// Regression: with no memory limit, a huge `string.rep` ballooned
+    /// RSS unchecked (C functions never tick the guard hook) and an
+    /// allocation failure aborted the process. With the limit set it is
+    /// a normal Lua error → fallback.
+    #[test]
+    fn allocation_bomb_falls_back() {
+        let s = DelayScript::compile(
+            r#"
+            function decide_delay(ctx)
+              local x = string.rep("x", 1e9)
+              return { delay_ms = #x }
+            end
+            "#,
+            "test",
+        )
+        .unwrap();
+        let cfg = MajsoulAutoplayConfig::default();
+        let d = DelayModelConfig::default();
+        let start = Instant::now();
+        assert!(s.try_decide(&base_input(&cfg, &d)).is_none());
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "allocation failure must be an immediate Lua error"
+        );
+    }
+
+    /// Regression: `fixed_ms < 1000` used to drive the default script's
+    /// `free_s` negative, producing a negative `delay_ms` that the host
+    /// rejects — silently disabling the script for every decision in
+    /// such a room.
+    #[test]
+    fn bundled_default_survives_tiny_fixed_budget() {
+        let s = DelayScript::compile(DEFAULT_SCRIPT, "default").unwrap();
+        let cfg = MajsoulAutoplayConfig::default();
+        let d = DelayModelConfig::default();
+        let mut i = base_input(&cfg, &d);
+        i.budget = Some(BudgetSnapshot {
+            fixed_ms: 500,
+            add_ms: 1000,
+            elapsed_ms: 0,
+        });
+        for _ in 0..200 {
+            assert!(
+                s.try_decide(&i).is_some(),
+                "a sub-second fixed_ms must not reject the default script"
+            );
+        }
+    }
+
+    /// Regression: `allow_bank = 0` was read through Lua truthiness as
+    /// `true`, silently unlocking bank spending. Non-boolean values are
+    /// a script bug → fallback; nil stays "false".
+    #[test]
+    fn allow_bank_must_be_boolean() {
+        let cfg = MajsoulAutoplayConfig::default();
+        let d = DelayModelConfig::default();
+        let bad = DelayScript::compile(
+            "function decide_delay(ctx) return { delay_ms = 2000, allow_bank = 0 } end",
+            "test",
+        )
+        .unwrap();
+        assert!(bad.try_decide(&base_input(&cfg, &d)).is_none());
+
+        let good = DelayScript::compile(
+            "function decide_delay(ctx) return { delay_ms = 2000, allow_bank = true } end",
+            "test",
+        )
+        .unwrap();
+        assert!(good.try_decide(&base_input(&cfg, &d)).unwrap().allow_bank);
     }
 
     /// The functional floor and budget cap bind the script's answer:

@@ -836,7 +836,11 @@ function AutoplayCard({
             min={0}
             value={delay.min_delay_ms}
             onChange={(e) =>
-              setDelayField({ min_delay_ms: Number(e.target.value || 0) })
+              // Clamp: a typed negative would fail u32 deserialization
+              // on save (min={0} doesn't block typing a minus sign).
+              setDelayField({
+                min_delay_ms: Math.max(0, Number(e.target.value || 0)),
+              })
             }
           />
         </Field>
@@ -851,7 +855,7 @@ function AutoplayCard({
             value={delay.min_button_delay_ms}
             onChange={(e) =>
               setDelayField({
-                min_button_delay_ms: Number(e.target.value || 0),
+                min_button_delay_ms: Math.max(0, Number(e.target.value || 0)),
               })
             }
           />

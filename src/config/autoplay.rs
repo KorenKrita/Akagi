@@ -215,3 +215,34 @@ impl Default for MajsoulAutoplayConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pre-existing config written before the delay model existed has
+    /// no `[autoplay.delay]` section — it must deserialize to the
+    /// calibrated defaults, not zeros. Pins the container-level
+    /// `#[serde(default)]` attributes against regression.
+    #[test]
+    fn missing_delay_section_gets_defaults() {
+        let cfg: AutoplayConfig = toml::from_str("enabled = true").unwrap();
+        let default = DelayModelConfig::default();
+        assert_eq!(cfg.delay.mode, default.mode);
+        assert_eq!(cfg.delay.min_delay_ms, default.min_delay_ms);
+        assert_eq!(cfg.delay.min_button_delay_ms, default.min_button_delay_ms);
+        assert_eq!(cfg.delay.lognormal, default.lognormal);
+    }
+
+    /// A partial `[delay]` table keeps its explicit values and fills
+    /// everything else from the defaults.
+    #[test]
+    fn partial_delay_section_fills_remaining_defaults() {
+        let cfg: AutoplayConfig = toml::from_str("[delay]\nmin_delay_ms = 5\n").unwrap();
+        let default = DelayModelConfig::default();
+        assert_eq!(cfg.delay.min_delay_ms, 5);
+        assert_eq!(cfg.delay.mode, default.mode);
+        assert_eq!(cfg.delay.min_button_delay_ms, default.min_button_delay_ms);
+        assert!(!cfg.delay.lognormal.is_empty());
+    }
+}

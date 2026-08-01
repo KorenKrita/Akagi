@@ -369,6 +369,14 @@ impl MajsoulBridge {
         if self.time_budget.is_none() {
             return;
         }
+        // The slot is shared by every flow bridge (spectate tabs, the
+        // dying socket during a reconnect). A bridge that never resolved
+        // a seat cannot own a decision window — it must not write, or
+        // its unconditional `None`s would clear the playing flow's
+        // freshly committed budget.
+        if self.seat.is_none() {
+            return;
+        }
         let budget = self.extract_budget(action_name, data);
         if self.replaying {
             self.restore_budget = budget;
