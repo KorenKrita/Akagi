@@ -240,15 +240,12 @@ impl NativeBot {
         let key = cfg.key.trim();
         let use_system_proxy = cfg.use_system_proxy;
         let model = cfg.model_for(self.num_players).trim().to_string();
-        let unchanged = self
-            .api
-            .as_ref()
-            .is_some_and(|s| {
-                s.base_url == base_url
-                    && s.key == key
-                    && s.use_system_proxy == use_system_proxy
-                    && s.model == model
-            });
+        let unchanged = self.api.as_ref().is_some_and(|s| {
+            s.base_url == base_url
+                && s.key == key
+                && s.use_system_proxy == use_system_proxy
+                && s.model == model
+        });
         if unchanged {
             return;
         }
@@ -793,6 +790,9 @@ fn make_show_item(label: &str, pais: &[String], prob: Option<f64>) -> Value {
     }
     if let Some(p) = prob {
         item.insert("value".into(), json!(format!("{:.0}%", p * 100.0)));
+        // Raw probability for machine consumers (`autoplay::delay::probs`);
+        // the formatted `value` above only has integer-percent resolution.
+        item.insert("prob".into(), json!(p));
     }
     Value::Object(item)
 }

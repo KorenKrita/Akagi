@@ -92,13 +92,20 @@ pub trait Bridge: Send {
 /// - `flow_log`: per-WS-flow text dump (one JSON line per parsed message).
 /// - `session`: passed through to bridges that open additional log files
 ///   on demand (e.g. Majsoul rotates a fresh `*.mjai.jsonl` per game).
+/// - `time_budget`: shared slot the Majsoul bridge fills with the server's
+///   per-decision-window time budget (see `autoplay::budget`). Only the
+///   chromium capture path wires this — the MITM path has no autoplay.
+///   Other platforms ignore it.
 pub fn for_platform(
     platform: crate::config::Platform,
     flow_log: Option<Arc<FlowLogger>>,
     session: Option<Arc<Session>>,
+    time_budget: Option<crate::autoplay::budget::SharedTimeBudget>,
 ) -> Box<dyn Bridge> {
     match platform {
-        crate::config::Platform::Majsoul => Box::new(MajsoulBridge::new(flow_log, session)),
+        crate::config::Platform::Majsoul => {
+            Box::new(MajsoulBridge::new(flow_log, session).with_time_budget(time_budget))
+        }
         crate::config::Platform::Tenhou => Box::new(TenhouBridge::new(flow_log, session)),
         crate::config::Platform::RiichiCity => Box::new(RiichiCityBridge::new(flow_log, session)),
     }

@@ -59,6 +59,41 @@ CDP frame event   ─┘
 `FlowBridges<K>` is in `flow.rs`; both backends use it identically.
 Lazy create on first frame, ref-count clean-up on close.
 
+## HTTP capture
+
+Both backends record the HTTP traffic they intercept, not just WebSocket
+frames. Before this, everything except WS was discarded, which hid the
+game's own HTTP entirely — route topology, version and CDN endpoints, and
+the analytics beacons through which the client reports on itself.
+
+`http.rs` holds the policy both backends share: what to keep, what to
+skip, and how to say so. Nothing in it understands any protocol above
+HTTP; meaning is added separately by `crate::inspector::annotate`.
+
+Two rules are load-bearing:
+
+- **A skipped body records why.** A timeline that looks the same whether a
+  body was empty or merely dropped is the blind spot this exists to
+  remove.
+- **Bodies are decided from headers alone**, before a byte is read, so a
+  multi-megabyte asset is never buffered and a chunked response never
+  stalls the forward. Akagi forwards traffic untouched; buffering is the
+  one thing that could change that.
+
+### What the two backends see differently
+
+| | MITM | Chromium |
+|---|---|---|
+| volume | a whole session is ~23 requests | every page subresource; static assets are filtered out by default |
+| bodies | buffered within the cap | not captured — needs a separate `Network.getResponseBody` round-trip per request |
+| pairing | best-effort FIFO per connection; unpaired under HTTP/2 (no stream id in hudsucker's context) | exact — CDP hands out a real request id |
+| blind spots | raw-tunneled `CONNECT` (recorded as an `akagi_bypass` annotation); cleartext non-`GET` inside a tunnel | anything the page does not route through the network stack |
+
+Configured under `[capture.http]`. `record_all` is **off** by default:
+full capture puts access tokens and cookies in the session file and
+nothing is redacted, so the default keeps only exchanges a recognizer
+understood. See `src/config/README.md`.
+
 ## Path conventions
 
 For data the backend writes at runtime (Chromium profile, downloaded

@@ -46,6 +46,79 @@ addr = "127.0.0.1:23410"
 ca_dir = "./ca"
 ```
 
+## HTTP capture
+
+`handle_request` and `handle_response` record every intercepted exchange
+onto the Inspector timeline and forward it unaltered — bodies are
+buffered and the message rebuilt, never rewritten. Recognized exchanges
+(analytics beacons and the like) are annotated by
+`crate::inspector::annotate`; the proxy itself knows nothing about what
+they mean.
+
+Two proxy-specific notes:
+
+- **Pairing.** hudsucker's `HttpContext` carries only the client address,
+  so a response is matched to its request by a FIFO queue per connection.
+  That is exact over HTTP/1.x and wrong over HTTP/2, where streams
+  interleave — so an h2 response is recorded unpaired and annotated
+  `akagi_unpaired` rather than attributed to the wrong URL.
+
+  Only requests hudsucker answers through `handle_response` may be
+  queued. A `CONNECT`, a WebSocket upgrade and a failed forward are each
+  answered elsewhere, so queueing them would leave an entry nothing
+  claims and shift every later response onto the wrong request — which a
+  live capture caught as JSON responses recorded against a `CONNECT`. A
+  failed forward is claimed in `handle_error` and recorded as a `502`
+  annotated `akagi_forward_failed`, so "the game asked and we could not
+  reach it" is visible rather than a silent gap.
+- **The raw-tunnel bypass is recorded.** `should_intercept` returning
+  false means we will never see inside that connection, so the CONNECT is
+  logged with an `akagi_bypass` annotation. An announced gap is not a
+  blind spot.
+
+Policy lives under `[capture.http]`, not `[proxy]` — it applies to both
+capture backends. See `src/capture/README.md`.
+
+## The certificate report is corrected
+
+The one place Akagi deliberately changes what it forwards.
+
+A Mahjong Soul standalone client posts a `certificate_info` beacon on
+**every login**, listing every TLS certificate it was served. With Akagi in
+the path it is describing Akagi's certificate, and six independent fields
+give that away: the issuer names the tool, the subject is the exact
+hostname where a genuine certificate is a wildcard, the key algorithm
+differs, the serial is half the length, `not_before` is about a minute
+before the beacon, and the validity window is a flat 365 days. Renaming
+the CA would fix one of the six.
+
+`rewrite/majsoul_cert.rs` substitutes the certificate fields Akagi
+observed on the **upstream** leg — the same certificate the client would
+have been served otherwise. `url` and `ip` are left alone, as is every
+other beacon parameter and their order.
+
+The supporting pieces:
+
+- `certstore.rs` — the origin certificates seen by the TLS verifier,
+  rendered the way .NET's `X509Certificate2` renders them (reversed DNs,
+  uppercase-hex thumbprint and serial, `M/d/yyyy h:mm:ss tt` local time).
+  Getting that formatting wrong would be more conspicuous than the
+  problem it fixes, so it is pinned by tests.
+- `upstream.rs` — records the leaf in `NoVerify::verify_server_cert`,
+  which is the only place Akagi ever sees the real certificate.
+
+It declines rather than half-doing the job: an entry whose gateway we
+never connected to is left untouched and counted, and the count is logged
+at `WARN` under `akagi::proxy::rewrite`. Dropping the entry instead would
+change the array length, which tracks how many gateways the client probed.
+
+Switched by `[proxy] rewrite_certificate_report` (default **on**). Turn it
+off to capture what the client *would* have said — the only way to check
+the correction is still complete after a client update. MITM-only; a
+browser cannot report peer certificates at all, so the chromium backend
+has nothing to correct. Covered by `tests/proxy_cert_report_rewrite.rs`,
+which stands up a real TLS origin and asserts on what left the machine.
+
 ## Adding traffic interception
 
 Edit `handler.rs::ProxyHandler::handle_message`. The `WebSocketContext` distinguishes upstream (`ClientToServer`) vs downstream (`ServerToClient`) frames. Return `Some(msg)` to forward unchanged, return a modified `Message` to inject changes, or return `None` to drop.

@@ -20,6 +20,7 @@
 //! client still validates our MITM cert against the Akagi CA the user
 //! installed, so the local security boundary doesn't change.
 
+use super::certstore::CertStore;
 use anyhow::{Context, Result};
 use hudsucker::{
     hyper::{HeaderMap, Uri},
@@ -37,18 +38,35 @@ use std::sync::Arc;
 
 /// `ServerCertVerifier` that approves every chain. See module docs for
 /// the threat model justification.
+///
+/// It is also the only place Akagi ever sees the origin's **real**
+/// certificate — the client only ever sees ours — so the leaf is recorded
+/// on the way past. Recording is best-effort and can never fail the
+/// handshake; see [`CertStore::record`].
 #[derive(Debug)]
-struct NoVerify;
+struct NoVerify {
+    store: Arc<CertStore>,
+}
 
 impl ServerCertVerifier for NoVerify {
     fn verify_server_cert(
         &self,
-        _end_entity: &CertificateDer<'_>,
+        end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
+        server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, hudsucker::rustls::Error> {
+        // Key on whatever we asked for. Hostnames are the common case;
+        // IP literals matter because some game servers are reached that
+        // way and their certificate report names the same literal back.
+        match server_name {
+            ServerName::DnsName(name) => self.store.record(name.as_ref(), end_entity),
+            ServerName::IpAddress(ip) => self
+                .store
+                .record(&std::net::IpAddr::from(*ip).to_string(), end_entity),
+            _ => {}
+        }
         Ok(ServerCertVerified::assertion())
     }
 
@@ -92,13 +110,13 @@ impl ServerCertVerifier for NoVerify {
 /// Shared rustls `ClientConfig`. aws-lc-rs as the crypto provider to match
 /// hudsucker's `RcgenAuthority` (so we don't load two different providers
 /// in the process). TLS 1.2 + TLS 1.3 enabled, no client cert auth.
-fn client_config() -> Arc<ClientConfig> {
+fn client_config(store: Arc<CertStore>) -> Arc<ClientConfig> {
     let provider = aws_lc_rs::default_provider();
     let cfg = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
         .expect("aws-lc-rs supports both TLS 1.2 and 1.3 — protocol version selection cannot fail")
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoVerify))
+        .with_custom_certificate_verifier(Arc::new(NoVerify { store }))
         .with_no_client_auth();
     Arc::new(cfg)
 }
@@ -107,16 +125,17 @@ fn client_config() -> Arc<ClientConfig> {
 /// both enabled; ALPN is negotiated per-connection by hyper-rustls.
 pub fn http_connector(
     upstream_proxy: Option<Uri>,
+    store: Arc<CertStore>,
 ) -> Result<impl Connect + Clone + Send + Sync + 'static> {
-    let config = client_config();
+    let config = client_config(store);
+    let mut connector = HttpConnector::new();
+    connector.enforce_http(false);
     let http = match upstream_proxy {
         Some(proxy) => {
             validate_upstream_proxy(&proxy)?;
-            EitherConnector::Tunnel(
-                Tunnel::new(proxy, HttpConnector::new()).with_headers(HeaderMap::new()),
-            )
+            EitherConnector::Tunnel(Tunnel::new(proxy, connector).with_headers(HeaderMap::new()))
         }
-        None => EitherConnector::Direct(HttpConnector::new()),
+        None => EitherConnector::Direct(connector),
     };
     Ok(hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config((*config).clone())
@@ -129,8 +148,8 @@ pub fn http_connector(
 /// WebSocket connector for upstream WS upgrades originating from the
 /// proxy. Same `ClientConfig` as `http_connector` so the same NoVerify
 /// policy applies.
-pub fn websocket_connector() -> WsConnector {
-    WsConnector::Rustls(client_config())
+pub fn websocket_connector(store: Arc<CertStore>) -> WsConnector {
+    WsConnector::Rustls(client_config(store))
 }
 
 #[derive(Clone)]

@@ -12,6 +12,7 @@
 
 pub mod coords;
 
+use crate::autoplay::delay::{self, DecisionKind, DelayInput};
 use crate::autoplay::platform::{ActionContext, PlanResult, PlatformAutoplay, ReachState, Step};
 use crate::bridge::majsoul::tile::compare_pai;
 use crate::schema::MjaiEvent;
@@ -21,7 +22,6 @@ use coords::{
     action_button_pos, candidate_pos, get_pai_coord, kan_candidate_pos, MajsoulOpType,
     ACTION_PRIORITY, TILES,
 };
-use rand::Rng;
 use riichienv_core::action::{Action, ActionType};
 use riichienv_core::parser::tid_to_mjai;
 
@@ -46,15 +46,10 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 if ctx.self_riichi_accepted && ctx.reach_state != ReachState::AwaitingDahai {
                     return result;
                 }
-                push_random_pre_delay(&mut result.steps, ctx);
-                if is_dealer_first_discard(ctx) && ctx.cfg.dealer_first_discard_extra_delay_ms > 0 {
-                    // Majsoul plays a hand-sort animation when the dealer
-                    // gets dealt all 14 tiles at once; clicks issued during
-                    // it are dropped. Pad the wait.
-                    result.steps.push(Step::Sleep {
-                        duration_ms: ctx.cfg.dealer_first_discard_extra_delay_ms,
-                    });
-                }
+                // The dealer-opening hand-sort animation wait (clicks
+                // issued during it are dropped) is folded into the delay
+                // model as the `opening_animation` functional floor.
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Dahai, 0);
                 if let Some(click) = plan_dahai_click(pai, ctx) {
                     result.steps.push(click);
                 }
@@ -62,7 +57,14 @@ impl PlatformAutoplay for MajsoulAutoplay {
 
             // ----- Reach (立直) — two paths -------------------------------
             MjaiEvent::Reach { actor, pai } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                // Path A clicks the riichi tile right after the button, so
+                // reserve one extra click of overhead.
+                push_pre_delay(
+                    &mut result.steps,
+                    ctx,
+                    DecisionKind::Reach,
+                    u32::from(pai.is_some()),
+                );
                 if let Some(button) = action_button_for(MajsoulOpType::Reach, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -95,15 +97,15 @@ impl PlatformAutoplay for MajsoulAutoplay {
             // ----- Chi / Pon / Daiminkan / Ankan / Kakan -------------------
             // (action button + optional candidate disambiguation)
             MjaiEvent::Chi { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Chi, 1);
                 plan_meld(MajsoulOpType::Chi, ActionType::Chi, &mut result, ctx);
             }
             MjaiEvent::Pon { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Pon, 1);
                 plan_meld(MajsoulOpType::Pon, ActionType::Pon, &mut result, ctx);
             }
             MjaiEvent::Daiminkan { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Daiminkan, 1);
                 plan_meld(
                     MajsoulOpType::Daiminkan,
                     ActionType::Daiminkan,
@@ -112,11 +114,11 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 );
             }
             MjaiEvent::Ankan { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Ankan, 1);
                 plan_kan(MajsoulOpType::Ankan, ActionType::Ankan, &mut result, ctx);
             }
             MjaiEvent::Kakan { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Kakan, 1);
                 plan_kan(MajsoulOpType::Kakan, ActionType::Kakan, &mut result, ctx);
             }
 
@@ -127,7 +129,7 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 } else {
                     MajsoulOpType::Ron
                 };
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Hora, 0);
                 if let Some(button) = action_button_for(op, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -138,7 +140,7 @@ impl PlatformAutoplay for MajsoulAutoplay {
 
             // ----- Ryukyoku (九種九牌) -------------------------------------
             MjaiEvent::Ryukyoku { .. } => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Ryukyoku, 0);
                 if let Some(button) = action_button_for(MajsoulOpType::Ryukyoku, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -149,16 +151,11 @@ impl PlatformAutoplay for MajsoulAutoplay {
 
             // ----- Kita (3p 北抜き) ----------------------------------------
             MjaiEvent::Kita { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
-                // On the opening draw of a kyoku (no kawa tile yet), add the
-                // same extra delay used for dealer first discard. Majsoul plays
-                // a tile-dealing animation after the previous kyoku ends; clicks
-                // issued during it land on the wrong target.
-                if ctx.last_kawa_tile.is_none() && ctx.cfg.dealer_first_discard_extra_delay_ms > 0 {
-                    result.steps.push(Step::Sleep {
-                        duration_ms: ctx.cfg.dealer_first_discard_extra_delay_ms,
-                    });
-                }
+                // On the opening draw of a kyoku, Majsoul plays a tile-
+                // dealing animation; clicks issued during it land on the
+                // wrong target. Folded into the delay model as
+                // `opening_animation` (same wait as dealer first discard).
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Kita, 0);
                 if let Some(button) = action_button_for(MajsoulOpType::Nukidora, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -205,7 +202,7 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 if !has_claim {
                     return result;
                 }
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Pass, 0);
                 if let Some(button) = action_button_for(MajsoulOpType::None, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -228,22 +225,133 @@ impl PlatformAutoplay for MajsoulAutoplay {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn push_random_pre_delay(steps: &mut Vec<Step>, ctx: &ActionContext) {
-    let lo = ctx.cfg.pre_click_delay_min_ms;
-    let hi = ctx.cfg.pre_click_delay_max_ms.max(lo);
-    let mut delay = if hi == lo {
-        lo
-    } else {
-        rand::rng().random_range(lo..=hi)
+/// Compute the pre-click "thinking" delay via the delay model
+/// (`autoplay::delay`) and push it as the leading `Sleep` step.
+///
+/// The model returns a target **total** thinking time for the decision
+/// window; when the server budget is known, the time already consumed
+/// (network, proxy, bot inference) is subtracted so the server-observed
+/// interval matches the target rather than exceeding it.
+///
+/// `extra_clicks` is how many clicks follow the *first* one in this plan
+/// (candidate disambiguation, riichi tile). It sizes the click-sequence
+/// overhead the budget layer must reserve.
+fn push_pre_delay(
+    steps: &mut Vec<Step>,
+    ctx: &ActionContext,
+    kind: DecisionKind,
+    extra_clicks: u32,
+) {
+    let cfg = ctx.cfg;
+    let per_click = cfg.hover_delay_ms + cfg.click_hold_ms;
+    let click_overhead_ms = per_click + extra_clicks * (per_click + cfg.inter_click_delay_ms);
+
+    let opening_animation = match kind {
+        DecisionKind::Dahai => is_dealer_first_discard(ctx),
+        // A kita on the opening draw of a kyoku waits out the same
+        // dealing animation as the dealer's first discard.
+        DecisionKind::Kita => ctx.last_kawa_tile.is_none(),
+        _ => false,
     };
-    // Reference behaviour (`autoplay_majsoul.py:156-157`): if there's no
-    // `last_kawa_tile` (i.e. very first action of a kyoku), use the upper
-    // bound as a fixed delay. Slightly slower but more human-like on the
-    // opening turn.
-    if ctx.last_kawa_tile.is_none() {
-        delay = hi;
+
+    // Discard sub-kind: tsumogiri comes straight off the event; a
+    // post-call discard is the only dahai decision with no just-drawn
+    // tile — the meld consumed the turn's draw. (Hand size cannot tell
+    // the cases apart: with the drawn tile in `tehai`, both post-draw
+    // and post-call hands are ≡ 2 mod 3.) `drawn_tile` is tracked for
+    // the active seat, which we are when discarding; requiring a meld
+    // guards states where no draw is tracked for other reasons, e.g.
+    // the dealer's opening hand.
+    let (is_tsumogiri, is_post_call, tile_class) = match ctx.action {
+        MjaiEvent::Dahai { tsumogiri, pai, .. } => {
+            let me = ctx.snapshot.players.get(ctx.our_seat as usize);
+            (
+                *tsumogiri,
+                me.is_some_and(|p| !p.melds.is_empty() && p.drawn_tile.is_none()),
+                crate::autoplay::delay::TileClass::of_mjai(pai),
+            )
+        }
+        _ => (false, false, None),
+    };
+    // An opponent riichi turns every decision into a defence read.
+    let opponent_riichi = ctx
+        .snapshot
+        .players
+        .iter()
+        .any(|p| p.seat != ctx.our_seat && p.riichi_declared);
+
+    // Legacy mode reproduces the historical fixed model: uniform draw,
+    // no script consulted. The manager already withholds the script in
+    // legacy mode; forcing the distribution here completes the split.
+    let legacy = ctx.delay_cfg.mode == crate::config::DelayMode::Legacy;
+    let mut delay_cfg = ctx.delay_cfg.clone();
+    if legacy {
+        delay_cfg.distribution = crate::config::DelayDistribution::Uniform;
     }
-    steps.push(Step::Sleep { duration_ms: delay });
+
+    let input = DelayInput {
+        kind,
+        is_tsumogiri,
+        is_post_call,
+        first_action_of_kyoku: ctx.last_kawa_tile.is_none(),
+        opening_animation,
+        can_riichi: ctx
+            .legal_actions
+            .iter()
+            .any(|a| a.action_type == ActionType::Riichi),
+        in_riichi: ctx.self_riichi_accepted,
+        opponent_riichi,
+        tile_class,
+        junme: ctx
+            .snapshot
+            .players
+            .get(ctx.our_seat as usize)
+            .map(|p| p.river.len() as u32 + 1)
+            .unwrap_or(0),
+        legal_action_count: ctx.legal_actions.len(),
+        probs: ctx.probs,
+        budget: ctx.budget,
+        click_overhead_ms,
+        cfg,
+        delay_cfg: &delay_cfg,
+    };
+    // User Lua policy first (falls back internally on any failure), then
+    // the built-in model. Both are bound by the same caps and floors.
+    let decision = ctx
+        .delay_script
+        .filter(|_| !legacy)
+        .and_then(|s| s.try_decide(&input))
+        .unwrap_or_else(|| delay::decide(&input, &mut rand::rng()));
+
+    // The Path-B riichi follow-up dahai is a *second* plan inside the
+    // same (still open) decision window: the reach-stage pre-delay and
+    // click already consumed the think time the model targeted for the
+    // whole riichi action (the calibration source measures declaration
+    // plus tile as ONE server-observed interval). Sleeping a full fresh
+    // target here would roughly double the human riichi median, so the
+    // follow-up gets only the residual of its target — usually zero —
+    // floored at the tile-click UI-readiness pause (`min_delay_ms`,
+    // on a clock that restarts at our reach click: the hand re-renders
+    // highlighted before the tile exists to click), and still clamped
+    // so the window total never exceeds the budget cap. Floor last —
+    // losing the click is worse than shaving budget headroom.
+    let follow_up = kind == DecisionKind::Dahai && ctx.reach_state == ReachState::AwaitingDahai;
+
+    // Convert target total time to a sleep: subtract what the window has
+    // already consumed. Without a budget there is no window clock — sleep
+    // the target verbatim (legacy behaviour).
+    let sleep = match ctx.budget {
+        Some(b) if follow_up => {
+            let residual = decision.total_target_ms.saturating_sub(b.elapsed_ms);
+            let remaining =
+                delay::budget_cap(&input, decision.allow_bank).saturating_sub(b.elapsed_ms);
+            residual.min(remaining).max(delay_cfg.min_delay_ms)
+        }
+        Some(b) => decision.total_target_ms.saturating_sub(b.elapsed_ms),
+        None if follow_up => delay_cfg.min_delay_ms,
+        None => decision.total_target_ms,
+    };
+    steps.push(Step::Sleep { duration_ms: sleep });
 }
 
 /// Plan a hand-tile click for a discard or riichi-declaring discard.
@@ -672,6 +780,10 @@ mod tests {
             reach_state,
             num_players: snapshot.num_players,
             cfg: cfg_ref,
+            delay_cfg: crate::config::DelayModelConfig::default(),
+            budget: None,
+            probs: None,
+            delay_script: None,
         }
     }
 
@@ -777,6 +889,158 @@ mod tests {
         assert!(
             !result.steps.is_empty(),
             "Path B follow-up dahai must click"
+        );
+    }
+
+    /// Regression: `is_post_call` was derived from `hand_len % 3 == 1`,
+    /// which is never true — with the drawn tile inside `tehai`, both
+    /// post-draw and post-call hands are ≡ 2 (mod 3) — so the calibrated
+    /// post-call distribution and the script's `ctx.post_call` never
+    /// fired. The real signal is a melded hand with no tracked draw.
+    #[test]
+    fn post_call_discard_is_detected_by_missing_draw() {
+        use crate::game_state::snapshot::{MeldKind, MeldSnapshot};
+
+        let assert_script = |expected: bool| {
+            crate::autoplay::delay::DelayScript::compile(
+                &format!(
+                    "function decide_delay(ctx)
+                       assert(ctx.post_call == {expected}, 'post_call must be {expected}')
+                       return {{ delay_ms = 3456 }}
+                     end"
+                ),
+                "test",
+            )
+            .unwrap()
+        };
+
+        // Post-call: one meld, no drawn tile (the pon consumed the draw).
+        let mut snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p",
+            ],
+        );
+        snap.players[0].melds.push(MeldSnapshot {
+            kind: MeldKind::Pon,
+            tiles: vec!["P".into(), "P".into(), "P".into()],
+            from_who: 1,
+            called_tile: Some("P".into()),
+        });
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "2p".into(),
+            tsumogiri: false,
+        };
+        let cfg_ref = cfg();
+        let script = assert_script(true);
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms: 3456 })
+            ),
+            "script must see post_call=true (a fallback means its assert fired): {:?}",
+            result.steps.first()
+        );
+
+        // Post-draw discard on the same melded hand: draw tracked.
+        snap.players[0].drawn_tile = Some("2p".into());
+        let script = assert_script(false);
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms: 3456 })
+            ),
+            "script must see post_call=false: {:?}",
+            result.steps.first()
+        );
+    }
+
+    /// Regression: the Path-B riichi follow-up dahai used to sleep a
+    /// full fresh target on top of the reach-stage delay, roughly
+    /// doubling the human riichi median. The follow-up gets only the
+    /// residual of its target (usually zero) floored at the tile-click
+    /// UI-readiness pause.
+    #[test]
+    fn follow_up_riichi_dahai_sleeps_only_the_ui_floor() {
+        let script = crate::autoplay::delay::DelayScript::compile(
+            "function decide_delay(ctx) return { delay_ms = 2000 } end",
+            "test",
+        )
+        .unwrap();
+        let snap = snapshot_with_hand(0, vec!["1m", "2m", "3m"]);
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "3m".into(),
+            tsumogiri: false,
+        };
+        let cfg_ref = cfg();
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::AwaitingDahai,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+        let floor = ctx.delay_cfg.min_delay_ms;
+
+        // With a budget clock: the reach stage already consumed more
+        // than the 2000ms target — only the UI floor remains.
+        ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
+            fixed_ms: 20_000,
+            add_ms: 0,
+            elapsed_ms: 10_000,
+        });
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms }) if *duration_ms == floor
+            ),
+            "budgeted follow-up must sleep exactly the UI floor: {:?}",
+            result.steps.first()
+        );
+
+        // Without a budget clock there is nothing to subtract from —
+        // the follow-up still must not sleep a second full target.
+        ctx.budget = None;
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms }) if *duration_ms == floor
+            ),
+            "unbudgeted follow-up must sleep exactly the UI floor: {:?}",
+            result.steps.first()
         );
     }
 
@@ -996,11 +1260,13 @@ mod tests {
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
-        // [pre-delay sleep, dealer-pad sleep, click]
-        assert_eq!(result.steps.len(), 3);
-        match &result.steps[1] {
+        // The dealer-pad wait is folded into the single pre-delay sleep:
+        // [pre-delay sleep (>= animation pad), click]. With the zeroed
+        // test config the sleep is exactly the pad.
+        assert_eq!(result.steps.len(), 2);
+        match &result.steps[0] {
             Step::Sleep { duration_ms } => assert_eq!(*duration_ms, 2000),
-            _ => panic!("expected sleep step at index 1"),
+            _ => panic!("expected sleep step at index 0"),
         }
     }
 
@@ -1082,6 +1348,163 @@ mod tests {
         let result = MajsoulAutoplay::new().plan(&ctx);
         // No dealer pad: just [pre-delay, click].
         assert_eq!(result.steps.len(), 2);
+    }
+
+    /// The delay model returns a target *total* thinking time; the sleep
+    /// step must be target minus what the decision window has already
+    /// consumed, saturating at zero — never a negative-wrapped huge sleep.
+    #[test]
+    fn pre_delay_deducts_budget_elapsed() {
+        let snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5p".into(),
+            tsumogiri: false,
+        };
+        // Deterministic target: min == max == 1000ms, uniform mode.
+        let mut cfg_ref = cfg();
+        cfg_ref.pre_click_delay_min_ms = 1000;
+        cfg_ref.pre_click_delay_max_ms = 1000;
+
+        let sleep_with_elapsed = |elapsed_ms: u32| {
+            let mut ctx = ctx_for(
+                &act,
+                &snap,
+                &[],
+                Some("1m"),
+                Some("5p"),
+                false,
+                ReachState::Idle,
+                &cfg_ref,
+            );
+            ctx.delay_cfg = crate::config::DelayModelConfig {
+                distribution: crate::config::DelayDistribution::Uniform,
+                ..Default::default()
+            };
+            ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
+                fixed_ms: 5000,
+                add_ms: 0,
+                elapsed_ms,
+            });
+            let result = MajsoulAutoplay::new().plan(&ctx);
+            match result.steps[0] {
+                Step::Sleep { duration_ms } => duration_ms,
+                _ => panic!("expected leading sleep"),
+            }
+        };
+
+        assert_eq!(sleep_with_elapsed(0), 1000);
+        assert_eq!(sleep_with_elapsed(400), 600, "elapsed must be deducted");
+        assert_eq!(sleep_with_elapsed(5000), 0, "sleep must saturate at zero");
+    }
+
+    /// The Path-B riichi follow-up dahai runs inside the same still-open
+    /// window whose elapsed already contains the reach-button stage — the
+    /// stage that consumed the think time targeted for the whole riichi
+    /// action. It sleeps only the residual of its own target (usually
+    /// zero), floored at the tile-click UI pause. (Regression both ways:
+    /// plain `target - elapsed` saturates to 0 and snaps the tile before
+    /// the UI re-renders; a full fresh target doubles the human riichi
+    /// median.)
+    #[test]
+    fn riichi_followup_dahai_sleeps_residual_with_ui_floor() {
+        let snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5p".into(),
+            tsumogiri: false,
+        };
+        let mut cfg_ref = cfg();
+        cfg_ref.pre_click_delay_min_ms = 1000;
+        cfg_ref.pre_click_delay_max_ms = 1000;
+
+        let sleep_for = |fixed_ms: u32, elapsed_ms: u32| {
+            let mut ctx = ctx_for(
+                &act,
+                &snap,
+                &[],
+                Some("1m"),
+                Some("5p"),
+                false,
+                ReachState::AwaitingDahai,
+                &cfg_ref,
+            );
+            ctx.delay_cfg = crate::config::DelayModelConfig {
+                distribution: crate::config::DelayDistribution::Uniform,
+                // Lower than the 1s target so the floor and the residual
+                // are distinguishable in the assertions below.
+                min_delay_ms: 200,
+                ..Default::default()
+            };
+            ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
+                fixed_ms,
+                add_ms: 0,
+                elapsed_ms,
+            });
+            let result = MajsoulAutoplay::new().plan(&ctx);
+            match result.steps[0] {
+                Step::Sleep { duration_ms } => duration_ms,
+                _ => panic!("expected leading sleep"),
+            }
+        };
+
+        // The reach stage (2.5s) already consumed the whole 1s target:
+        // only the UI-readiness floor remains — not a second full
+        // target, and not a raw 0 that would click into the re-render.
+        assert_eq!(sleep_for(10_000, 2500), 200);
+        // A target not yet fully consumed sleeps its residual.
+        assert_eq!(sleep_for(10_000, 400), 600);
+    }
+
+    /// Legacy mode must reproduce the historical fixed model even when
+    /// the config still carries log-normal parameters: the distribution
+    /// is forced to uniform and the sleep is exactly min==max.
+    #[test]
+    fn legacy_mode_forces_uniform() {
+        let snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5p".into(),
+            tsumogiri: false,
+        };
+        let mut cfg_ref = cfg();
+        cfg_ref.pre_click_delay_min_ms = 1234;
+        cfg_ref.pre_click_delay_max_ms = 1234;
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            Some("5p"),
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        // Config keeps LogNormal + calibrated table, but mode is legacy.
+        ctx.delay_cfg.mode = crate::config::DelayMode::Legacy;
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        match result.steps[0] {
+            Step::Sleep { duration_ms } => assert_eq!(duration_ms, 1234),
+            _ => panic!("expected leading sleep"),
+        }
     }
 
     /// Build a 3-player snapshot for our seat with optional kita pool and

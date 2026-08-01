@@ -24,6 +24,8 @@
 //! (broadcast capacity), the file is not. If a slow frontend drops live
 //! entries, the user can still load the full session from disk.
 
+pub mod annotate;
+
 use crate::schema::InspectorEntry;
 use anyhow::Result;
 use std::fs::{File, OpenOptions};

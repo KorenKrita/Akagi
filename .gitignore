@@ -9,6 +9,10 @@ node_modules
 CLAUDE.md
 claude*.md
 *mcp.json
+AGENTS.md
+agent*.md
+.agents
+.codex
 
 # Reference
 reference

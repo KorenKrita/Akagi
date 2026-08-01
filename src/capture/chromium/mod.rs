@@ -118,6 +118,7 @@ impl CaptureBackend for ChromiumBackend {
         let bridges = Arc::new(FlowBridges::<cdp::FlowKey>::new(
             ctx.session.clone(),
             ctx.platform,
+            ctx.autoplay.as_ref().map(|a| a.time_budget.clone()),
         ));
 
         let cdp_run = cdp::run(
@@ -126,6 +127,7 @@ impl CaptureBackend for ChromiumBackend {
             ctx.mjai_bus.clone(),
             ctx.session.inspector(),
             ctx.autoplay.clone(),
+            ctx.http.clone(),
         );
         let mut cdp_fut = Box::pin(cdp_run);
         let shutdown_fut = shutdown.wait();

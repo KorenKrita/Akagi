@@ -40,6 +40,11 @@ pub struct AutoplayContext {
     /// Flow id that most recently delivered a gameplay ActionPrototype.
     pub preferred_packet_flow: Arc<RwLock<Option<String>>>,
     injected_ws_frames: Arc<Mutex<VecDeque<u64>>>,
+    /// Server-granted time budget for the current decision window.
+    /// Written by the Majsoul bridge (see `autoplay::budget`), read by
+    /// the manager's delay model. Uses a `std::sync::RwLock` (not tokio)
+    /// because the writer is the bridge's synchronous `parse()` path.
+    pub time_budget: crate::autoplay::budget::SharedTimeBudget,
 }
 
 impl AutoplayContext {

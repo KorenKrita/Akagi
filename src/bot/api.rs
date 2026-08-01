@@ -306,9 +306,10 @@ pub(crate) fn configure_proxy(
     let Some(proxy) = system_proxy_endpoint() else {
         return Ok(builder.no_proxy());
     };
-    Ok(builder.proxy(reqwest::Proxy::all(&proxy).with_context(|| {
-        format!("invalid system proxy endpoint `{proxy}`")
-    })?))
+    Ok(builder.proxy(
+        reqwest::Proxy::all(&proxy)
+            .with_context(|| format!("invalid system proxy endpoint `{proxy}`"))?,
+    ))
 }
 
 fn system_proxy_endpoint() -> Option<String> {

@@ -12,10 +12,11 @@
 //! Request/Response carry a little-endian u16 message id at offset 1..3.
 //! Notify has no msg_id.
 //!
-//! Method name routing comes from the embedded `liqi.json`:
+//! Method name routing comes from the embedded `liqi.json`, a flat rpc-map
+//! keyed by the fully-qualified method name:
 //!   - 2-part (`lq.NotifyX`) → look up `lq.NotifyX` in the descriptor pool
-//!   - 3-part (`lq.Service.method`) → walk `nested.lq.nested.Service.methods.method`
-//!     to get `requestType` / `responseType`
+//!   - 3-part (`lq.Service.method`) → `liqi.json[".lq.Service.method"]` yields
+//!     `{req, resp}` fully-qualified type names, resolved in the pool
 //!
 //! Action data XOR: certain inner messages carry `{name, data}` where `data`
 //! is a base64 string of XOR-encrypted protobuf for an action of type `name`.
@@ -190,21 +191,22 @@ fn lookup_method_types(name: &str) -> Result<(MessageDescriptor, MessageDescript
         parts.len() == 3,
         "expected 3-part method name (lq.Service.method), got {name:?}"
     );
-    let entry = &ROUTES["nested"][parts[0]]["nested"][parts[1]]["methods"][parts[2]];
-    let req_name = entry["requestType"]
+    let key = format!(".{}.{}.{}", parts[0], parts[1], parts[2]);
+    let entry = &ROUTES[key.as_str()];
+    let req_ref = entry["req"]
         .as_str()
-        .with_context(|| format!("missing requestType for {name}"))?;
-    let resp_name = entry["responseType"]
+        .with_context(|| format!("no route/req for {name}"))?;
+    let resp_ref = entry["resp"]
         .as_str()
-        .with_context(|| format!("missing responseType for {name}"))?;
-    let req_fqn = format!("{}.{}", parts[0], req_name);
-    let resp_fqn = format!("{}.{}", parts[0], resp_name);
+        .with_context(|| format!("no route/resp for {name}"))?;
+    // rpc-map values are fully-qualified with a leading dot (`.lq.ReqX`);
+    // the descriptor pool is keyed without it (`lq.ReqX`).
     let req_desc = POOL
-        .get_message_by_name(&req_fqn)
-        .with_context(|| format!("unknown request type: {req_fqn}"))?;
+        .get_message_by_name(req_ref.trim_start_matches('.'))
+        .with_context(|| format!("unknown request type: {req_ref}"))?;
     let resp_desc = POOL
-        .get_message_by_name(&resp_fqn)
-        .with_context(|| format!("unknown response type: {resp_fqn}"))?;
+        .get_message_by_name(resp_ref.trim_start_matches('.'))
+        .with_context(|| format!("unknown response type: {resp_ref}"))?;
     Ok((req_desc, resp_desc))
 }
 
@@ -317,9 +319,103 @@ mod tests {
 
     #[test]
     fn routes_load() {
+        // Flat rpc-map: `.lq.Service.method` -> { req, resp } (leading-dot FQNs).
+        let entry = &ROUTES[".lq.Lobby.fetchConnectionInfo"];
+        assert_eq!(entry["req"].as_str(), Some(".lq.ReqCommon"));
+        assert_eq!(entry["resp"].as_str(), Some(".lq.ResConnectionInfo"));
+    }
+
+    /// Every rpc route's req/resp type must resolve in the descriptor pool —
+    /// the runtime invariant `lookup_method_types` depends on. Guards against a
+    /// proto/liqi.json mismatch slipping through a proto regeneration.
+    #[test]
+    fn all_routes_resolve() {
+        let routes = ROUTES.as_object().expect("rpc-map is a JSON object");
         assert!(
-            ROUTES["nested"]["lq"]["nested"]["Lobby"]["methods"]["fetchConnectionInfo"].is_object()
+            routes.len() > 300,
+            "suspiciously few routes: {}",
+            routes.len()
         );
+        for (method, spec) in routes {
+            for role in ["req", "resp"] {
+                let fqn = spec[role]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{method} missing {role}"));
+                assert!(
+                    POOL.get_message_by_name(fqn.trim_start_matches('.'))
+                        .is_some(),
+                    "{method} {role} type {fqn} not in pool",
+                );
+            }
+        }
+    }
+
+    /// mjai mapping in `mod.rs` reads decoded fields by JSON key, so a renamed or
+    /// renumbered field would NOT fail compilation — only decode wrong at
+    /// runtime. Lock the field numbers of the gameplay messages it relies on so a
+    /// future extraction that drifts them fails loudly here instead.
+    #[test]
+    fn gameplay_field_numbers_stable() {
+        let expected: &[(&str, &[(&str, u32)])] = &[
+            (
+                "lq.ActionPrototype",
+                &[("step", 1), ("name", 2), ("data", 3)],
+            ),
+            (
+                "lq.ActionNewRound",
+                &[
+                    ("chang", 1),
+                    ("ju", 2),
+                    ("ben", 3),
+                    ("tiles", 4),
+                    ("scores", 6),
+                    ("liqibang", 8),
+                    ("doras", 14),
+                ],
+            ),
+            (
+                "lq.ActionDiscardTile",
+                &[
+                    ("seat", 1),
+                    ("tile", 2),
+                    ("is_liqi", 3),
+                    ("moqie", 5),
+                    ("doras", 8),
+                    ("is_wliqi", 9),
+                ],
+            ),
+            (
+                "lq.ActionDealTile",
+                &[("seat", 1), ("tile", 2), ("liqi", 5), ("doras", 6)],
+            ),
+            (
+                "lq.ActionChiPengGang",
+                &[("seat", 1), ("type", 2), ("tiles", 3), ("froms", 4)],
+            ),
+            (
+                "lq.ActionHule",
+                &[("hules", 1), ("delta_scores", 3), ("scores", 5)],
+            ),
+            (
+                "lq.ReqSelfOperation",
+                &[("type", 1), ("tile", 3), ("moqie", 5)],
+            ),
+        ];
+        for (msg_name, fields) in expected {
+            let desc = POOL
+                .get_message_by_name(msg_name)
+                .unwrap_or_else(|| panic!("message {msg_name} missing from pool"));
+            for (field_name, number) in *fields {
+                let field = desc
+                    .get_field_by_name(field_name)
+                    .unwrap_or_else(|| panic!("{msg_name}.{field_name} missing"));
+                assert_eq!(
+                    field.number(),
+                    *number,
+                    "{msg_name}.{field_name} renumbered",
+                );
+            }
+        }
     }
 
     #[test]

@@ -7,9 +7,12 @@ mod overlay;
 mod platform;
 mod proxy;
 
-pub use autoplay::{AutoplayConfig, MajsoulAutoplayConfig, MajsoulAutoplayMode};
+pub use autoplay::{
+    AutoplayConfig, DelayDistribution, DelayMode, DelayModelConfig, MajsoulAutoplayConfig,
+    MajsoulAutoplayMode,
+};
 pub use bot::{BotConfig, NativeApiConfig};
-pub use capture::{CaptureConfig, CaptureMode, ChromiumConfig};
+pub use capture::{CaptureConfig, CaptureMode, ChromiumConfig, HttpCaptureConfig};
 pub use general::GeneralConfig;
 pub use logging::LoggingConfig;
 pub use overlay::{OverlayConfig, TOP_N_MAX, TOP_N_MIN};

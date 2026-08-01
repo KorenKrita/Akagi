@@ -12,7 +12,10 @@ pub mod mjai;
 pub use history::{
     GameRecord, GameStats, HistoryEvent, HistoryEventLog, HistoryFilter, KyokuMode, Platform,
 };
-pub use inspector::{BotReaction, FrameDirection, FrameRaw, InspectorEntry, ParsedFrame};
+pub use inspector::{
+    BotReaction, CaptureSource, FrameDirection, FrameRaw, HttpAnnotation, HttpBody, HttpExchange,
+    HttpHeader, HttpPhase, InspectorEntry, ParsedFrame,
+};
 pub use ipc::{
     BotInfo, BotSettings, BotStatus, CaptureKind, CaptureStatus, HoraScoreInfo, LoadStage,
     LogEntry, LogSessionInfo, Notification, NotifyLevel, ReadInspectorRequest,

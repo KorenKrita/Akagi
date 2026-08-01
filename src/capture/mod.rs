@@ -12,6 +12,7 @@
 
 pub mod chromium;
 pub mod flow;
+pub mod http;
 pub mod hudsucker_backend;
 
 use crate::autoplay::AutoplayContext;
@@ -87,6 +88,9 @@ pub struct CaptureCtx {
     /// autoplay reads it to dispatch `Input.dispatchMouseEvent`. The
     /// MITM backend simply ignores this — it has no `Page`.
     pub autoplay: Option<Arc<AutoplayContext>>,
+    /// What to record of the HTTP traffic this backend intercepts. Both
+    /// backends honour it; `static_assets` is chromium-only.
+    pub http: crate::config::HttpCaptureConfig,
 }
 
 /// A capture transport. Implementors run a long-lived I/O loop until

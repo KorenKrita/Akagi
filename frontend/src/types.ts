@@ -107,9 +107,44 @@ export type MajsoulAutoplayConfig = {
   dealer_first_discard_extra_delay_ms: number
 }
 
+/** Pre-click delay model parameters. Mirrors
+ *  `src/config/autoplay.rs::DelayModelConfig`; the fine-grained knobs are
+ *  config-file-only — the Settings UI exposes the Lua script fields. */
+export type DelayMode = 'legacy' | 'lua'
+
+export type DelayModelConfig = {
+  /** Which policy is active; exactly one. `legacy` = the old fixed
+   *  uniform model, `lua` = the scriptable human-like model backed by
+   *  `delay.lua` next to the config file (auto-generated). */
+  mode: DelayMode
+  /** UI-readiness floor: minimum total thinking time per decision, ms.
+   *  Clicks issued before Mahjong Soul renders the UI are lost. */
+  min_delay_ms: number
+  /** Higher floor for decisions that click an action button (chi/pon/
+   *  kan/ron/skip/riichi) — buttons render after the discard animation
+   *  plus their own pop-in, later than hand tiles. */
+  min_button_delay_ms: number
+  distribution: 'uniform' | 'log_normal'
+  /** Per-decision-kind log-normal `[mu, sigma]` in ln(seconds); keys like
+   *  `dahai_tedashi`, `claim`. Calibrated from ranked-game records. */
+  lognormal: Record<string, [number, number]>
+  bank_on_long_thought: boolean
+  riichi_extra_ms: number
+  kan_extra_ms: number
+  close_margin: number
+  close_margin_extra_ms: number
+  obvious_top_prob: number
+  obvious_max_ms: number
+  safety_margin_ms: number
+  bank_use_fraction: number
+  bank_max_single_ms: number
+  no_budget_cap_ms: number
+}
+
 export type AutoplayConfig = {
   enabled: boolean
   majsoul: MajsoulAutoplayConfig
+  delay: DelayModelConfig
 }
 
 /** Optional cloud-inference settings for the built-in native bot.
@@ -580,6 +615,35 @@ export type BotReactionPayload = {
   reaction_ms: number
 }
 
+/** Which capture backend observed an event. */
+export type CaptureSource = 'mitm' | 'chromium'
+
+export type HttpPhase = 'request' | 'response'
+
+export type HttpHeader = {
+  name: string
+  value: string
+}
+
+/** A body we kept, or the reason we did not. */
+export type HttpBody = {
+  text?: string
+  bytes?: number
+  /** Absent when the body was captured whole. */
+  skipped?: string
+}
+
+/**
+ * A recognizer's reading of an exchange. Vendor-specific vocabulary lives
+ * in `data` — never in the exchange itself — so a new recognizer needs no
+ * change here.
+ */
+export type HttpAnnotation = {
+  kind: string
+  summary: string
+  data: unknown
+}
+
 export type InspectorEntry =
   | {
       kind: 'ws_frame'
@@ -609,6 +673,23 @@ export type InspectorEntry =
       action: MjaiEvent
       meta?: Record<string, unknown>
       reaction_ms: number
+    }
+  | {
+      kind: 'http'
+      ts_ms: number
+      source: CaptureSource
+      // Backend serializes HttpExchange with #[serde(flatten)], so its
+      // fields land at the top level of the row, same as bot_reaction.
+      exchange_id?: string
+      phase: HttpPhase
+      method: string
+      url: string
+      host: string
+      version: string
+      status?: number
+      headers: HttpHeader[]
+      body?: HttpBody
+      annotations?: HttpAnnotation[]
     }
 
 export type InspectorKind = InspectorEntry['kind']

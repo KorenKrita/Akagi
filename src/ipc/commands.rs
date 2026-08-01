@@ -178,6 +178,11 @@ pub async fn update_config(
         let tracker_for_ap = state.game_tracker.clone();
         let mjai_for_ap = state.mjai_bus.clone();
         let resp_for_ap = state.bot_response_bus.clone();
+        let config_dir_for_ap = state
+            .config_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
         let started_flag = state.autoplay_manager_started.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(e) = crate::autoplay::run_autoplay_manager(
@@ -186,6 +191,7 @@ pub async fn update_config(
                 tracker_for_ap,
                 mjai_for_ap,
                 resp_for_ap,
+                config_dir_for_ap,
             )
             .await
             {
@@ -999,6 +1005,7 @@ fn inspector_matches(
         InspectorEntry::WsFrame { .. } => "ws_frame",
         InspectorEntry::MjaiEvent { .. } => "mjai_event",
         InspectorEntry::BotReaction { .. } => "bot_reaction",
+        InspectorEntry::Http { .. } => "http",
     };
     if let Some(ks) = kind_set {
         if !ks.contains(kind) {
@@ -1008,6 +1015,9 @@ fn inspector_matches(
     if let Some(a) = actor {
         match entry {
             InspectorEntry::WsFrame { .. } => {} // pre-bridge, no actor
+            // Describes the client, not any seat — same treatment as a
+            // ws frame: only the `kinds` filter can drop it.
+            InspectorEntry::Http { .. } => {}
             InspectorEntry::MjaiEvent { event, .. } => {
                 if let Some(ev_actor) = mjai_event_actor(event) {
                     if ev_actor != a {
@@ -1043,6 +1053,11 @@ fn inspector_matches(
                 .unwrap_or_default()
                 .to_lowercase(),
             InspectorEntry::BotReaction { reaction, .. } => serde_json::to_string(reaction)
+                .unwrap_or_default()
+                .to_lowercase(),
+            // The whole exchange, so a search for a URL, a header, a
+            // status, or anything a recognizer decoded all hit.
+            InspectorEntry::Http { exchange, .. } => serde_json::to_string(exchange)
                 .unwrap_or_default()
                 .to_lowercase(),
         };

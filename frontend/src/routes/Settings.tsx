@@ -59,6 +59,8 @@ import {
 import type {
   AppConfig,
   CaptureMode,
+  DelayMode,
+  DelayModelConfig,
   DetectedBrowser,
   OverlayConfig,
   PlatformKind,
@@ -748,7 +750,9 @@ function AutoplayCard({
       click_hold_ms: 50,
       dealer_first_discard_extra_delay_ms: 2000,
     },
+    delay: defaultDelayModel(),
   }
+  const delay = ap.delay ?? defaultDelayModel()
   const captureIsChromium = draft.capture?.mode === 'chromium'
   const setApField = (patch: Partial<typeof ap>) =>
     setDraft({ ...draft, autoplay: { ...ap, ...patch } })
@@ -756,6 +760,11 @@ function AutoplayCard({
     setDraft({
       ...draft,
       autoplay: { ...ap, majsoul: { ...ap.majsoul, ...patch } },
+    })
+  const setDelayField = (patch: Partial<DelayModelConfig>) =>
+    setDraft({
+      ...draft,
+      autoplay: { ...ap, delay: { ...delay, ...patch } },
     })
   return (
     <Card>
@@ -801,28 +810,91 @@ function AutoplayCard({
             </SelectContent>
           </Select>
         </Field>
-        <Field label={t('settings.autoplay.pre_click_delay_min')}>
+        {/* Delay policy: exactly one of legacy (fixed uniform) or the
+            Lua-scripted human-like model is active. */}
+        <Field label={t('settings.autoplay.delay_mode')}>
+          <Select
+            value={delay.mode}
+            onValueChange={(v) => setDelayField({ mode: v as DelayMode })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="lua">
+                {t('settings.autoplay.delay_mode_lua')}
+              </SelectItem>
+              <SelectItem value="legacy">
+                {t('settings.autoplay.delay_mode_legacy')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        {delay.mode === 'lua' && (
+          <p className="text-xs text-muted-foreground">
+            {t('settings.autoplay.delay_mode_lua_help')}
+          </p>
+        )}
+        {delay.mode === 'legacy' && (
+          <>
+            <Field label={t('settings.autoplay.pre_click_delay_min')}>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={ap.majsoul.pre_click_delay_min_ms}
+                onChange={(e) =>
+                  setMajsoulField({
+                    pre_click_delay_min_ms: Number(e.target.value || 0),
+                  })
+                }
+              />
+            </Field>
+            <Field label={t('settings.autoplay.pre_click_delay_max')}>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={ap.majsoul.pre_click_delay_max_ms}
+                onChange={(e) =>
+                  setMajsoulField({
+                    pre_click_delay_max_ms: Number(e.target.value || 0),
+                  })
+                }
+              />
+            </Field>
+          </>
+        )}
+        <Field
+          label={t('settings.autoplay.min_delay')}
+          hint={t('settings.autoplay.min_delay_hint')}
+        >
           <Input
             type="number"
             inputMode="numeric"
             min={0}
-            value={ap.majsoul.pre_click_delay_min_ms}
+            value={delay.min_delay_ms}
             onChange={(e) =>
-              setMajsoulField({
-                pre_click_delay_min_ms: Number(e.target.value || 0),
+              // Clamp: a typed negative would fail u32 deserialization
+              // on save (min={0} doesn't block typing a minus sign).
+              setDelayField({
+                min_delay_ms: Math.max(0, Number(e.target.value || 0)),
               })
             }
           />
         </Field>
-        <Field label={t('settings.autoplay.pre_click_delay_max')}>
+        <Field
+          label={t('settings.autoplay.min_button_delay')}
+          hint={t('settings.autoplay.min_button_delay_hint')}
+        >
           <Input
             type="number"
             inputMode="numeric"
             min={0}
-            value={ap.majsoul.pre_click_delay_max_ms}
+            value={delay.min_button_delay_ms}
             onChange={(e) =>
-              setMajsoulField({
-                pre_click_delay_max_ms: Number(e.target.value || 0),
+              setDelayField({
+                min_button_delay_ms: Math.max(0, Number(e.target.value || 0)),
               })
             }
           />
@@ -891,6 +963,35 @@ function AutoplayCard({
       </CardContent>
     </Card>
   )
+}
+
+/** Mirror of `DelayModelConfig::default()` on the Rust side. */
+function defaultDelayModel(): DelayModelConfig {
+  return {
+    mode: 'lua',
+    min_delay_ms: 1000,
+    min_button_delay_ms: 1600,
+    distribution: 'log_normal',
+    lognormal: {
+      dahai_tedashi: [0.87, 0.62],
+      dahai_tsumogiri: [0.52, 0.53],
+      post_call_dahai: [0.52, 0.42],
+      reach: [1.1, 0.55],
+      claim: [0.26, 0.57],
+      hora: [0.15, 0.5],
+    },
+    bank_on_long_thought: true,
+    riichi_extra_ms: 0,
+    kan_extra_ms: 0,
+    close_margin: 0.005,
+    close_margin_extra_ms: 0,
+    obvious_top_prob: 0.995,
+    obvious_max_ms: 0,
+    safety_margin_ms: 1000,
+    bank_use_fraction: 0.25,
+    bank_max_single_ms: 5000,
+    no_budget_cap_ms: 15000,
+  }
 }
 
 function CaptureCard({
