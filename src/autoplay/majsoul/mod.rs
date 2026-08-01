@@ -271,6 +271,15 @@ fn push_pre_delay(
         _ => (false, false),
     };
 
+    // Legacy mode reproduces the historical fixed model: uniform draw,
+    // no script consulted. The manager already withholds the script in
+    // legacy mode; forcing the distribution here completes the split.
+    let legacy = ctx.delay_cfg.mode == crate::config::DelayMode::Legacy;
+    let mut delay_cfg = ctx.delay_cfg.clone();
+    if legacy {
+        delay_cfg.distribution = crate::config::DelayDistribution::Uniform;
+    }
+
     let input = DelayInput {
         kind,
         is_tsumogiri,
@@ -282,17 +291,24 @@ fn push_pre_delay(
             .iter()
             .any(|a| a.action_type == ActionType::Riichi),
         in_riichi: ctx.self_riichi_accepted,
+        junme: ctx
+            .snapshot
+            .players
+            .get(ctx.our_seat as usize)
+            .map(|p| p.river.len() as u32 + 1)
+            .unwrap_or(0),
         legal_action_count: ctx.legal_actions.len(),
         probs: ctx.probs,
         budget: ctx.budget,
         click_overhead_ms,
         cfg,
-        delay_cfg: &ctx.delay_cfg,
+        delay_cfg: &delay_cfg,
     };
     // User Lua policy first (falls back internally on any failure), then
     // the built-in model. Both are bound by the same caps and floors.
     let decision = ctx
         .delay_script
+        .filter(|_| !legacy)
         .and_then(|s| s.try_decide(&input))
         .unwrap_or_else(|| delay::decide(&input, &mut rand::rng()));
 
@@ -1274,6 +1290,45 @@ mod tests {
         // But the window total is still capped: fixed 3000 - safety 1000
         // leaves 2000 total; with 1500 already gone only 500 remain.
         assert_eq!(sleep_for(3000, 1500), 500);
+    }
+
+    /// Legacy mode must reproduce the historical fixed model even when
+    /// the config still carries log-normal parameters: the distribution
+    /// is forced to uniform and the sleep is exactly min==max.
+    #[test]
+    fn legacy_mode_forces_uniform() {
+        let snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5p".into(),
+            tsumogiri: false,
+        };
+        let mut cfg_ref = cfg();
+        cfg_ref.pre_click_delay_min_ms = 1234;
+        cfg_ref.pre_click_delay_max_ms = 1234;
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            Some("5p"),
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        // Config keeps LogNormal + calibrated table, but mode is legacy.
+        ctx.delay_cfg.mode = crate::config::DelayMode::Legacy;
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        match result.steps[0] {
+            Step::Sleep { duration_ms } => assert_eq!(duration_ms, 1234),
+            _ => panic!("expected leading sleep"),
+        }
     }
 
     /// Build a 3-player snapshot for our seat with optional kita pool and

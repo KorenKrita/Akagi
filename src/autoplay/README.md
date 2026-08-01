@@ -26,20 +26,27 @@ consumed (network, proxy, bot inference) before emitting the
 
 Layers, in order:
 
-1. **Policy** — a user Lua script (`delay/script.rs`, mlua) if loaded,
-   else the built-in model (per-decision-kind log-normal base +
-   decision-type bonuses, `delay/mod.rs`). The default log-normal
-   parameters are **calibrated against real ranked-game records**
-   (`scripts/analyze_record_think_time.py`); change them only with new
-   measurements. Bot confidence is normalized first (`delay/probs.rs`):
-   native-bot `show.items[].prob` is used raw, Mortal-style `q_values`
-   are softmaxed. Never feed raw Q values to a probability threshold.
+1. **Policy** — selected by `autoplay.delay.mode`. `lua` (default):
+   `delay.lua` next to the config file, generated from
+   `assets/delay_default.lua` (embedded as `script::DEFAULT_SCRIPT`) on
+   first use and hot-reloaded; the built-in model (per-decision-kind
+   log-normal + decision-type bonuses, `delay/mod.rs`) is the fallback
+   when the script fails. `legacy`: the historical uniform draw — the
+   distribution is forced to Uniform and the script is not consulted.
+   The default log-normal parameters are **calibrated against real
+   ranked-game records** (`scripts/analyze_record_think_time.py`);
+   change them only with new measurements. Bot confidence is normalized
+   first (`delay/probs.rs`): native-bot `show.items[].prob` is used raw,
+   Mortal-style `q_values` are softmaxed. Never feed raw Q values to a
+   probability threshold.
 2. **Budget caps** (`budget_cap`) — `soft = time_fixed - safety_margin -
    click_overhead`; `hard = soft + bounded bank spend`, bank only when
    the policy returned `allow_bank`. Unconditional: overrunning the
    window means the client auto-discards.
-3. **Functional floors** (`functional_floor`) — the dealing-animation
-   wait. Applied after the caps; a script cannot go below it.
+3. **Functional floors** (`functional_floor`) — `min_delay_ms` (Mahjong
+   Soul must render buttons/tiles before a click can land; too-early
+   clicks are silently lost) and the dealing-animation wait. Applied
+   after the caps; a script cannot go below them.
 
 ### Adding a new delay input
 
@@ -49,7 +56,7 @@ Layers, in order:
    calibration data (record measurements); a knob without data defaults
    to off/no-op.
 3. Expose it to Lua in `script::DelayScript::build_ctx` and document it
-   in `assets/delay.lua.example` + the README's ctx table.
+   in `assets/delay_default.lua` + the README's ctx table.
 4. Config knobs go in `config/autoplay.rs::DelayModelConfig` (serde
    defaults!), mirrored in `frontend/src/types.ts` and, if user-facing,
    `Settings.tsx`.
@@ -86,6 +93,6 @@ simply `None` there and the static `no_budget_cap_ms` applies.
 - Delay-model tests are seeded (`StdRng`) — no flaky distributions.
 - Use synthetic payloads for bridge tests, never pasted real captures
   with account ids.
-- `assets/delay.lua.example` is compiled and exercised by
-  `script::tests::bundled_example_script_works`; keep it in sync with
+- `assets/delay_default.lua` is compiled and exercised by
+  `script::tests::bundled_default_script_works`; keep it in sync with
   the ctx table.

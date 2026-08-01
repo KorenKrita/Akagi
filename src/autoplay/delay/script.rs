@@ -33,6 +33,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{info, warn};
 
+/// The default delay policy, generated as `delay.lua` next to the
+/// config file on first use (see [`ScriptHost::maybe_reload`]).
+pub const DEFAULT_SCRIPT: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/delay_default.lua"));
+
 /// Hard sanity range for a script-provided target (10 minutes). Values
 /// outside are treated as a script bug, not clamped silently.
 const MAX_SCRIPT_DELAY_MS: f64 = 600_000.0;
@@ -171,6 +176,7 @@ impl DelayScript {
         ctx.set("can_riichi", input.can_riichi)?;
         ctx.set("is_kan", input.kind.is_kan())?;
         ctx.set("in_riichi", input.in_riichi)?;
+        ctx.set("junme", input.junme)?;
         ctx.set("legal_count", input.legal_action_count)?;
         if let Some(p) = input.probs {
             ctx.set("top_prob", p.top)?;
@@ -239,9 +245,39 @@ pub struct ScriptHost {
     attempted_path: Option<PathBuf>,
     /// Whether the last attempt failed (logged already).
     load_failed: bool,
+    /// Default-file generation failed (read-only fs) — logged once,
+    /// not retried every hand.
+    generate_failed: bool,
 }
 
 impl ScriptHost {
+    /// Write [`DEFAULT_SCRIPT`] to `path` if no file exists there yet.
+    /// A deleted file is regenerated on the next start; a failure (e.g.
+    /// read-only install) is logged once and the built-in model runs.
+    pub fn ensure_default(&mut self, path: &Path) {
+        if self.generate_failed || path.exists() {
+            return;
+        }
+        let write = || -> std::io::Result<()> {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            std::fs::write(path, DEFAULT_SCRIPT)
+        };
+        match write() {
+            Ok(()) => info!("generated default delay script: {}", path.display()),
+            Err(e) => {
+                warn!(
+                    "could not generate delay script at {} — using built-in model: {e}",
+                    path.display()
+                );
+                self.generate_failed = true;
+            }
+        }
+    }
+
     /// (Re)load the script when the file at `path` appeared, changed or
     /// vanished. A missing file is the normal no-script state.
     pub fn maybe_reload(&mut self, path: &Path, enabled: bool) {
@@ -310,6 +346,7 @@ mod tests {
             opening_animation: false,
             can_riichi: false,
             in_riichi: false,
+            junme: 0,
             legal_action_count: 1,
             probs: None,
             budget: None,
@@ -439,7 +476,16 @@ mod tests {
         let dec = zero.try_decide(&i).unwrap();
         assert_eq!(
             dec.total_target_ms, cfg.dealer_first_discard_extra_delay_ms,
-            "floor must hold against a 0 return"
+            "animation floor must hold against a 0 return"
+        );
+
+        // Regression: even outside the opening animation, a 0 return is
+        // lifted to the UI-readiness floor — clicking before Majsoul
+        // renders the buttons loses the click.
+        let dec = zero.try_decide(&base_input(&cfg, &d)).unwrap();
+        assert_eq!(
+            dec.total_target_ms, d.min_delay_ms,
+            "min_delay_ms floor must hold against a 0 return"
         );
 
         let huge = DelayScript::compile(
@@ -461,44 +507,80 @@ mod tests {
         );
     }
 
-    /// The shipped example must actually compile and produce sane values
-    /// for a few representative decisions.
+    /// The bundled default (`DEFAULT_SCRIPT`, generated as `delay.lua`)
+    /// must compile and produce human-plausible values.
     #[test]
-    fn bundled_example_script_works() {
-        let src = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/delay.lua.example"
-        ))
-        .expect("assets/delay.lua.example must exist");
-        let s = DelayScript::compile(&src, "delay.lua.example").unwrap();
+    fn bundled_default_script_works() {
+        let s = DelayScript::compile(DEFAULT_SCRIPT, "delay_default.lua").unwrap();
         let cfg = MajsoulAutoplayConfig::default();
         let d = DelayModelConfig::default();
 
-        // Plain mid-kyoku discard: rule 8 only -> 1..3s (+cap slack).
-        let dec = s.try_decide(&base_input(&cfg, &d)).unwrap();
-        assert!((1000..=3000).contains(&dec.total_target_ms));
+        // Plain tedashi: calibrated median ~2.4s. The script rng is not
+        // seedable from here, so assert on a batch median with slack.
+        let mut samples: Vec<u32> = (0..300)
+            .map(|_| s.try_decide(&base_input(&cfg, &d)).unwrap().total_target_ms)
+            .collect();
+        samples.sort_unstable();
+        let med = samples[samples.len() / 2];
+        assert!(
+            (1500..=4000).contains(&med),
+            "default-script tedashi median {med} implausible"
+        );
+        // Floors/caps still bind: nothing below min_delay_ms, nothing
+        // above the no-budget static cap.
+        assert!(*samples.first().unwrap() >= d.min_delay_ms);
+        assert!(*samples.last().unwrap() <= d.no_budget_cap_ms);
 
-        // In riichi -> rule 1: immediate.
+        // In riichi: fast, but never below the UI-readiness floor.
         let mut i = base_input(&cfg, &d);
         i.in_riichi = true;
         i.kind = DecisionKind::Pass;
-        assert_eq!(s.try_decide(&i).unwrap().total_target_ms, 0);
+        let dec = s.try_decide(&i).unwrap();
+        assert!((d.min_delay_ms..=1300).contains(&dec.total_target_ms));
 
-        // Obvious decision -> rule 6 ceiling of 2s.
+        // Near-tie -> long thought with bank allowed.
         let mut i = base_input(&cfg, &d);
         i.probs = Some(crate::autoplay::delay::DecisionProbs {
-            top: 0.999,
-            second: Some(0.001),
-        });
-        assert!(s.try_decide(&i).unwrap().total_target_ms <= 2000);
-
-        // Near-tie -> bank allowed.
-        let mut i = base_input(&cfg, &d);
-        i.probs = Some(crate::autoplay::delay::DecisionProbs {
-            top: 0.4,
+            top: 0.40,
             second: Some(0.399),
         });
         assert!(s.try_decide(&i).unwrap().allow_bank);
+
+        // Claim windows are the fast reaction bucket: batch median well
+        // under the tedashi one.
+        let mut claims: Vec<u32> = (0..300)
+            .map(|_| {
+                let mut i = base_input(&cfg, &d);
+                i.kind = DecisionKind::Pass;
+                s.try_decide(&i).unwrap().total_target_ms
+            })
+            .collect();
+        claims.sort_unstable();
+        assert!(claims[claims.len() / 2] < med);
+    }
+
+    /// `ensure_default` generates the bundled script once and never
+    /// overwrites user edits.
+    #[test]
+    fn ensure_default_generates_once_and_preserves_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("delay.lua");
+        let mut host = ScriptHost::default();
+
+        host.ensure_default(&path);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            DEFAULT_SCRIPT,
+            "missing file must be created from the bundled default"
+        );
+
+        std::fs::write(&path, "-- user edit\nfunction decide_delay(c) return { delay_ms = 1 } end")
+            .unwrap();
+        host.ensure_default(&path);
+        assert!(
+            std::fs::read_to_string(&path).unwrap().starts_with("-- user edit"),
+            "an existing file must never be overwritten"
+        );
     }
 
     #[test]

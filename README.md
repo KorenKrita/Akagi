@@ -260,39 +260,44 @@ anyone needs — see [mjai Bots (plugin interface)](#mjai-bots-plugin-interface)
 
 ## AutoPlay Delay Tuning
 
-With AutoPlay on, Akagi waits a "thinking" delay before each click. The
-delay is produced by a model that can take the decision itself into
-account (`[autoplay.delay]` in `config.toml`):
+With AutoPlay on, Akagi waits a "thinking" delay before each click.
+Two delay models exist and exactly one is active
+(*Settings → Autoplay → Delay model*, or `autoplay.delay.mode`):
 
-- **Base distribution** — the default `distribution = "log_normal"`
-  draws from per-decision-kind log-normal distributions **calibrated
-  against real ranked-game records** (think times measured on the
-  server's own clock — see `scripts/analyze_record_think_time.py`).
-  The `[autoplay.delay.lognormal]` table maps decision kinds to
-  `[mu, sigma]` in ln-seconds: `dahai_tedashi` (median ≈2.4s),
-  `dahai_tsumogiri` (≈1.85s), `post_call_dahai` (≈1.5s), `reach`
-  (≈2.7s), `claim` (≈1.3s), `hora`. `distribution = "uniform"` restores
-  the classic `pre_click_delay_min_ms..max_ms` draw.
-- **Decision bonuses** (all default 0 = off): `riichi_extra_ms` when
-  riichi is declarable, `kan_extra_ms` for kan declarations, and
-  `close_margin_extra_ms` when the bot's top two candidates are within
-  `close_margin` of each other. `obvious_max_ms` caps the delay when the
-  top candidate exceeds `obvious_top_prob` (0 = no cap).
-- **Server-budget awareness** — on Mahjong Soul, Akagi reads the per-turn
-  time budget from the wire and clamps the delay so it never runs into
-  an auto-discard: it stays `safety_margin_ms` short of the base time.
-  The extra time bank (which refills every kyoku) is spent only when a
-  sampled think naturally runs long (`bank_on_long_thought`, default on)
-  or on a genuinely hard call, bounded by `bank_use_fraction` /
-  `bank_max_single_ms`. Off-Majsoul (or before a game starts) a static
-  `no_budget_cap_ms` applies.
+- **Lua script** (default, recommended) — delays come from `delay.lua`
+  next to your `config.toml`. On first use Akagi generates it with a
+  human-like model **calibrated against real ranked-game records**
+  (think times measured on the server's own clock — see
+  `scripts/analyze_record_think_time.py`): per-decision log-normal
+  distributions (discard from hand median ≈2.4s, drawn-tile discard
+  ≈1.9s, call windows ≈1.3s, riichi ≈2.7s), slower thinking as the hand
+  develops, extra time on close calls, snappy obvious moves, and the
+  occasional genuine tank. Edit the file freely — it hot-reloads on
+  save; delete it to restore the default. If the script errors, a
+  built-in calibrated model takes over (and the reason is logged once).
+- **Legacy** — the historical fixed model: a uniform draw between
+  `pre_click_delay_min_ms` and `pre_click_delay_max_ms`. The Lua script
+  is ignored entirely.
 
-### Lua delay script
+Guardrails apply in **both** modes and cannot be undercut by a script:
 
-The whole policy can be replaced with a Lua script. Copy
-[`assets/delay.lua.example`](./assets/delay.lua.example) to
-`scripts/delay.lua` next to your `config.toml` (or set
-`autoplay.delay.script_path`), and define:
+- **Minimum delay** (`min_delay_ms`, default 1000) — Mahjong Soul needs
+  time to render buttons/tiles after a game event; a click issued
+  before the UI exists is silently lost. This floor is why the legacy
+  model always had a hard lower bound.
+- **Animation floors** — the dealer's opening hand-sort animation.
+- **Server-budget awareness** — on Mahjong Soul, Akagi reads the
+  per-turn time budget from the wire and clamps the delay so it never
+  runs into an auto-discard: it stays `safety_margin_ms` short of the
+  base time. The extra time bank (which refills every kyoku) is spent
+  only when a think naturally runs long (`bank_on_long_thought`) or the
+  script asks for it, bounded by `bank_use_fraction` /
+  `bank_max_single_ms`. Off-Majsoul a static `no_budget_cap_ms`
+  applies.
+
+### Writing your own `delay.lua`
+
+The generated file documents every field; the contract is one function:
 
 ```lua
 function decide_delay(ctx)
@@ -316,6 +321,7 @@ extra time pool.
 | `can_riichi` | riichi is declarable this turn |
 | `is_kan` | the action is a kan declaration |
 | `in_riichi` | we are in accepted riichi |
+| `junme` | our discard number this kyoku (1 = first) |
 | `legal_count` | number of legal actions |
 | `top_prob`, `second_prob`, `margin` | bot's normalized candidate probabilities (or `nil`) |
 | `budget` | `{ fixed_ms, add_ms, elapsed_ms }` server time budget (or `nil`) |
@@ -325,8 +331,8 @@ extra time pool.
 The script is hot-reloaded on save. Any error (syntax, runtime, timeout,
 bad return value) falls back to the built-in model — it never stalls or
 stops AutoPlay. Whatever the script returns, Akagi still enforces the
-animation-wait floors and the server-budget caps, and the script can
-never see or change *what* is played — only *when*.
+minimum delay, the animation-wait floors and the server-budget caps, and
+the script can never see or change *what* is played — only *when*.
 
 ---
 

@@ -13,6 +13,22 @@ pub struct AutoplayConfig {
     pub delay: DelayModelConfig,
 }
 
+/// Which delay policy drives autoplay. Exactly one is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DelayMode {
+    /// The historical fixed model: `uniform(pre_click_delay_min_ms,
+    /// pre_click_delay_max_ms)` plus the dealer-opening pad. Ignores the
+    /// Lua script and the calibrated distributions.
+    Legacy,
+    /// The scriptable model: `delay.lua` next to the config file (auto-
+    /// generated with the calibrated human-like default on first use,
+    /// hot-reloaded on save). If the script fails, the built-in
+    /// calibrated model runs instead.
+    #[default]
+    Lua,
+}
+
 /// Shape of the base thinking-time distribution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -40,7 +56,16 @@ pub enum DelayDistribution {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DelayModelConfig {
-    /// Base distribution shape.
+    /// Which policy is active: `legacy` (old fixed model) or `lua`.
+    pub mode: DelayMode,
+    /// Minimum total thinking time per decision, ms. This is a
+    /// functional floor, not a style knob: Mahjong Soul needs time to
+    /// render action buttons / tiles after the triggering frame, and a
+    /// click issued before the UI exists is silently lost. Applies in
+    /// every mode and cannot be undercut by the Lua script.
+    pub min_delay_ms: u32,
+    /// Base distribution shape (built-in model; also the fallback when
+    /// the Lua script fails).
     pub distribution: DelayDistribution,
     /// Per-decision-kind log-normal parameters `[mu, sigma]` in
     /// ln(seconds). Keys: `dahai_tedashi`, `dahai_tsumogiri`,
@@ -82,13 +107,6 @@ pub struct DelayModelConfig {
     /// Static cap applied when no server budget is known (non-Majsoul
     /// platform, or before the first operation list), ms. 0 = no cap.
     pub no_budget_cap_ms: u32,
-    /// Lua override (`autoplay::delay::script`). When enabled and the
-    /// script file exists, its `decide_delay(ctx)` replaces the built-in
-    /// policy; any script failure falls back to the built-in model. The
-    /// file being absent is the normal no-script state, not an error.
-    pub script_enabled: bool,
-    /// Path to the delay script. `None` = `<config dir>/scripts/delay.lua`.
-    pub script_path: Option<String>,
 }
 
 /// Calibrated per-kind log-normal parameters, ln(seconds).
@@ -115,6 +133,10 @@ fn default_lognormal() -> std::collections::BTreeMap<String, [f64; 2]> {
 impl Default for DelayModelConfig {
     fn default() -> Self {
         Self {
+            mode: DelayMode::Lua,
+            // Matches the historical uniform lower bound — the value the
+            // old model implicitly relied on for UI readiness.
+            min_delay_ms: 1000,
             distribution: DelayDistribution::LogNormal,
             lognormal: default_lognormal(),
             bank_on_long_thought: true,
@@ -131,8 +153,6 @@ impl Default for DelayModelConfig {
             // distribution produces, low enough to survive even a 5s+20
             // room's base window if the budget is somehow unknown.
             no_budget_cap_ms: 15_000,
-            script_enabled: true,
-            script_path: None,
         }
     }
 }

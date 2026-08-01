@@ -90,6 +90,9 @@ pub struct DelayInput<'a> {
     pub can_riichi: bool,
     /// We are in accepted riichi (only Skip windows reach the planner).
     pub in_riichi: bool,
+    /// Our discard number this kyoku, 1-based (0 = unknown). Real
+    /// players slow down as the hand develops.
+    pub junme: u32,
     pub legal_action_count: usize,
     /// Normalized top/second candidate probabilities, if the bot's meta
     /// could be interpreted. See [`probs::normalize_meta`].
@@ -219,11 +222,18 @@ pub fn budget_cap(input: &DelayInput, allow_bank: bool) -> u32 {
 }
 
 /// The minimum target no policy — built-in or script — may go below.
+///
+/// Two components, both about the client UI rather than style:
+/// `min_delay_ms` covers Mahjong Soul's button/tile render latency after
+/// the triggering frame (a click issued before the UI exists is silently
+/// lost — the reason the legacy model had a hard lower bound), and the
+/// dealer-opening animation pad covers the 14-tile hand-sort animation.
 pub fn functional_floor(input: &DelayInput) -> u32 {
+    let ui_floor = input.delay_cfg.min_delay_ms;
     if input.opening_animation {
-        input.cfg.dealer_first_discard_extra_delay_ms
+        ui_floor.max(input.cfg.dealer_first_discard_extra_delay_ms)
     } else {
-        0
+        ui_floor
     }
 }
 
@@ -328,6 +338,7 @@ mod tests {
             opening_animation: false,
             can_riichi: false,
             in_riichi: false,
+            junme: 0,
             legal_action_count: 1,
             probs: None,
             budget: None,
@@ -506,13 +517,30 @@ mod tests {
 
         let capped = DelayModelConfig {
             obvious_max_ms: 800,
+            // Below the cap so the cap is observable — the UI-readiness
+            // floor (min_delay_ms) intentionally beats the obvious cap.
+            min_delay_ms: 500,
             ..uniform()
         };
         let mut i = input(&c, &capped);
         i.probs = probs;
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let dec = decide(&i, &mut r);
-        assert!(dec.total_target_ms <= 800);
+        assert!((500..=800).contains(&dec.total_target_ms));
+
+        // And with the default floor, the floor wins over the cap.
+        let floored = DelayModelConfig {
+            obvious_max_ms: 800,
+            ..uniform()
+        };
+        let mut i = input(&c, &floored);
+        i.probs = probs;
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert_eq!(
+            dec.total_target_ms, floored.min_delay_ms,
+            "UI-readiness floor must beat the obvious cap"
+        );
     }
 
     // ------------------------------------------------------------------

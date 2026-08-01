@@ -59,6 +59,7 @@ import {
 import type {
   AppConfig,
   CaptureMode,
+  DelayMode,
   DelayModelConfig,
   DetectedBrowser,
   OverlayConfig,
@@ -770,29 +771,72 @@ function AutoplayCard({
             {t('settings.autoplay.requires_chromium')}
           </p>
         )}
-        <Field label={t('settings.autoplay.pre_click_delay_min')}>
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.pre_click_delay_min_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                pre_click_delay_min_ms: Number(e.target.value || 0),
-              })
-            }
-          />
+        {/* Delay policy: exactly one of legacy (fixed uniform) or the
+            Lua-scripted human-like model is active. */}
+        <Field label={t('settings.autoplay.delay_mode')}>
+          <Select
+            value={delay.mode}
+            onValueChange={(v) => setDelayField({ mode: v as DelayMode })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="lua">
+                {t('settings.autoplay.delay_mode_lua')}
+              </SelectItem>
+              <SelectItem value="legacy">
+                {t('settings.autoplay.delay_mode_legacy')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </Field>
-        <Field label={t('settings.autoplay.pre_click_delay_max')}>
+        {delay.mode === 'lua' && (
+          <p className="text-xs text-muted-foreground">
+            {t('settings.autoplay.delay_mode_lua_help')}
+          </p>
+        )}
+        {delay.mode === 'legacy' && (
+          <>
+            <Field label={t('settings.autoplay.pre_click_delay_min')}>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={ap.majsoul.pre_click_delay_min_ms}
+                onChange={(e) =>
+                  setMajsoulField({
+                    pre_click_delay_min_ms: Number(e.target.value || 0),
+                  })
+                }
+              />
+            </Field>
+            <Field label={t('settings.autoplay.pre_click_delay_max')}>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={ap.majsoul.pre_click_delay_max_ms}
+                onChange={(e) =>
+                  setMajsoulField({
+                    pre_click_delay_max_ms: Number(e.target.value || 0),
+                  })
+                }
+              />
+            </Field>
+          </>
+        )}
+        <Field
+          label={t('settings.autoplay.min_delay')}
+          hint={t('settings.autoplay.min_delay_hint')}
+        >
           <Input
             type="number"
             inputMode="numeric"
             min={0}
-            value={ap.majsoul.pre_click_delay_max_ms}
+            value={delay.min_delay_ms}
             onChange={(e) =>
-              setMajsoulField({
-                pre_click_delay_max_ms: Number(e.target.value || 0),
-              })
+              setDelayField({ min_delay_ms: Number(e.target.value || 0) })
             }
           />
         </Field>
@@ -854,27 +898,6 @@ function AutoplayCard({
             }
           />
         </Field>
-        <Toggle
-          label={t('settings.autoplay.script_enabled')}
-          value={delay.script_enabled}
-          onChange={(v) => setDelayField({ script_enabled: v })}
-        />
-        <p className="text-xs text-muted-foreground">
-          {t('settings.autoplay.script_enabled_help')}
-        </p>
-        {delay.script_enabled && (
-          <Field
-            label={t('settings.autoplay.script_path')}
-            hint={t('settings.autoplay.script_path_help')}
-          >
-            <Input
-              value={delay.script_path ?? ''}
-              onChange={(e) =>
-                setDelayField({ script_path: e.target.value || null })
-              }
-            />
-          </Field>
-        )}
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.platform_note')}
         </p>
@@ -886,6 +909,8 @@ function AutoplayCard({
 /** Mirror of `DelayModelConfig::default()` on the Rust side. */
 function defaultDelayModel(): DelayModelConfig {
   return {
+    mode: 'lua',
+    min_delay_ms: 1000,
     distribution: 'log_normal',
     lognormal: {
       dahai_tedashi: [0.9, 0.6],
@@ -906,8 +931,6 @@ function defaultDelayModel(): DelayModelConfig {
     bank_use_fraction: 0.25,
     bank_max_single_ms: 5000,
     no_budget_cap_ms: 15000,
-    script_enabled: true,
-    script_path: null,
   }
 }
 

@@ -54,6 +54,8 @@ function makeConfig(over: {
         dealer_first_discard_extra_delay_ms: 0,
       },
       delay: {
+        mode: 'legacy',
+        min_delay_ms: 0,
         distribution: 'uniform',
         lognormal: {},
         bank_on_long_thought: false,
@@ -67,8 +69,6 @@ function makeConfig(over: {
         bank_use_fraction: 0,
         bank_max_single_ms: 0,
         no_budget_cap_ms: 0,
-        script_enabled: false,
-        script_path: null,
       },
     },
     overlay: { enabled: true, top_n: 3, opacity: 1, always_on_top: true },

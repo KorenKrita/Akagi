@@ -356,10 +356,12 @@
       "click_hold": "ボタン押下保持 (ms)",
       "dealer_first_discard_extra_delay": "親の初打追加待機 (ms)",
       "dealer_first_discard_extra_delay_hint": "雀魂は親に14枚配られた後に手牌整列アニメーションを再生し、その間のクリックは無視されます。2000ms前後でほぼ吸収できます。",
-      "script_enabled": "Lua 遅延スクリプト",
-      "script_enabled_help": "Lua スクリプト（decide_delay）で遅延ポリシーを上書きします。保存すると自動的に再読み込みされ、ファイルが無い・エラー時は内蔵モデルを使用します。Akagi リポジトリの delay.lua.example を参照してください。",
-      "script_path": "遅延スクリプトのパス",
-      "script_path_help": "空欄の場合は設定ファイルと同じ場所の scripts/delay.lua を使用します。"
+      "delay_mode": "遅延モデル",
+      "delay_mode_lua": "Lua スクリプト（人間らしい・推奨）",
+      "delay_mode_legacy": "旧版（固定ランダム遅延）",
+      "delay_mode_lua_help": "遅延は設定ファイルと同じ場所の delay.lua が決定します。初回使用時に、段位戦の実測データで校正された人間らしいモデルが自動生成されます。自由に編集でき、保存すると即時再読み込みされます。ファイルを削除するとデフォルトに戻ります。スクリプトがエラーの場合は内蔵モデルが引き継ぎます。",
+      "min_delay": "最小遅延（ms）",
+      "min_delay_hint": "すべての操作の安全下限：雀魂がボタンや牌を描画する前のクリックは無視されます。両モードに適用され、スクリプトでもこの値を下回れません。"
     },
     "overlay": "推奨オーバーレイ",
     "overlay_enabled": "オーバーレイウィンドウを表示",

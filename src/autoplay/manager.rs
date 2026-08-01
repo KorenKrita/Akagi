@@ -141,16 +141,16 @@ impl AutoplayManager {
             });
         let probs = crate::autoplay::delay::probs::normalize_meta(resp.meta.as_ref());
 
-        // Hot-reload the user delay script when its file appeared, changed
-        // or vanished (cheap mtime stat; a missing file is the normal
-        // no-script state).
-        let script_path = delay_cfg
-            .script_path
-            .as_ref()
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| self.config_dir.join("scripts").join("delay.lua"));
-        self.delay_script
-            .maybe_reload(&script_path, delay_cfg.script_enabled);
+        // The delay script lives at a fixed path next to the config file.
+        // In Lua mode it is generated from the bundled default when
+        // missing, then hot-reloaded on change (cheap mtime stat). In
+        // legacy mode the script is dropped entirely.
+        let lua_mode = delay_cfg.mode == crate::config::DelayMode::Lua;
+        let script_path = self.config_dir.join("delay.lua");
+        if lua_mode {
+            self.delay_script.ensure_default(&script_path);
+        }
+        self.delay_script.maybe_reload(&script_path, lua_mode);
 
         // Pull our seat + legal actions from the live engine state. This
         // bracket releases the tracker mutex before we sleep/click.

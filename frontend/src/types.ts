@@ -109,7 +109,16 @@ export type MajsoulAutoplayConfig = {
 /** Pre-click delay model parameters. Mirrors
  *  `src/config/autoplay.rs::DelayModelConfig`; the fine-grained knobs are
  *  config-file-only — the Settings UI exposes the Lua script fields. */
+export type DelayMode = 'legacy' | 'lua'
+
 export type DelayModelConfig = {
+  /** Which policy is active; exactly one. `legacy` = the old fixed
+   *  uniform model, `lua` = the scriptable human-like model backed by
+   *  `delay.lua` next to the config file (auto-generated). */
+  mode: DelayMode
+  /** UI-readiness floor: minimum total thinking time per decision, ms.
+   *  Clicks issued before Mahjong Soul renders its buttons are lost. */
+  min_delay_ms: number
   distribution: 'uniform' | 'log_normal'
   /** Per-decision-kind log-normal `[mu, sigma]` in ln(seconds); keys like
    *  `dahai_tedashi`, `claim`. Calibrated from ranked-game records. */
@@ -125,8 +134,6 @@ export type DelayModelConfig = {
   bank_use_fraction: number
   bank_max_single_ms: number
   no_budget_cap_ms: number
-  script_enabled: boolean
-  script_path: string | null
 }
 
 export type AutoplayConfig = {

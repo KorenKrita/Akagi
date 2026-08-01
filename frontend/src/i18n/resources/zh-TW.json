@@ -356,10 +356,12 @@
       "click_hold": "按住時間 (ms)",
       "dealer_first_discard_extra_delay": "莊家初打額外延遲 (ms)",
       "dealer_first_discard_extra_delay_hint": "莊家被發 14 張牌時雀魂會播放整理手牌動畫，期間的點擊會被吃掉。約 2000ms 可覆蓋一般裝置。",
-      "script_enabled": "Lua 延遲腳本",
-      "script_enabled_help": "以 Lua 腳本（decide_delay）覆寫延遲策略。存檔即熱重載；檔案不存在或出錯時使用內建模型。參考 Akagi 倉庫中的 delay.lua.example。",
-      "script_path": "延遲腳本路徑",
-      "script_path_help": "留空則使用設定檔旁的 scripts/delay.lua。"
+      "delay_mode": "延遲模型",
+      "delay_mode_lua": "Lua 腳本（擬真人，建議）",
+      "delay_mode_legacy": "舊版（固定隨機延遲）",
+      "delay_mode_lua_help": "延遲由設定檔旁的 delay.lua 決定，首次使用時會自動產生一份以段位戰實測資料校準的擬真人模型。可自由編輯，存檔即熱重載；刪除檔案即可還原預設。腳本出錯時由內建模型接手。",
+      "min_delay": "最小延遲（ms）",
+      "min_delay_hint": "所有動作的安全下限：雀魂需要時間渲染按鈕與牌面，太早點擊會被吃掉。兩種模式皆適用，腳本無法低於此值。"
     },
     "overlay": "建議懸浮視窗",
     "overlay_enabled": "顯示懸浮視窗",

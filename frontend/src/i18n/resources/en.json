@@ -356,10 +356,12 @@
       "click_hold": "Click hold (ms)",
       "dealer_first_discard_extra_delay": "Dealer first-discard extra delay (ms)",
       "dealer_first_discard_extra_delay_hint": "Mahjong Soul plays a hand-sort animation when the dealer is dealt all 14 tiles. Clicks during the animation are dropped. ~2000ms covers most devices.",
-      "script_enabled": "Lua delay script",
-      "script_enabled_help": "Override the delay policy with a Lua script (decide_delay). The file is hot-reloaded on save; if it is missing or errors, the built-in model is used. See delay.lua.example in the Akagi repository.",
-      "script_path": "Delay script path",
-      "script_path_help": "Leave empty to use scripts/delay.lua next to the config file."
+      "delay_mode": "Delay model",
+      "delay_mode_lua": "Lua script (human-like, recommended)",
+      "delay_mode_legacy": "Legacy (fixed random delay)",
+      "delay_mode_lua_help": "Delays come from delay.lua next to the config file, generated with a human-like model calibrated against ranked-game data on first use. Edit it freely — it hot-reloads on save; delete it to restore the default. If the script errors, a built-in model takes over.",
+      "min_delay": "Minimum delay (ms)",
+      "min_delay_hint": "Safety floor for every action: Mahjong Soul needs time to render buttons and tiles, and a click issued too early is silently lost. Applies in both modes and cannot be undercut by the script."
     },
     "overlay": "Suggestion overlay",
     "overlay_enabled": "Show overlay window",
