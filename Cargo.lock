@@ -41,6 +41,7 @@ dependencies = [
  "prost-build",
  "prost-reflect",
  "rand 0.9.4",
+ "rand_distr",
  "reqwest",
  "riichienv-core",
  "self-replace",

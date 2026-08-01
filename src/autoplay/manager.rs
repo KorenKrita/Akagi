@@ -112,7 +112,25 @@ impl AutoplayManager {
             return;
         }
         let cfg = cfg_guard.autoplay.majsoul.clone();
+        let delay_cfg = cfg_guard.autoplay.delay.clone();
         drop(cfg_guard);
+
+        // Snapshot the server time budget for the current decision window
+        // (written by the Majsoul bridge; None off-Majsoul or pre-game) and
+        // normalize the bot's confidence metadata. Both feed the delay
+        // model — neither can alter the chosen action.
+        let budget = self
+            .ctx
+            .time_budget
+            .read()
+            .ok()
+            .and_then(|g| *g)
+            .map(|b| crate::autoplay::delay::BudgetSnapshot {
+                fixed_ms: b.fixed_ms,
+                add_ms: b.add_ms,
+                elapsed_ms: b.elapsed_ms(),
+            });
+        let probs = crate::autoplay::delay::probs::normalize_meta(resp.meta.as_ref());
 
         // Pull our seat + legal actions from the live engine state. This
         // bracket releases the tracker mutex before we sleep/click.
@@ -154,6 +172,9 @@ impl AutoplayManager {
             reach_state: self.state.reach_state,
             num_players,
             cfg: &cfg,
+            delay_cfg,
+            budget,
+            probs,
         };
 
         let plan = self.platform.plan(&action_ctx);

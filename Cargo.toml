@@ -62,6 +62,7 @@ thiserror = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 opener = { version = "0.8.5", default-features = false }
+rand_distr = "0.5"
 
 # Windows-only: find + terminate a surviving controlled Chromium by its command
 # line when reopening (Chrome writes no SingletonLock file on Windows, so the

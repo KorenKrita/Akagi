@@ -12,6 +12,7 @@
 
 pub mod coords;
 
+use crate::autoplay::delay::{self, DecisionKind, DelayInput};
 use crate::autoplay::platform::{ActionContext, PlanResult, PlatformAutoplay, ReachState, Step};
 use crate::bridge::majsoul::tile::compare_pai;
 use crate::schema::MjaiEvent;
@@ -21,7 +22,6 @@ use coords::{
     action_button_pos, candidate_pos, get_pai_coord, kan_candidate_pos, MajsoulOpType,
     ACTION_PRIORITY, TILES,
 };
-use rand::Rng;
 use riichienv_core::action::{Action, ActionType};
 use riichienv_core::parser::tid_to_mjai;
 
@@ -46,15 +46,10 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 if ctx.self_riichi_accepted && ctx.reach_state != ReachState::AwaitingDahai {
                     return result;
                 }
-                push_random_pre_delay(&mut result.steps, ctx);
-                if is_dealer_first_discard(ctx) && ctx.cfg.dealer_first_discard_extra_delay_ms > 0 {
-                    // Majsoul plays a hand-sort animation when the dealer
-                    // gets dealt all 14 tiles at once; clicks issued during
-                    // it are dropped. Pad the wait.
-                    result.steps.push(Step::Sleep {
-                        duration_ms: ctx.cfg.dealer_first_discard_extra_delay_ms,
-                    });
-                }
+                // The dealer-opening hand-sort animation wait (clicks
+                // issued during it are dropped) is folded into the delay
+                // model as the `opening_animation` functional floor.
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Dahai, 0);
                 if let Some(click) = plan_dahai_click(pai, ctx) {
                     result.steps.push(click);
                 }
@@ -62,7 +57,14 @@ impl PlatformAutoplay for MajsoulAutoplay {
 
             // ----- Reach (立直) — two paths -------------------------------
             MjaiEvent::Reach { actor, pai } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                // Path A clicks the riichi tile right after the button, so
+                // reserve one extra click of overhead.
+                push_pre_delay(
+                    &mut result.steps,
+                    ctx,
+                    DecisionKind::Reach,
+                    u32::from(pai.is_some()),
+                );
                 if let Some(button) = action_button_for(MajsoulOpType::Reach, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -95,15 +97,15 @@ impl PlatformAutoplay for MajsoulAutoplay {
             // ----- Chi / Pon / Daiminkan / Ankan / Kakan -------------------
             // (action button + optional candidate disambiguation)
             MjaiEvent::Chi { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Chi, 1);
                 plan_meld(MajsoulOpType::Chi, ActionType::Chi, &mut result, ctx);
             }
             MjaiEvent::Pon { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Pon, 1);
                 plan_meld(MajsoulOpType::Pon, ActionType::Pon, &mut result, ctx);
             }
             MjaiEvent::Daiminkan { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Daiminkan, 1);
                 plan_meld(
                     MajsoulOpType::Daiminkan,
                     ActionType::Daiminkan,
@@ -112,11 +114,11 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 );
             }
             MjaiEvent::Ankan { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Ankan, 1);
                 plan_kan(MajsoulOpType::Ankan, ActionType::Ankan, &mut result, ctx);
             }
             MjaiEvent::Kakan { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Kakan, 1);
                 plan_kan(MajsoulOpType::Kakan, ActionType::Kakan, &mut result, ctx);
             }
 
@@ -127,7 +129,7 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 } else {
                     MajsoulOpType::Ron
                 };
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Hora, 0);
                 if let Some(button) = action_button_for(op, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -138,7 +140,7 @@ impl PlatformAutoplay for MajsoulAutoplay {
 
             // ----- Ryukyoku (九種九牌) -------------------------------------
             MjaiEvent::Ryukyoku { .. } => {
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Ryukyoku, 0);
                 if let Some(button) = action_button_for(MajsoulOpType::Ryukyoku, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -149,16 +151,11 @@ impl PlatformAutoplay for MajsoulAutoplay {
 
             // ----- Kita (3p 北抜き) ----------------------------------------
             MjaiEvent::Kita { actor, .. } if *actor == ctx.our_seat => {
-                push_random_pre_delay(&mut result.steps, ctx);
-                // On the opening draw of a kyoku (no kawa tile yet), add the
-                // same extra delay used for dealer first discard. Majsoul plays
-                // a tile-dealing animation after the previous kyoku ends; clicks
-                // issued during it land on the wrong target.
-                if ctx.last_kawa_tile.is_none() && ctx.cfg.dealer_first_discard_extra_delay_ms > 0 {
-                    result.steps.push(Step::Sleep {
-                        duration_ms: ctx.cfg.dealer_first_discard_extra_delay_ms,
-                    });
-                }
+                // On the opening draw of a kyoku, Majsoul plays a tile-
+                // dealing animation; clicks issued during it land on the
+                // wrong target. Folded into the delay model as
+                // `opening_animation` (same wait as dealer first discard).
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Kita, 0);
                 if let Some(button) = action_button_for(MajsoulOpType::Nukidora, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -205,7 +202,7 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 if !has_claim {
                     return result;
                 }
-                push_random_pre_delay(&mut result.steps, ctx);
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Pass, 0);
                 if let Some(button) = action_button_for(MajsoulOpType::None, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -228,22 +225,62 @@ impl PlatformAutoplay for MajsoulAutoplay {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn push_random_pre_delay(steps: &mut Vec<Step>, ctx: &ActionContext) {
-    let lo = ctx.cfg.pre_click_delay_min_ms;
-    let hi = ctx.cfg.pre_click_delay_max_ms.max(lo);
-    let mut delay = if hi == lo {
-        lo
-    } else {
-        rand::rng().random_range(lo..=hi)
+/// Compute the pre-click "thinking" delay via the delay model
+/// (`autoplay::delay`) and push it as the leading `Sleep` step.
+///
+/// The model returns a target **total** thinking time for the decision
+/// window; when the server budget is known, the time already consumed
+/// (network, proxy, bot inference) is subtracted so the server-observed
+/// interval matches the target rather than exceeding it.
+///
+/// `extra_clicks` is how many clicks follow the *first* one in this plan
+/// (candidate disambiguation, riichi tile). It sizes the click-sequence
+/// overhead the budget layer must reserve.
+fn push_pre_delay(
+    steps: &mut Vec<Step>,
+    ctx: &ActionContext,
+    kind: DecisionKind,
+    extra_clicks: u32,
+) {
+    let cfg = ctx.cfg;
+    let per_click = cfg.hover_delay_ms + cfg.click_hold_ms;
+    let click_overhead_ms =
+        per_click + extra_clicks * (per_click + cfg.inter_click_delay_ms);
+
+    let opening_animation = match kind {
+        DecisionKind::Dahai => is_dealer_first_discard(ctx),
+        // A kita on the opening draw of a kyoku waits out the same
+        // dealing animation as the dealer's first discard.
+        DecisionKind::Kita => ctx.last_kawa_tile.is_none(),
+        _ => false,
     };
-    // Reference behaviour (`autoplay_majsoul.py:156-157`): if there's no
-    // `last_kawa_tile` (i.e. very first action of a kyoku), use the upper
-    // bound as a fixed delay. Slightly slower but more human-like on the
-    // opening turn.
-    if ctx.last_kawa_tile.is_none() {
-        delay = hi;
-    }
-    steps.push(Step::Sleep { duration_ms: delay });
+
+    let input = DelayInput {
+        kind,
+        first_action_of_kyoku: ctx.last_kawa_tile.is_none(),
+        opening_animation,
+        can_riichi: ctx
+            .legal_actions
+            .iter()
+            .any(|a| a.action_type == ActionType::Riichi),
+        in_riichi: ctx.self_riichi_accepted,
+        legal_action_count: ctx.legal_actions.len(),
+        probs: ctx.probs,
+        budget: ctx.budget,
+        click_overhead_ms,
+        cfg,
+        delay_cfg: &ctx.delay_cfg,
+    };
+    let decision = delay::decide(&input, &mut rand::rng());
+
+    // Convert target total time to a sleep: subtract what the window has
+    // already consumed. Without a budget there is no window clock — sleep
+    // the target verbatim (legacy behaviour).
+    let sleep = match ctx.budget {
+        Some(b) => decision.total_target_ms.saturating_sub(b.elapsed_ms),
+        None => decision.total_target_ms,
+    };
+    steps.push(Step::Sleep { duration_ms: sleep });
 }
 
 /// Plan a hand-tile click for a discard or riichi-declaring discard.
@@ -671,6 +708,9 @@ mod tests {
             reach_state,
             num_players: snapshot.num_players,
             cfg: cfg_ref,
+            delay_cfg: crate::config::DelayModelConfig::default(),
+            budget: None,
+            probs: None,
         }
     }
 
@@ -995,11 +1035,13 @@ mod tests {
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
-        // [pre-delay sleep, dealer-pad sleep, click]
-        assert_eq!(result.steps.len(), 3);
-        match &result.steps[1] {
+        // The dealer-pad wait is folded into the single pre-delay sleep:
+        // [pre-delay sleep (>= animation pad), click]. With the zeroed
+        // test config the sleep is exactly the pad.
+        assert_eq!(result.steps.len(), 2);
+        match &result.steps[0] {
             Step::Sleep { duration_ms } => assert_eq!(*duration_ms, 2000),
-            _ => panic!("expected sleep step at index 1"),
+            _ => panic!("expected sleep step at index 0"),
         }
     }
 
@@ -1081,6 +1123,56 @@ mod tests {
         let result = MajsoulAutoplay::new().plan(&ctx);
         // No dealer pad: just [pre-delay, click].
         assert_eq!(result.steps.len(), 2);
+    }
+
+    /// The delay model returns a target *total* thinking time; the sleep
+    /// step must be target minus what the decision window has already
+    /// consumed, saturating at zero — never a negative-wrapped huge sleep.
+    #[test]
+    fn pre_delay_deducts_budget_elapsed() {
+        let snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
+            ],
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5p".into(),
+            tsumogiri: false,
+        };
+        // Deterministic target: min == max == 1000ms.
+        let mut cfg_ref = cfg();
+        cfg_ref.pre_click_delay_min_ms = 1000;
+        cfg_ref.pre_click_delay_max_ms = 1000;
+
+        let sleep_with_elapsed = |elapsed_ms: u32| {
+            let mut ctx = ctx_for(
+                &act,
+                &snap,
+                &[],
+                Some("1m"),
+                Some("5p"),
+                false,
+                ReachState::Idle,
+                &cfg_ref,
+            );
+            ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
+                fixed_ms: 5000,
+                add_ms: 0,
+                elapsed_ms,
+            });
+            let result = MajsoulAutoplay::new().plan(&ctx);
+            match result.steps[0] {
+                Step::Sleep { duration_ms } => duration_ms,
+                _ => panic!("expected leading sleep"),
+            }
+        };
+
+        assert_eq!(sleep_with_elapsed(0), 1000);
+        assert_eq!(sleep_with_elapsed(400), 600, "elapsed must be deducted");
+        assert_eq!(sleep_with_elapsed(5000), 0, "sleep must saturate at zero");
     }
 
     /// Build a 3-player snapshot for our seat with optional kita pool and
