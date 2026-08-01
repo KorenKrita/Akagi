@@ -111,18 +111,22 @@ pub struct DelayModelConfig {
 
 /// Calibrated per-kind log-normal parameters, ln(seconds).
 ///
-/// Source: 6 Throne-room ranked 4p records (~4100 decision windows),
+/// Source: 30 Throne-room ranked 4p records (~21,500 decision windows),
 /// think time on the server's game clock (includes each player's own
 /// client→server latency — a bias in the human direction). Medians:
-/// tedashi ≈2.4s, tsumogiri ≈1.85s, post-call discard ≈1.5s, riichi
-/// declaration ≈2.7s, claim windows (mostly passes) ≈1.3s.
+/// tedashi ≈2.2s, tsumogiri ≈1.55s, post-call discard ≈1.5s, riichi
+/// declaration ≈2.7s, claim windows (mostly passes) ≈1.4s.
+///
+/// This flat table is the built-in fallback; the generated `delay.lua`
+/// models the same data with more structure (routine-vs-think mixture,
+/// tile class, defence reads, budget shaping).
 fn default_lognormal() -> std::collections::BTreeMap<String, [f64; 2]> {
     [
-        ("dahai_tedashi", [0.90, 0.60]),
-        ("dahai_tsumogiri", [0.62, 0.55]),
-        ("post_call_dahai", [0.44, 0.35]),
-        ("reach", [1.00, 0.45]),
-        ("claim", [0.27, 0.55]),
+        ("dahai_tedashi", [0.87, 0.62]),
+        ("dahai_tsumogiri", [0.52, 0.53]),
+        ("post_call_dahai", [0.52, 0.42]),
+        ("reach", [1.10, 0.55]),
+        ("claim", [0.26, 0.57]),
         ("hora", [0.15, 0.50]),
     ]
     .into_iter()

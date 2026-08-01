@@ -197,6 +197,43 @@ def junme_band(n: int) -> str:
     return "j13+"
 
 
+def tile_class(tile: str) -> str:
+    """Majsoul tile string -> honor / terminal / middle. '0m' is red 5."""
+    if not tile or len(tile) < 2:
+        return "?"
+    num, suit = tile[0], tile[1]
+    if suit == "z":
+        return "honor"
+    if num in "19":
+        return "terminal"
+    return "middle"
+
+
+def bank_bucket(add_ms: int) -> str:
+    if add_ms >= 20_000:
+        return "bank-full"
+    if add_ms >= 5_000:
+        return "bank-mid"
+    return "bank-low"
+
+
+def mixture(values_ms: list[int], split_ms: int = 1200) -> str:
+    """Two-component summary: how much of the mass is a fast 'routine'
+    response vs a real think, and each half's median."""
+    v = sorted(x for x in values_ms if 0 <= x < 120_000)
+    if len(v) < 10:
+        return f"n={len(v)} (too few)"
+    fast = [x for x in v if x < split_ms]
+    slow = [x for x in v if x >= split_ms]
+    frac = len(fast) / len(v)
+    med_f = fast[len(fast) // 2] if fast else 0
+    med_s = slow[len(slow) // 2] if slow else 0
+    return (
+        f"n={len(v):5} fast(<{split_ms}ms)={frac:5.1%} med_fast={med_f:5} "
+        f"med_slow={med_s:6}"
+    )
+
+
 # --------------------------------------------------------------------------
 # Per-game walk
 # --------------------------------------------------------------------------
@@ -241,23 +278,35 @@ class GameWalk:
             return
         opened, kind = self.window.pop(seat)
         spent = passed - opened
-        state = "in-riichi" if seat in self.riichi else "open"
+        if seat in self.riichi:
+            state = "in-riichi"
+        elif self.riichi:
+            # Someone else has declared: every decision is now a defence
+            # read, not just hand-building.
+            state = "vs-riichi"
+        else:
+            state = "open"
         band = junme_band(self.discards[seat]) if kind in ("draw", "post-call") else "-"
-        # tsumogiri/riichi flags are refined by the following record; store
-        # a mutable row so `classify_discard` can amend it.
-        row = [kind, "-", state, band, spent]
+        bank = bank_bucket(self.last_add[seat]) if seat in self.last_add else "?"
+        # tsumogiri/riichi/tile flags are refined by the following record;
+        # store a mutable row so `classify_discard` can amend it.
+        # Row: [kind, giri, state, band, spent, tile_class, bank]
+        row = [kind, "-", state, band, spent, "-", bank]
         self.buckets.append(row)
         self.last_row_by_seat = getattr(self, "last_row_by_seat", {})
         self.last_row_by_seat[seat] = row
         if seat in self.last_add:
             self.pending_spend[seat] = (kind, spent, self.last_add[seat])
 
-    def classify_discard(self, seat: int, moqie: bool, declares_riichi: bool):
+    def classify_discard(
+        self, seat: int, moqie: bool, declares_riichi: bool, tile: str
+    ):
         row = getattr(self, "last_row_by_seat", {}).get(seat)
         if row is not None and row[0] in ("draw", "post-call", "dealer-opening"):
             row[1] = "tsumogiri" if moqie else "tedashi"
             if declares_riichi:
                 row[2] = "declares-riichi"
+            row[5] = tile_class(tile)
 
     def walk(self, actions):
         for a in actions:
@@ -296,7 +345,8 @@ class GameWalk:
                 seat = one(msg, 1, 0)
                 moqie = bool(one(msg, 5, 0))
                 liqi = bool(one(msg, 3, 0)) or bool(one(msg, 9, 0))
-                self.classify_discard(seat, moqie, liqi)
+                tile = one(msg, 2, b"").decode(errors="replace")
+                self.classify_discard(seat, moqie, liqi, tile)
                 self.discards[seat] += 1
                 if liqi:
                     self.riichi.add(seat)
@@ -412,12 +462,55 @@ def main() -> int:
     print("Q5 — THINK TIME (server clock, real ranked players)")
     print("=" * 78)
     agg = collections.defaultdict(list)
-    for kind, giri, state, band, spent in buckets:
+    for kind, giri, state, band, spent, _tc, _bank in buckets:
         agg[(kind, giri, state, band)].append(spent)
     for key in sorted(agg):
         kind, giri, state, band = key
         label = f"{kind:14} {giri:9} {state:15} {band:6}"
         print(f"  {label} {describe(agg[key])}")
+
+    print("\n" + "=" * 78)
+    print("Q5a — TEDASHI BY TILE CLASS (draw windows, no riichi on table)")
+    print("=" * 78)
+    agg = collections.defaultdict(list)
+    for kind, giri, state, band, spent, tc, _bank in buckets:
+        if kind == "draw" and giri == "tedashi" and state == "open":
+            agg[(tc, band)].append(spent)
+    for key in sorted(agg):
+        tc, band = key
+        print(f"  {tc:9} {band:6} {describe(agg[key])}")
+    print()
+    print("  Routine-vs-decision structure (fast fraction under 1.2s):")
+    agg2 = collections.defaultdict(list)
+    for kind, giri, state, band, spent, tc, _bank in buckets:
+        if kind == "draw" and state == "open" and giri in ("tedashi", "tsumogiri"):
+            agg2[(giri, tc)].append(spent)
+    for key in sorted(agg2):
+        giri, tc = key
+        print(f"  {giri:9} {tc:9} {mixture(agg2[key])}")
+
+    print("\n" + "=" * 78)
+    print("Q5b — DEFENCE: THINK TIME WITH AN OPPONENT RIICHI ON THE TABLE")
+    print("=" * 78)
+    agg = collections.defaultdict(list)
+    for kind, giri, state, band, spent, _tc, _bank in buckets:
+        if kind == "draw" and giri in ("tedashi", "tsumogiri") and state in ("open", "vs-riichi"):
+            agg[(giri, state)].append(spent)
+    for key in sorted(agg):
+        giri, state = key
+        print(f"  {giri:9} {state:9} {describe(agg[key])}")
+
+    print("\n" + "=" * 78)
+    print("Q5c — URGENCY: THINK TIME BY REMAINING TIME BANK")
+    print("=" * 78)
+    agg = collections.defaultdict(list)
+    for kind, giri, state, band, spent, _tc, bank in buckets:
+        if kind == "draw" and giri in ("tedashi", "tsumogiri"):
+            agg[(giri, bank)].append(spent)
+    for key in sorted(agg):
+        giri, bank = key
+        print(f"  {giri:9} {bank:9} {describe(agg[key])}")
+
     print()
     print("  'claim' rows include declined windows (the pass itself is the")
     print("  recorded input) — a dimension live-frame captures cannot see.")

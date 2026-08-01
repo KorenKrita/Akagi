@@ -128,7 +128,10 @@ action, and carries every seat's `OptionalOperationList` — so per-seat
 think times (including declined call windows, which live captures cannot
 see) and per-seat time-bank drain are all directly observable. The
 report covers per-window base times, bank-drain granularity, bank reset
-behaviour across kyoku, and think-time distributions per decision type.
+behaviour across kyoku, and think-time distributions per decision type —
+including tile-class splits (routine honor flicks vs middle-tile
+decisions), defence reads while an opponent riichi is live, think time
+by remaining time bank, and the routine-vs-think mixture structure.
 
 Output contains seats and rank levels but no nicknames or account ids.
 Standard library only; the protobuf wire decoding is inlined.

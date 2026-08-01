@@ -176,6 +176,10 @@ impl DelayScript {
         ctx.set("can_riichi", input.can_riichi)?;
         ctx.set("is_kan", input.kind.is_kan())?;
         ctx.set("in_riichi", input.in_riichi)?;
+        ctx.set("opponent_riichi", input.opponent_riichi)?;
+        if let Some(tc) = input.tile_class {
+            ctx.set("tile_class", tc.as_str())?;
+        }
         ctx.set("junme", input.junme)?;
         ctx.set("legal_count", input.legal_action_count)?;
         if let Some(p) = input.probs {
@@ -346,6 +350,8 @@ mod tests {
             opening_animation: false,
             can_riichi: false,
             in_riichi: false,
+            opponent_riichi: false,
+            tile_class: None,
             junme: 0,
             legal_action_count: 1,
             probs: None,
@@ -531,12 +537,23 @@ mod tests {
         assert!(*samples.first().unwrap() >= d.min_delay_ms);
         assert!(*samples.last().unwrap() <= d.no_budget_cap_ms);
 
-        // In riichi: fast, but never below the UI-readiness floor.
-        let mut i = base_input(&cfg, &d);
-        i.in_riichi = true;
-        i.kind = DecisionKind::Pass;
-        let dec = s.try_decide(&i).unwrap();
-        assert!((d.min_delay_ms..=1300).contains(&dec.total_target_ms));
+        // In riichi: measured Throne players still glance (~1.4s median),
+        // never below the UI-readiness floor.
+        let mut riichi_samples: Vec<u32> = (0..300)
+            .map(|_| {
+                let mut i = base_input(&cfg, &d);
+                i.in_riichi = true;
+                i.kind = DecisionKind::Pass;
+                s.try_decide(&i).unwrap().total_target_ms
+            })
+            .collect();
+        riichi_samples.sort_unstable();
+        assert!(*riichi_samples.first().unwrap() >= d.min_delay_ms);
+        let riichi_med = riichi_samples[riichi_samples.len() / 2];
+        assert!(
+            (1100..=1800).contains(&riichi_med),
+            "in-riichi median {riichi_med} off calibration (~1.4s)"
+        );
 
         // Near-tie -> long thought with bank allowed.
         let mut i = base_input(&cfg, &d);

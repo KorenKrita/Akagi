@@ -267,14 +267,20 @@ Two delay models exist and exactly one is active
 - **Lua script** (default, recommended) — delays come from `delay.lua`
   next to your `config.toml`. On first use Akagi generates it with a
   human-like model **calibrated against real ranked-game records**
-  (think times measured on the server's own clock — see
-  `scripts/analyze_record_think_time.py`): per-decision log-normal
-  distributions (discard from hand median ≈2.4s, drawn-tile discard
-  ≈1.9s, call windows ≈1.3s, riichi ≈2.7s), slower thinking as the hand
-  develops, extra time on close calls, snappy obvious moves, and the
-  occasional genuine tank. Edit the file freely — it hot-reloads on
-  save; delete it to restore the default. If the script errors, a
-  built-in calibrated model takes over (and the reason is logged once).
+  (30 Throne-room games, ~21,500 decisions, think times measured on the
+  server's own clock — see `scripts/analyze_record_think_time.py`).
+  Real discards are modelled as a *mixture*: a routine ~1s flick (lone
+  honors get discarded without thought far more often than middle
+  tiles) versus a genuine think whose length depends on the tile class,
+  how deep the hand is, the bot's own confidence, and whether an
+  opponent riichi demands a safety read. Claim windows, riichi
+  declarations, post-call discards and in-riichi passes each follow
+  their measured distribution, and the script shapes its output around
+  the server time budget — dipping into the time bank as often as real
+  players do (~7% of draws) and wrapping up when the bank runs dry.
+  Edit the file freely — it hot-reloads on save; delete it to restore
+  the default. If the script errors, a built-in calibrated model takes
+  over (and the reason is logged once).
 - **Legacy** — the historical fixed model: a uniform draw between
   `pre_click_delay_min_ms` and `pre_click_delay_max_ms`. The Lua script
   is ignored entirely.
@@ -321,6 +327,8 @@ extra time pool.
 | `can_riichi` | riichi is declarable this turn |
 | `is_kan` | the action is a kan declaration |
 | `in_riichi` | we are in accepted riichi |
+| `opponent_riichi` | an opponent has declared riichi (defence reads) |
+| `tile_class` | `"honor"` / `"terminal"` / `"middle"` for a discard, else `nil` |
 | `junme` | our discard number this kyoku (1 = first) |
 | `legal_count` | number of legal actions |
 | `top_prob`, `second_prob`, `margin` | bot's normalized candidate probabilities (or `nil`) |

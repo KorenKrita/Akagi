@@ -57,6 +57,40 @@ impl DecisionKind {
     }
 }
 
+/// Rough class of a discarded tile. Measured effect (Throne records):
+/// honor discards are routine far more often than middle tiles (fast
+/// fraction ~22% vs ~4% for tedashi) and think ~35% shorter overall.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileClass {
+    Honor,
+    Terminal,
+    Middle,
+}
+
+impl TileClass {
+    /// Classify an mjai tile string ("1m".."9m", "5pr", "E","P","C"...).
+    pub fn of_mjai(pai: &str) -> Option<Self> {
+        let mut chars = pai.chars();
+        let first = chars.next()?;
+        match first {
+            'E' | 'S' | 'W' | 'N' | 'P' | 'F' | 'C' => Some(Self::Honor),
+            '1' | '9' => Some(Self::Terminal),
+            // '0' guards against Majsoul-style red-five notation leaking
+            // through; mjai proper writes red fives as "5?r".
+            '0' | '2'..='8' => Some(Self::Middle),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Honor => "honor",
+            Self::Terminal => "terminal",
+            Self::Middle => "middle",
+        }
+    }
+}
+
 /// Copy of the server time budget taken at planning time.
 /// `elapsed_ms` is pre-computed so the planner stays free of clocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +124,11 @@ pub struct DelayInput<'a> {
     pub can_riichi: bool,
     /// We are in accepted riichi (only Skip windows reach the planner).
     pub in_riichi: bool,
+    /// An opponent has declared riichi — every decision is now also a
+    /// defence read (measured: +15–25% think time across the board).
+    pub opponent_riichi: bool,
+    /// Class of the discarded tile, for `Dahai` (None otherwise).
+    pub tile_class: Option<TileClass>,
     /// Our discard number this kyoku, 1-based (0 = unknown). Real
     /// players slow down as the hand develops.
     pub junme: u32,
@@ -338,6 +377,8 @@ mod tests {
             opening_animation: false,
             can_riichi: false,
             in_riichi: false,
+            opponent_riichi: false,
+            tile_class: None,
             junme: 0,
             legal_action_count: 1,
             probs: None,
@@ -401,27 +442,27 @@ mod tests {
 
         let tedashi = median_for(|_| {});
         assert!(
-            (2100..=2900).contains(&tedashi),
-            "tedashi median {tedashi} off calibration (e^0.90 ≈ 2460ms)"
+            (2000..=2800).contains(&tedashi),
+            "tedashi median {tedashi} off calibration (e^0.87 ≈ 2390ms)"
         );
         let tsumogiri = median_for(|i| i.is_tsumogiri = true);
         assert!(
-            (1600..=2200).contains(&tsumogiri),
-            "tsumogiri median {tsumogiri} off calibration (e^0.62 ≈ 1860ms)"
+            (1400..=2000).contains(&tsumogiri),
+            "tsumogiri median {tsumogiri} off calibration (e^0.52 ≈ 1680ms)"
         );
         let claim = median_for(|i| i.kind = DecisionKind::Pass);
         assert!(
             (1100..=1600).contains(&claim),
-            "claim median {claim} off calibration (e^0.27 ≈ 1310ms)"
+            "claim median {claim} off calibration (e^0.26 ≈ 1300ms)"
         );
         let post_call = median_for(|i| i.is_post_call = true);
         assert!(
-            (1300..=1800).contains(&post_call),
-            "post-call median {post_call} off calibration (e^0.44 ≈ 1550ms)"
+            (1400..=2000).contains(&post_call),
+            "post-call median {post_call} off calibration (e^0.52 ≈ 1680ms)"
         );
         assert!(
             tsumogiri < tedashi && claim < post_call && post_call < tedashi,
-            "measured ordering must hold: claim < post-call < tsumogiri/tedashi"
+            "measured ordering must hold: claim < post-call < tedashi"
         );
     }
 

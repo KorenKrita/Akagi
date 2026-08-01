@@ -258,18 +258,28 @@ fn push_pre_delay(
     // Discard sub-kind: tsumogiri comes straight off the event; a
     // post-call discard is recognisable by hand size 3n+1 (no draw
     // after our own chi/pon).
-    let (is_tsumogiri, is_post_call) = match ctx.action {
-        MjaiEvent::Dahai { tsumogiri, .. } => {
+    let (is_tsumogiri, is_post_call, tile_class) = match ctx.action {
+        MjaiEvent::Dahai { tsumogiri, pai, .. } => {
             let hand_len = ctx
                 .snapshot
                 .players
                 .get(ctx.our_seat as usize)
                 .map(|p| p.tehai.len())
                 .unwrap_or(0);
-            (*tsumogiri, hand_len % 3 == 1)
+            (
+                *tsumogiri,
+                hand_len % 3 == 1,
+                crate::autoplay::delay::TileClass::of_mjai(pai),
+            )
         }
-        _ => (false, false),
+        _ => (false, false, None),
     };
+    // An opponent riichi turns every decision into a defence read.
+    let opponent_riichi = ctx
+        .snapshot
+        .players
+        .iter()
+        .any(|p| p.seat != ctx.our_seat && p.riichi_declared);
 
     // Legacy mode reproduces the historical fixed model: uniform draw,
     // no script consulted. The manager already withholds the script in
@@ -291,6 +301,8 @@ fn push_pre_delay(
             .iter()
             .any(|a| a.action_type == ActionType::Riichi),
         in_riichi: ctx.self_riichi_accepted,
+        opponent_riichi,
+        tile_class,
         junme: ctx
             .snapshot
             .players
