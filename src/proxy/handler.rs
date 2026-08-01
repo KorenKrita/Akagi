@@ -307,10 +307,13 @@ impl ProxyHandler {
                             None
                         }
                     };
+                // No time-budget slot: the MITM path has no `Page` handle,
+                // so autoplay (the only consumer) can never click here.
                 Arc::new(StdMutex::new(bridge::for_platform(
                     self.platform,
                     flow_log,
                     Some(self.session.clone()),
+                    None,
                 )))
             })
             .clone()

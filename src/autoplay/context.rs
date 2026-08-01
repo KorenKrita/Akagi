@@ -27,6 +27,11 @@ use tokio::sync::RwLock;
 pub struct AutoplayContext {
     pub page: Arc<RwLock<Option<Page>>>,
     pub canvas_rect: Arc<RwLock<Option<CanvasRect>>>,
+    /// Server-granted time budget for the current decision window.
+    /// Written by the Majsoul bridge (see `autoplay::budget`), read by
+    /// the manager's delay model. Uses a `std::sync::RwLock` (not tokio)
+    /// because the writer is the bridge's synchronous `parse()` path.
+    pub time_budget: crate::autoplay::budget::SharedTimeBudget,
 }
 
 impl AutoplayContext {
