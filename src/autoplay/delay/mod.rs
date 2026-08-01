@@ -138,12 +138,57 @@ pub fn decide<R: Rng + ?Sized>(input: &DelayInput, rng: &mut R) -> DelayDecision
         }
     }
 
-    // Functional floor: never click into the dealing animation.
+    // Budget enforcement, then the functional floor. The floor is applied
+    // last: clicking into the dealing animation loses the click entirely,
+    // which is strictly worse than shaving budget headroom (and in
+    // practice the base window is minutes, the floor a few seconds).
+    target = target.min(budget_cap(input, allow_bank));
     target = target.max(functional_floor(input));
 
     DelayDecision {
         total_target_ms: target,
         allow_bank,
+    }
+}
+
+/// The hard ceiling for the target total thinking time.
+///
+/// With a known server budget:
+///
+/// ```text
+/// soft_cap = time_fixed - safety_margin - click_overhead
+/// hard_cap = soft_cap + min(time_add * bank_use_fraction, bank_max_single)
+/// ```
+///
+/// The soft cap never touches the extra time pool; only a decision the
+/// model marked `allow_bank` (top-two near-tie) may reach the hard cap.
+/// With `time_add == 0` the two coincide. Exceeding the hard cap would
+/// mean the client auto-discards for us — the most conspicuous failure
+/// mode there is — so the cap is unconditional.
+///
+/// Without a budget, a static configurable ceiling applies.
+pub fn budget_cap(input: &DelayInput, allow_bank: bool) -> u32 {
+    let d = input.delay_cfg;
+    match input.budget {
+        Some(b) => {
+            let soft = b
+                .fixed_ms
+                .saturating_sub(d.safety_margin_ms)
+                .saturating_sub(input.click_overhead_ms);
+            if allow_bank {
+                let bank = (f64::from(b.add_ms) * d.bank_use_fraction.clamp(0.0, 1.0)) as u32;
+                soft.saturating_add(bank.min(d.bank_max_single_ms))
+            } else {
+                soft
+            }
+        }
+        None => {
+            if d.no_budget_cap_ms == 0 {
+                u32::MAX
+            } else {
+                d.no_budget_cap_ms
+            }
+        }
     }
 }
 
@@ -338,6 +383,133 @@ mod tests {
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let dec = decide(&i, &mut r);
         assert!(dec.total_target_ms <= 800);
+    }
+
+    // ------------------------------------------------------------------
+    // Budget enforcement (soft/hard caps)
+    // ------------------------------------------------------------------
+
+    fn tight_budget_cfg() -> MajsoulAutoplayConfig {
+        // Force the sampled target far above the caps so the cap is what
+        // decides the outcome.
+        let mut c = cfg();
+        c.pre_click_delay_min_ms = 100_000;
+        c.pre_click_delay_max_ms = 100_000;
+        c
+    }
+
+    /// With `time_add == 0` the target never exceeds the soft cap
+    /// (`fixed - safety_margin - click_overhead`).
+    #[test]
+    fn soft_cap_binds_without_bank() {
+        let c = tight_budget_cfg();
+        let d = DelayModelConfig::default();
+        let mut i = input(&c, &d);
+        i.budget = Some(BudgetSnapshot {
+            fixed_ms: 5000,
+            add_ms: 0,
+            elapsed_ms: 0,
+        });
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert_eq!(dec.total_target_ms, 5000 - d.safety_margin_ms);
+    }
+
+    /// Click-sequence overhead (hover/hold, candidate clicks, riichi
+    /// two-step) is reserved out of the window — multi-stage actions must
+    /// not systematically overrun.
+    #[test]
+    fn click_overhead_reserved_from_cap() {
+        let c = tight_budget_cfg();
+        let d = DelayModelConfig::default();
+        let mut i = input(&c, &d);
+        i.budget = Some(BudgetSnapshot {
+            fixed_ms: 5000,
+            add_ms: 0,
+            elapsed_ms: 0,
+        });
+        i.click_overhead_ms = 700;
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert_eq!(dec.total_target_ms, 5000 - d.safety_margin_ms - 700);
+    }
+
+    /// Only an `allow_bank` decision (top-two near-tie) may spend the
+    /// extra pool, bounded by fraction and absolute single-spend cap —
+    /// and never beyond the hard cap.
+    #[test]
+    fn hard_cap_requires_bank_permission() {
+        let c = tight_budget_cfg();
+        let mut d = DelayModelConfig::default();
+        d.close_margin_extra_ms = 1; // near-tie marks allow_bank
+        let budget = BudgetSnapshot {
+            fixed_ms: 5000,
+            add_ms: 20_000,
+            elapsed_ms: 0,
+        };
+
+        // Not a near-tie: soft cap despite a fat bank.
+        let mut i = input(&c, &d);
+        i.budget = Some(budget);
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert!(!dec.allow_bank);
+        assert_eq!(dec.total_target_ms, 5000 - d.safety_margin_ms);
+
+        // Near-tie: hard cap = soft + min(20000 * 0.25, bank_max_single).
+        let mut i = input(&c, &d);
+        i.budget = Some(budget);
+        i.probs = Some(DecisionProbs {
+            top: 0.5,
+            second: Some(0.499),
+        });
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert!(dec.allow_bank);
+        let expected_bank = 5000u32.min(d.bank_max_single_ms);
+        assert_eq!(
+            dec.total_target_ms,
+            5000 - d.safety_margin_ms + expected_bank
+        );
+    }
+
+    /// No budget known: the static ceiling applies (and can be disabled).
+    #[test]
+    fn static_cap_without_budget() {
+        let c = tight_budget_cfg();
+        let d = DelayModelConfig::default();
+        let i = input(&c, &d);
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert_eq!(dec.total_target_ms, d.no_budget_cap_ms);
+
+        let mut open = DelayModelConfig::default();
+        open.no_budget_cap_ms = 0;
+        let i = input(&c, &open);
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert_eq!(dec.total_target_ms, 100_000, "0 disables the static cap");
+    }
+
+    /// The functional floor (animation wait) wins over the cap: losing
+    /// the click to the animation is worse than shaving headroom.
+    #[test]
+    fn functional_floor_beats_cap() {
+        let c = cfg(); // dealer pad 2000ms default
+        let d = DelayModelConfig::default();
+        let mut i = input(&c, &d);
+        i.opening_animation = true;
+        i.budget = Some(BudgetSnapshot {
+            fixed_ms: 1500, // window smaller than the animation
+            add_ms: 0,
+            elapsed_ms: 0,
+        });
+        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+        let dec = decide(&i, &mut r);
+        assert!(
+            dec.total_target_ms >= c.dealer_first_discard_extra_delay_ms,
+            "floor must not be undercut by the cap"
+        );
     }
 
     /// Distribution sanity: fixed seed, log-normal median lands near

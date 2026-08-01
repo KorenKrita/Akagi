@@ -60,6 +60,18 @@ pub struct DelayModelConfig {
     pub obvious_top_prob: f64,
     /// Cap for obvious decisions, ms. 0 = cap disabled.
     pub obvious_max_ms: u32,
+    /// Reserved headroom inside the server window for network RTT and
+    /// scheduling jitter, ms. The soft cap is
+    /// `time_fixed - safety_margin - click_overhead`.
+    pub safety_margin_ms: u32,
+    /// Fraction of the server's extra time pool (`time_add`) a single
+    /// hard decision may spend when the model allows bank use.
+    pub bank_use_fraction: f64,
+    /// Absolute cap on extra-pool spend for a single decision, ms.
+    pub bank_max_single_ms: u32,
+    /// Static cap applied when no server budget is known (non-Majsoul
+    /// platform, or before the first operation list), ms. 0 = no cap.
+    pub no_budget_cap_ms: u32,
 }
 
 impl Default for DelayModelConfig {
@@ -76,6 +88,13 @@ impl Default for DelayModelConfig {
             close_margin_extra_ms: 0,
             obvious_top_prob: 0.995,
             obvious_max_ms: 0,
+            safety_margin_ms: 1000,
+            bank_use_fraction: 0.25,
+            bank_max_single_ms: 5000,
+            // 15s static ceiling: far above anything the default
+            // distribution produces, low enough to survive even a 5s+20
+            // room's base window if the budget is somehow unknown.
+            no_budget_cap_ms: 15_000,
         }
     }
 }
