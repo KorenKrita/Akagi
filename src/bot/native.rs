@@ -815,6 +815,9 @@ fn make_show_item(label: &str, pais: &[String], prob: Option<f64>) -> Value {
     }
     if let Some(p) = prob {
         item.insert("value".into(), json!(format!("{:.0}%", p * 100.0)));
+        // Raw probability for machine consumers (`autoplay::delay::probs`);
+        // the formatted `value` above only has integer-percent resolution.
+        item.insert("prob".into(), json!(p));
     }
     Value::Object(item)
 }

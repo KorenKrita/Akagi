@@ -277,6 +277,13 @@ pub fn run() {
                     let tracker_for_ap = state.game_tracker.clone();
                     let mjai_for_ap = mjai_bus.clone();
                     let resp_for_ap = bot_response_bus.clone();
+                    // Default delay-script location is resolved relative
+                    // to the loaded config file's directory.
+                    let config_dir_for_ap = state
+                        .config_path
+                        .parent()
+                        .map(std::path::Path::to_path_buf)
+                        .unwrap_or_default();
                     state
                         .autoplay_manager_started
                         .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -287,6 +294,7 @@ pub fn run() {
                             tracker_for_ap,
                             mjai_for_ap,
                             resp_for_ap,
+                            config_dir_for_ap,
                         )
                         .await
                         {

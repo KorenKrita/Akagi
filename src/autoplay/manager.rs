@@ -40,6 +40,12 @@ pub struct AutoplayManager {
     mjai_bus: MjaiBus,
     platform: Arc<dyn PlatformAutoplay>,
     state: ManagerState,
+    /// User Lua delay policy (hot-reloaded from disk; see
+    /// `autoplay::delay::script`).
+    delay_script: crate::autoplay::delay::ScriptHost,
+    /// Directory holding the loaded config file; the script lives at
+    /// `<config_dir>/delay.lua`.
+    config_dir: std::path::PathBuf,
 }
 
 #[derive(Default)]
@@ -63,6 +69,7 @@ impl AutoplayManager {
         ctx: Arc<AutoplayContext>,
         tracker: Arc<Mutex<GameTracker>>,
         mjai_bus: MjaiBus,
+        config_dir: std::path::PathBuf,
     ) -> Self {
         Self {
             cfg,
@@ -73,6 +80,8 @@ impl AutoplayManager {
             // here based on config.platform.kind at run start.
             platform: Arc::new(MajsoulAutoplay::new()),
             state: ManagerState::default(),
+            delay_script: crate::autoplay::delay::ScriptHost::default(),
+            config_dir,
         }
     }
 
@@ -112,7 +121,32 @@ impl AutoplayManager {
             return;
         }
         let cfg = cfg_guard.autoplay.majsoul.clone();
+        let delay_cfg = cfg_guard.autoplay.delay.clone();
         drop(cfg_guard);
+
+        // Snapshot the server time budget for the current decision window
+        // (written by the Majsoul bridge; None off-Majsoul or pre-game) and
+        // normalize the bot's confidence metadata. Both feed the delay
+        // model — neither can alter the chosen action. `opened_at` is kept
+        // as the window's identity for the post-sleep staleness check.
+        let planned_budget = self.ctx.time_budget.read().ok().and_then(|g| *g);
+        let budget = planned_budget.map(|b| crate::autoplay::delay::BudgetSnapshot {
+            fixed_ms: b.fixed_ms,
+            add_ms: b.add_ms,
+            elapsed_ms: b.elapsed_ms(),
+        });
+        let probs = crate::autoplay::delay::probs::normalize_meta(resp.meta.as_ref());
+
+        // The delay script lives at a fixed path next to the config file.
+        // In Lua mode it is generated from the bundled default when
+        // missing, then hot-reloaded on change (cheap mtime stat). In
+        // legacy mode the script is dropped entirely.
+        let lua_mode = delay_cfg.mode == crate::config::DelayMode::Lua;
+        let script_path = self.config_dir.join("delay.lua");
+        if lua_mode {
+            self.delay_script.ensure_default(&script_path);
+        }
+        self.delay_script.maybe_reload(&script_path, lua_mode);
 
         // Pull our seat + legal actions from the live engine state. This
         // bracket releases the tracker mutex before we sleep/click.
@@ -154,6 +188,10 @@ impl AutoplayManager {
             reach_state: self.state.reach_state,
             num_players,
             cfg: &cfg,
+            delay_cfg,
+            budget,
+            probs,
+            delay_script: self.delay_script.script(),
         };
 
         let plan = self.platform.plan(&action_ctx);
@@ -183,12 +221,38 @@ impl AutoplayManager {
             }
         };
 
+        let mut window_checked = false;
         for step in &plan.steps {
             match step {
                 Step::Sleep { duration_ms } => {
                     tokio::time::sleep(Duration::from_millis(*duration_ms as u64)).await;
                 }
                 Step::Click { x_norm, y_norm } => {
+                    // The decision window can close while we sleep: a
+                    // higher-priority claimant (ron over our chi window)
+                    // resolves it early, and the *next* window's buttons
+                    // render at the same coordinates — a stale click
+                    // would press a live button of the wrong decision.
+                    // The bridge rewrites the budget slot exactly when
+                    // that happens, so the slot still holding the window
+                    // we planned against is the cheap validity check.
+                    // Checked once, before the first click: later steps
+                    // of one plan run inside our own action's window.
+                    // With no budget tracked (off-Majsoul) there is no
+                    // signal — behaviour is unchanged there.
+                    if !window_checked {
+                        window_checked = true;
+                        if planned_budget.is_some() {
+                            let current = self.ctx.time_budget.read().ok().and_then(|g| *g);
+                            if current.map(|b| b.opened_at) != planned_budget.map(|b| b.opened_at) {
+                                warn!(
+                                    "autoplay: decision window closed mid-delay — dropping stale click for {:?}",
+                                    resp.action
+                                );
+                                return;
+                            }
+                        }
+                    }
                     let (px, py) = rect.pixel(*x_norm, *y_norm);
                     if !rect.contains(px, py) {
                         warn!(
@@ -349,8 +413,9 @@ pub async fn run_autoplay_manager(
     tracker: Arc<Mutex<GameTracker>>,
     mjai_bus: MjaiBus,
     response_bus: BotResponseBus,
+    config_dir: std::path::PathBuf,
 ) -> anyhow::Result<()> {
-    AutoplayManager::new(cfg, ctx, tracker, mjai_bus)
+    AutoplayManager::new(cfg, ctx, tracker, mjai_bus, config_dir)
         .run(response_bus)
         .await
 }
@@ -373,6 +438,7 @@ mod tests {
             Arc::new(AutoplayContext::default()),
             tracker,
             bus,
+            std::env::temp_dir(),
         )
     }
 

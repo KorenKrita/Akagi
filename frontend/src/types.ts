@@ -106,9 +106,44 @@ export type MajsoulAutoplayConfig = {
   dealer_first_discard_extra_delay_ms: number
 }
 
+/** Pre-click delay model parameters. Mirrors
+ *  `src/config/autoplay.rs::DelayModelConfig`; the fine-grained knobs are
+ *  config-file-only — the Settings UI exposes the Lua script fields. */
+export type DelayMode = 'legacy' | 'lua'
+
+export type DelayModelConfig = {
+  /** Which policy is active; exactly one. `legacy` = the old fixed
+   *  uniform model, `lua` = the scriptable human-like model backed by
+   *  `delay.lua` next to the config file (auto-generated). */
+  mode: DelayMode
+  /** UI-readiness floor: minimum total thinking time per decision, ms.
+   *  Clicks issued before Mahjong Soul renders the UI are lost. */
+  min_delay_ms: number
+  /** Higher floor for decisions that click an action button (chi/pon/
+   *  kan/ron/skip/riichi) — buttons render after the discard animation
+   *  plus their own pop-in, later than hand tiles. */
+  min_button_delay_ms: number
+  distribution: 'uniform' | 'log_normal'
+  /** Per-decision-kind log-normal `[mu, sigma]` in ln(seconds); keys like
+   *  `dahai_tedashi`, `claim`. Calibrated from ranked-game records. */
+  lognormal: Record<string, [number, number]>
+  bank_on_long_thought: boolean
+  riichi_extra_ms: number
+  kan_extra_ms: number
+  close_margin: number
+  close_margin_extra_ms: number
+  obvious_top_prob: number
+  obvious_max_ms: number
+  safety_margin_ms: number
+  bank_use_fraction: number
+  bank_max_single_ms: number
+  no_budget_cap_ms: number
+}
+
 export type AutoplayConfig = {
   enabled: boolean
   majsoul: MajsoulAutoplayConfig
+  delay: DelayModelConfig
 }
 
 /** Optional cloud-inference settings for the built-in native bot.

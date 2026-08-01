@@ -5,7 +5,8 @@
 //! later (DOM-based clicks or direct WS inject) without touching the
 //! manager's bus subscription / timing logic.
 
-use crate::config::MajsoulAutoplayConfig;
+use crate::autoplay::delay::{BudgetSnapshot, DecisionProbs};
+use crate::config::{DelayModelConfig, MajsoulAutoplayConfig};
 use crate::game_state::snapshot::GameStateSnapshot;
 use crate::schema::MjaiEvent;
 use riichienv_core::action::Action;
@@ -73,6 +74,19 @@ pub struct ActionContext<'a> {
     pub num_players: u8,
     /// Per-platform config knobs (delays, mouse-move emission, ...).
     pub cfg: &'a MajsoulAutoplayConfig,
+    /// Delay-model parameters (see `autoplay::delay`). Owned: it is a
+    /// small parameter block cloned per bot response, which keeps test
+    /// construction free of an extra borrow.
+    pub delay_cfg: DelayModelConfig,
+    /// Server time budget for the current decision window, if known.
+    /// `None` off-Majsoul or before the first operation list arrives.
+    pub budget: Option<BudgetSnapshot>,
+    /// Normalized bot confidence for this decision, if the bot's meta
+    /// could be interpreted (see `autoplay::delay::probs`).
+    pub probs: Option<DecisionProbs>,
+    /// User Lua delay policy, when loaded. Consulted by the delay model;
+    /// on any script failure the built-in policy runs instead.
+    pub delay_script: Option<&'a crate::autoplay::delay::DelayScript>,
 }
 
 /// Output of `PlatformAutoplay::plan`. Captures both the click sequence

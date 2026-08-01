@@ -355,7 +355,15 @@
       "hover_delay_hint": "雀魂判定牌面點擊需要在 mousedown 前停留 100ms 以上。低於此值點擊可能被吃掉。",
       "click_hold": "按住時間 (ms)",
       "dealer_first_discard_extra_delay": "莊家初打額外延遲 (ms)",
-      "dealer_first_discard_extra_delay_hint": "莊家被發 14 張牌時雀魂會播放整理手牌動畫，期間的點擊會被吃掉。約 2000ms 可覆蓋一般裝置。"
+      "dealer_first_discard_extra_delay_hint": "莊家被發 14 張牌時雀魂會播放整理手牌動畫，期間的點擊會被吃掉。約 2000ms 可覆蓋一般裝置。",
+      "delay_mode": "延遲模型",
+      "delay_mode_lua": "Lua 腳本（擬真人，建議）",
+      "delay_mode_legacy": "舊版（固定隨機延遲）",
+      "delay_mode_lua_help": "延遲由設定檔旁的 delay.lua 決定，首次使用時會自動產生一份以段位戰實測資料校準的擬真人模型。可自由編輯，存檔即熱重載；刪除檔案即可還原預設。腳本出錯時由內建模型接手。",
+      "min_delay": "最小延遲（ms）",
+      "min_delay_hint": "所有動作的安全下限：雀魂需要時間渲染畫面，太早點擊會被吃掉。兩種模式皆適用，腳本無法低於此值。",
+      "min_button_delay": "按鈕最小延遲（ms）",
+      "min_button_delay_hint": "吃/碰/槓/和/跳過/立直等按鈕的更高下限——按鈕要等打牌動畫結束加上自身彈出動畫才會出現，比手牌渲染更晚。若仍出現按鈕沒點到的情況請調高此值。"
     },
     "overlay": "建議懸浮視窗",
     "overlay_enabled": "顯示懸浮視窗",

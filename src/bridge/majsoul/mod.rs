@@ -14,6 +14,7 @@ pub mod tile;
 
 use super::{Bridge, Direction, ParseResult};
 use crate::{
+    autoplay::budget::{BudgetSource, SharedTimeBudget, TimeBudget},
     config::Platform,
     logger::{FlowLogger, Session},
     schema::{mjai::Actor, MjaiEvent},
@@ -22,7 +23,11 @@ use anyhow::{bail, Context, Result};
 use chrono::Local;
 use parser::{LiqiParser, MessageType, ParsedMessage};
 use serde_json::{json, Value as JsonValue};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tile::{compare_pai, ms_to_mjai};
 use tracing::{info, warn};
 
@@ -124,6 +129,19 @@ pub struct MajsoulBridge {
     /// `authGame` response. Defaults to 4 so per-flow code that runs before
     /// auth (none today, but be defensive) sees a sane value.
     num_players: u8,
+    /// Shared slot for the server's per-decision-window time budget
+    /// (`operation.time_fixed` / `time_add`, both ms). `None` when the
+    /// autoplay context isn't wired (MITM path, tests).
+    time_budget: Option<SharedTimeBudget>,
+    /// True while `handle_game_restore` replays historical actions through
+    /// `handle_action_prototype`. Replayed operations must not clobber the
+    /// live budget slot — the last one is committed after the replay with
+    /// `passed_waiting_time` folded in.
+    replaying: bool,
+    /// The budget carried by the most recent replayed action (if its
+    /// operation was addressed to our seat). Committed by
+    /// `handle_game_restore` once the replay finishes.
+    restore_budget: Option<TimeBudget>,
 }
 
 impl MajsoulBridge {
@@ -141,7 +159,17 @@ impl MajsoulBridge {
             last_revealed_tile_actor: None,
             pending_reach_accepted: None,
             num_players: 4,
+            time_budget: None,
+            replaying: false,
+            restore_budget: None,
         }
+    }
+
+    /// Install the shared time-budget slot (builder-style; used by
+    /// `bridge::for_platform`).
+    pub fn with_time_budget(mut self, slot: Option<SharedTimeBudget>) -> Self {
+        self.time_budget = slot;
+        self
     }
 
     /// Open a fresh `majsoul_<ts>.mjai.jsonl` in the platform subdir and
@@ -199,6 +227,9 @@ impl MajsoulBridge {
                 Vec::new()
             }
             (MessageType::Response, METHOD_AUTH_GAME) => {
+                // New game: whatever window the previous game left in the
+                // budget slot is stale.
+                self.store_budget(None);
                 self.handle_auth_game_response(&msg.payload)
             }
             (MessageType::Notify, METHOD_ACTION_PROTOTYPE) => self.handle_action_prototype(msg),
@@ -213,6 +244,7 @@ impl MajsoulBridge {
                     target: "akagi::bridge::majsoul",
                     "game ended: {}", msg.payload
                 );
+                self.store_budget(None);
                 vec![MjaiEvent::EndGame]
             }
             _ => Vec::new(),
@@ -265,6 +297,11 @@ impl MajsoulBridge {
             actions.len()
         );
 
+        // Replayed operations must not clobber the live budget slot with
+        // historical windows; only the final state of the replay matters.
+        self.replaying = true;
+        self.restore_budget = None;
+
         let mut events = Vec::new();
         for action in actions {
             let Some(name) = action.get("name").and_then(JsonValue::as_str) else {
@@ -301,7 +338,96 @@ impl MajsoulBridge {
             };
             events.extend(self.handle_action_prototype(&synthetic));
         }
+        self.replaying = false;
+
+        // Commit the decision window left open at the end of the replay
+        // (if any), backdating `opened_at` by the server-reported time
+        // already consumed in that window. The unit of
+        // `passed_waiting_time` is not confirmed (observed values 13–60);
+        // seconds is assumed. Over-estimating elapsed time only makes the
+        // delay model act sooner — it can never cause an overtime.
+        let passed = payload
+            .pointer("/game_restore/passed_waiting_time")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        let committed = self.restore_budget.take().map(|mut b| {
+            b.opened_at = Instant::now()
+                .checked_sub(Duration::from_secs(passed))
+                .unwrap_or_else(Instant::now);
+            b
+        });
+        self.store_budget(committed);
         events
+    }
+
+    /// Refresh the shared time-budget slot from a live (non-replay) action:
+    /// an operation list addressed to our seat opens a decision window; its
+    /// absence means no window is open (`None` clears the slot). During a
+    /// replay the value is parked in `restore_budget` instead — see
+    /// `handle_game_restore`.
+    fn update_time_budget(&mut self, action_name: &str, data: &JsonValue) {
+        if self.time_budget.is_none() {
+            return;
+        }
+        // The slot is shared by every flow bridge (spectate tabs, the
+        // dying socket during a reconnect). A bridge that never resolved
+        // a seat cannot own a decision window — it must not write, or
+        // its unconditional `None`s would clear the playing flow's
+        // freshly committed budget.
+        if self.seat.is_none() {
+            return;
+        }
+        let budget = self.extract_budget(action_name, data);
+        if self.replaying {
+            self.restore_budget = budget;
+        } else {
+            self.store_budget(budget);
+        }
+    }
+
+    fn store_budget(&self, budget: Option<TimeBudget>) {
+        if let Some(slot) = &self.time_budget {
+            if let Ok(mut guard) = slot.write() {
+                *guard = budget;
+            }
+        }
+    }
+
+    /// Pull a `TimeBudget` out of `data.operation` if the operation list is
+    /// addressed to our seat. `operation` is emitted as `null` for actions
+    /// without one (`skip_default_fields(false)` serialization), hence the
+    /// `as_object` guard. Wire unit is milliseconds.
+    fn extract_budget(&self, action_name: &str, data: &JsonValue) -> Option<TimeBudget> {
+        let op = data.get("operation")?.as_object()?;
+        let seat = op.get("seat").and_then(JsonValue::as_u64)?;
+        if Some(seat) != self.seat.map(u64::from) {
+            return None;
+        }
+        let source = match action_name {
+            ACTION_NEW_ROUND => BudgetSource::NewRound,
+            ACTION_DEAL_TILE => BudgetSource::DealTile,
+            ACTION_DISCARD_TILE => BudgetSource::DiscardTile,
+            ACTION_CHI_PENG_GANG => BudgetSource::ChiPengGang,
+            // Chankan (ron on kakan / kokushi on ankan) and 3p 胡拔北
+            // windows also carry an operation for our seat.
+            ACTION_AN_GANG_ADD_GANG => BudgetSource::AnGangAddGang,
+            ACTION_BA_BEI => BudgetSource::BaBei,
+            _ => return None,
+        };
+        let fixed_ms = op.get("time_fixed").and_then(JsonValue::as_u64)?;
+        // A zero base time means the semantics are unknown (possibly an
+        // unlimited-thinking room). Treat as "no budget" rather than
+        // producing a zero-width window that would floor every delay.
+        if fixed_ms == 0 {
+            return None;
+        }
+        let add_ms = op.get("time_add").and_then(JsonValue::as_u64).unwrap_or(0);
+        Some(TimeBudget {
+            fixed_ms: u32::try_from(fixed_ms).unwrap_or(u32::MAX),
+            add_ms: u32::try_from(add_ms).unwrap_or(u32::MAX),
+            opened_at: Instant::now(),
+            source,
+        })
     }
 
     fn handle_action_prototype(&mut self, msg: &ParsedMessage) -> Vec<MjaiEvent> {
@@ -314,6 +440,8 @@ impl MajsoulBridge {
             );
             return Vec::new();
         };
+
+        self.update_time_budget(action_name, action_data);
 
         // Drain queued reach_accepted before the next non-Hule action. A
         // Hule on the riichi declaration tile voids the riichi, so we
@@ -3346,5 +3474,183 @@ mod tests {
         assert!(bridge.dora_timing.is_none());
         assert!(bridge.deferred_dora.is_none());
         assert_eq!(bridge.doras, vec!["1m".to_string()]);
+    }
+
+    // ---------------------------------------------------------------
+    // Time budget (autoplay::budget) extraction
+    // ---------------------------------------------------------------
+
+    fn budget_bridge(seat: Actor) -> (MajsoulBridge, crate::autoplay::budget::SharedTimeBudget) {
+        let slot = crate::autoplay::budget::new_shared();
+        let mut bridge = MajsoulBridge::new(None, None).with_time_budget(Some(slot.clone()));
+        bridge.seat = Some(seat);
+        (bridge, slot)
+    }
+
+    /// An operation list addressed to our seat fills the shared budget
+    /// slot with the wire values (milliseconds).
+    #[test]
+    fn budget_written_from_our_seat_operation() {
+        let (mut bridge, slot) = budget_bridge(2);
+        bridge.dispatch(&action_msg(
+            "ActionDealTile",
+            json!({
+                "seat": 2,
+                "tile": "1m",
+                "operation": { "seat": 2, "time_fixed": 5000, "time_add": 20000 },
+            }),
+        ));
+        let b = slot.read().unwrap().expect("budget must be written");
+        assert_eq!(b.fixed_ms, 5000);
+        assert_eq!(b.add_ms, 20000);
+        assert_eq!(b.source, crate::autoplay::budget::BudgetSource::DealTile);
+        assert!(b.elapsed_ms() < 1000, "opened_at must be fresh");
+    }
+
+    /// An action with no operation list closes the window: the slot is
+    /// cleared, not left holding the previous window's budget.
+    #[test]
+    fn budget_cleared_when_no_operation() {
+        let (mut bridge, slot) = budget_bridge(2);
+        bridge.dispatch(&action_msg(
+            "ActionDealTile",
+            json!({
+                "seat": 2,
+                "tile": "1m",
+                "operation": { "seat": 2, "time_fixed": 5000, "time_add": 0 },
+            }),
+        ));
+        assert!(slot.read().unwrap().is_some());
+
+        // Another seat draws; no operation for us. `operation` arrives as
+        // JSON null on such frames (skip_default_fields(false)).
+        bridge.dispatch(&action_msg(
+            "ActionDealTile",
+            json!({ "seat": 0, "tile": "", "operation": null }),
+        ));
+        assert!(
+            slot.read().unwrap().is_none(),
+            "slot must be cleared when no window is open"
+        );
+    }
+
+    /// Defensive: an operation list addressed to a different seat (the
+    /// server never sends these today) must not be treated as our budget.
+    #[test]
+    fn budget_ignores_other_seat_operation() {
+        let (mut bridge, slot) = budget_bridge(2);
+        bridge.dispatch(&action_msg(
+            "ActionDealTile",
+            json!({
+                "seat": 1,
+                "tile": "",
+                "operation": { "seat": 1, "time_fixed": 5000, "time_add": 0 },
+            }),
+        ));
+        assert!(slot.read().unwrap().is_none());
+    }
+
+    /// Regression: a `GameRestore` replay must not clobber the live slot
+    /// with each historical window. Only the window still open at the end
+    /// of the replay is committed, with `opened_at` backdated by
+    /// `passed_waiting_time` so the delay model knows how much of the
+    /// window is already gone.
+    ///
+    /// `SYNC_GAME_SAMPLE`'s final action (step 31) is our seat-3 draw
+    /// carrying `operation { seat: 3, time_fixed: 300000 }`, and the
+    /// restore reports `passed_waiting_time: 16`.
+    #[test]
+    fn game_restore_commits_only_final_window_backdated() {
+        let slot = crate::autoplay::budget::new_shared();
+        let mut bridge = seated_for_sample().with_time_budget(Some(slot.clone()));
+
+        // Pretend a stale window from before the disconnect is in the slot.
+        *slot.write().unwrap() = Some(TimeBudget {
+            fixed_ms: 1,
+            add_ms: 1,
+            opened_at: Instant::now(),
+            source: BudgetSource::DiscardTile,
+        });
+
+        let payload: JsonValue = serde_json::from_str(SYNC_GAME_SAMPLE).unwrap();
+        bridge.dispatch(&resp(METHOD_SYNC_GAME, payload));
+
+        let b = slot
+            .read()
+            .unwrap()
+            .expect("final window must be committed");
+        assert_eq!(b.fixed_ms, 300_000, "wire value of the final window");
+        assert_eq!(b.source, BudgetSource::DealTile);
+        assert!(
+            b.elapsed_ms() >= 16_000,
+            "opened_at must be backdated by passed_waiting_time (got {}ms)",
+            b.elapsed_ms()
+        );
+        assert!(!bridge.replaying, "replay flag must be reset");
+    }
+
+    /// Regression: chankan / babei windows (`ActionAnGangAddGang`,
+    /// `ActionBaBei`) carry an operation too — they must fill the slot,
+    /// not fall through and clear it.
+    #[test]
+    fn budget_covers_kan_and_babei_windows() {
+        let (mut bridge, slot) = budget_bridge(2);
+        bridge.dispatch(&action_msg(
+            "ActionAnGangAddGang",
+            json!({
+                "seat": 0,
+                "tiles": "1m",
+                "type": 2,
+                "operation": { "seat": 2, "time_fixed": 5000, "time_add": 0 },
+            }),
+        ));
+        let b = slot
+            .read()
+            .unwrap()
+            .expect("chankan window must fill the slot");
+        assert_eq!(
+            b.source,
+            crate::autoplay::budget::BudgetSource::AnGangAddGang
+        );
+    }
+
+    /// Regression: `time_fixed == 0` has unknown semantics (possibly an
+    /// unlimited room) — treat as no budget instead of creating a
+    /// zero-width window that floors every delay.
+    #[test]
+    fn budget_zero_fixed_time_means_no_budget() {
+        let (mut bridge, slot) = budget_bridge(2);
+        bridge.dispatch(&action_msg(
+            "ActionDealTile",
+            json!({
+                "seat": 2,
+                "tile": "1m",
+                "operation": { "seat": 2, "time_fixed": 0, "time_add": 20000 },
+            }),
+        ));
+        assert!(slot.read().unwrap().is_none());
+    }
+
+    /// New-game boundaries clear the slot: authGame response and
+    /// NotifyGameEndResult.
+    #[test]
+    fn budget_cleared_at_game_boundaries() {
+        let (mut bridge, slot) = budget_bridge(2);
+        bridge.dispatch(&action_msg(
+            "ActionDealTile",
+            json!({
+                "seat": 2,
+                "tile": "1m",
+                "operation": { "seat": 2, "time_fixed": 5000, "time_add": 0 },
+            }),
+        ));
+        assert!(slot.read().unwrap().is_some());
+        bridge.dispatch(&ParsedMessage {
+            msg_type: MessageType::Notify,
+            msg_id: None,
+            method_name: Arc::from(METHOD_NOTIFY_GAME_END_RESULT),
+            payload: json!({ "result": {} }),
+        });
+        assert!(slot.read().unwrap().is_none());
     }
 }

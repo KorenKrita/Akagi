@@ -355,7 +355,15 @@
       "hover_delay_hint": "雀魂判定牌面点击需要在 mousedown 前悬停 100ms 以上。低于此值点击可能被吃掉。",
       "click_hold": "按住时间 (ms)",
       "dealer_first_discard_extra_delay": "庄家首打额外延迟 (ms)",
-      "dealer_first_discard_extra_delay_hint": "庄家被发 14 张牌时雀魂会播放整理手牌动画，期间的点击会被吃掉。约 2000ms 可覆盖大多数设备。"
+      "dealer_first_discard_extra_delay_hint": "庄家被发 14 张牌时雀魂会播放整理手牌动画，期间的点击会被吃掉。约 2000ms 可覆盖大多数设备。",
+      "delay_mode": "延迟模型",
+      "delay_mode_lua": "Lua 脚本（拟真人，推荐）",
+      "delay_mode_legacy": "旧版（固定随机延迟）",
+      "delay_mode_lua_help": "延迟由配置文件旁的 delay.lua 决定，首次使用时会自动生成一份以段位战实测数据校准的拟真人模型。可自由编辑，保存即热重载；删除文件即可还原默认。脚本出错时由内置模型接管。",
+      "min_delay": "最小延迟（ms）",
+      "min_delay_hint": "所有动作的安全下限：雀魂需要时间渲染画面，过早点击会被吃掉。两种模式均适用，脚本无法低于此值。",
+      "min_button_delay": "按钮最小延迟（ms）",
+      "min_button_delay_hint": "吃/碰/杠/和/跳过/立直等按钮的更高下限——按钮要等打牌动画结束加上自身弹出动画才会出现，比手牌渲染更晚。若仍出现按钮没点到的情况请调高此值。"
     },
     "overlay": "建议悬浮窗",
     "overlay_enabled": "显示悬浮窗",
