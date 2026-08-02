@@ -12,6 +12,32 @@ Handles loading and deserializing `config.toml` into typed Rust structs.
    freshly written file is then loaded so the next launch picks it up.
 5. If that write fails, fall back to in-memory built-in defaults.
 
+## Saving (`merge.rs`)
+
+`ipc::commands::persist_config` does **not** serialize `AppConfig` over the
+file. `config.toml` is resolved from a shared location, so it can hold keys
+this build never declared — another Akagi build's, or the user's own notes —
+and every section struct is `#[serde(default)]`, so loading silently drops
+them. Serializing back over the file would then delete them for good, along
+with every comment.
+
+`merge_into(&config, &existing)` parses the file with `toml_edit`, writes only
+the keys this build produces, and leaves everything else (unknown sections,
+unknown keys inside known sections, comments, blank lines, key order) exactly
+where it is. It is idempotent: saving twice produces identical bytes. If the
+file on disk isn't valid TOML there is nothing to merge into, and
+`persist_config` falls back to a full rewrite — which is also what the app
+already assumed at load time, since `load_config` falls back to defaults on a
+parse error.
+
+One thing to keep in step: `OPAQUE_TABLES` in `merge.rs` lists the dotted paths
+of map-like tables (`HashMap`/`BTreeMap` fields, currently
+`autoplay.delay.lognormal`). Those are replaced wholesale instead of merged,
+because merging a map by key would make a deleted entry immortal — nothing in
+the new document names it, so nothing overwrites it. **Add the path of any new
+map-like config field there**, or users won't be able to delete entries from
+it.
+
 ## Adding a new config section
 
 1. Create `src/config/foo.rs` with your struct:
