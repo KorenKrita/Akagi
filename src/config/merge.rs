@@ -324,6 +324,39 @@ level = 3
         assert!(out.contains("[overlay]"), "{out}");
     }
 
+    /// A hand-written file may use dotted keys where we emit header tables
+    /// (`delay.mode = "legacy"` inside `[autoplay]`). Merging into a dotted
+    /// table must still produce a document that parses, with the user's value
+    /// updated and everything else intact.
+    #[test]
+    fn dotted_keys_in_the_existing_file_still_merge() {
+        let existing = "\
+[autoplay]
+enabled = true
+delay.mode = \"legacy\"
+delay.some_future_knob = 1
+";
+        let mut cfg = AppConfig::default();
+        cfg.autoplay.enabled = true;
+        cfg.autoplay.delay.min_delay_ms = 1234;
+
+        let out = merge_into(&cfg, existing).unwrap();
+        let back: AppConfig = toml::from_str(&out).unwrap();
+
+        assert!(back.autoplay.enabled);
+        assert_eq!(back.autoplay.delay.min_delay_ms, 1234);
+        assert_eq!(back.autoplay.delay.mode, super::super::DelayMode::Lua);
+        assert!(
+            out.contains("delay.some_future_knob = 1"),
+            "unknown dotted key was dropped:\n{out}"
+        );
+        assert_eq!(
+            merge_into(&cfg, &out).unwrap(),
+            out,
+            "second save changed the file"
+        );
+    }
+
     /// Invalid TOML has no document to merge into; the caller needs the error
     /// rather than a silently mangled file.
     #[test]
