@@ -49,6 +49,13 @@ Layers, in order:
    clicks are silently lost) and the dealing-animation wait. Applied
    after the caps; a script cannot go below them.
 
+The policy's output is the target **server-observed total** for the
+window. `majsoul::push_pre_delay` converts it to a sleep by deducting
+both the time already elapsed (network + bot inference, from the budget
+snapshot) and the upcoming click sequence's own duration (hover + hold +
+candidate clicks), then re-applies the functional floor so the first
+click still lands after the UI is ready.
+
 ### Adding a new delay input
 
 1. Add the field to `DelayInput` (`delay/mod.rs`) and derive it in

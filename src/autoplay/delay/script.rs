@@ -779,6 +779,47 @@ mod tests {
         assert!(claims[claims.len() / 2] < med);
     }
 
+    /// Regression: bots that report flat policy probabilities (top well
+    /// under 0.60 on nearly every decision — e.g. the native bot's HUD
+    /// probs) used to trip a `top_prob < 0.60 → routine × 0.3` rule in
+    /// the bundled script, all but eliminating the fast "routine flick"
+    /// cluster and inflating every discard. Flat probs must keep the
+    /// same routine odds as no probs at all.
+    #[test]
+    fn bundled_default_flat_probs_keep_routine_fraction() {
+        let s = DelayScript::compile(DEFAULT_SCRIPT, "delay_default.lua").unwrap();
+        let cfg = MajsoulAutoplayConfig::default();
+        let d = DelayModelConfig::default();
+
+        // Tsumogiri honor: the bucket with the largest routine weight
+        // (0.15). With the collapse rule that dropped to 0.045, pushing
+        // the fast (≤1.2s) fraction from ~30% down to ~24%.
+        let fast_fraction = |probs: Option<crate::autoplay::delay::DecisionProbs>| {
+            let n = 3000;
+            let fast = (0..n)
+                .filter(|_| {
+                    let mut i = base_input(&cfg, &d);
+                    i.is_tsumogiri = true;
+                    i.tile_class = Some(crate::autoplay::delay::TileClass::Honor);
+                    i.probs = probs;
+                    s.try_decide(&i).unwrap().total_target_ms <= 1200
+                })
+                .count();
+            fast as f64 / n as f64
+        };
+
+        // Flat probs, margin above the near-tie threshold so only the
+        // removed rule could have fired.
+        let flat = fast_fraction(Some(crate::autoplay::delay::DecisionProbs {
+            top: 0.11,
+            second: Some(0.08),
+        }));
+        assert!(
+            flat > 0.27,
+            "flat-prob fast fraction {flat:.3} — routine collapse is back"
+        );
+    }
+
     /// `ensure_default` generates the bundled script once and never
     /// overwrites user edits.
     #[test]

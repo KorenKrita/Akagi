@@ -338,19 +338,32 @@ fn push_pre_delay(
     let follow_up = kind == DecisionKind::Dahai && ctx.reach_state == ReachState::AwaitingDahai;
 
     // Convert target total time to a sleep: subtract what the window has
-    // already consumed. Without a budget there is no window clock — sleep
-    // the target verbatim (legacy behaviour).
+    // already consumed AND what the click sequence itself will take —
+    // the target is the server-observed total, and hover/hold/candidate
+    // clicks all land after this sleep. Without a budget there is no
+    // window clock — only the click overhead is deducted.
     let sleep = match ctx.budget {
         Some(b) if follow_up => {
-            let residual = decision.total_target_ms.saturating_sub(b.elapsed_ms);
+            let residual = decision
+                .total_target_ms
+                .saturating_sub(b.elapsed_ms)
+                .saturating_sub(click_overhead_ms);
             let remaining =
                 delay::budget_cap(&input, decision.allow_bank).saturating_sub(b.elapsed_ms);
             residual.min(remaining).max(delay_cfg.min_delay_ms)
         }
-        Some(b) => decision.total_target_ms.saturating_sub(b.elapsed_ms),
+        Some(b) => decision
+            .total_target_ms
+            .saturating_sub(b.elapsed_ms)
+            .saturating_sub(click_overhead_ms),
         None if follow_up => delay_cfg.min_delay_ms,
-        None => decision.total_target_ms,
+        None => decision.total_target_ms.saturating_sub(click_overhead_ms),
     };
+    // The overhead deduction must not undercut UI readiness: the first
+    // click still has to land after the functional floor. Time already
+    // elapsed in the window counts toward that floor.
+    let elapsed = ctx.budget.map_or(0, |b| b.elapsed_ms);
+    let sleep = sleep.max(delay::functional_floor(&input).saturating_sub(elapsed));
     steps.push(Step::Sleep { duration_ms: sleep });
 }
 
@@ -1039,6 +1052,108 @@ mod tests {
                 Some(Step::Sleep { duration_ms }) if *duration_ms == floor
             ),
             "unbudgeted follow-up must sleep exactly the UI floor: {:?}",
+            result.steps.first()
+        );
+    }
+
+    /// Regression: the click sequence (hover + hold + candidate clicks)
+    /// lands *after* the pre-click sleep, so it must be deducted from
+    /// the target — otherwise every action systematically overruns the
+    /// modelled server-observed total by the click overhead.
+    #[test]
+    fn click_overhead_is_deducted_from_sleep() {
+        let script = crate::autoplay::delay::DelayScript::compile(
+            "function decide_delay(ctx) return { delay_ms = 3000 } end",
+            "test",
+        )
+        .unwrap();
+        let snap = snapshot_with_hand(0, vec!["1m", "2m", "3m"]);
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "3m".into(),
+            tsumogiri: false,
+        };
+        let mut cfg_ref = cfg();
+        cfg_ref.hover_delay_ms = 200;
+        cfg_ref.click_hold_ms = 100; // single-click dahai → 300ms overhead
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+
+        // No budget clock: target minus the click overhead.
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms: 2700 })
+            ),
+            "no-budget sleep must be target − overhead: {:?}",
+            result.steps.first()
+        );
+
+        // With a budget clock: elapsed time comes off as well.
+        ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
+            fixed_ms: 60_000,
+            add_ms: 0,
+            elapsed_ms: 500,
+        });
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms: 2200 })
+            ),
+            "budgeted sleep must be target − elapsed − overhead: {:?}",
+            result.steps.first()
+        );
+    }
+
+    /// The overhead deduction must not undercut UI readiness: a target
+    /// sitting on the functional floor keeps its full pre-click pause.
+    #[test]
+    fn overhead_deduction_keeps_ui_floor() {
+        let script = crate::autoplay::delay::DelayScript::compile(
+            "function decide_delay(ctx) return { delay_ms = 0 } end",
+            "test",
+        )
+        .unwrap();
+        let snap = snapshot_with_hand(0, vec!["1m", "2m", "3m"]);
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "3m".into(),
+            tsumogiri: false,
+        };
+        let mut cfg_ref = cfg();
+        cfg_ref.hover_delay_ms = 200;
+        cfg_ref.click_hold_ms = 100;
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+        let floor = ctx.delay_cfg.min_delay_ms;
+
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms }) if *duration_ms == floor
+            ),
+            "sleep must not dip below the UI-readiness floor: {:?}",
             result.steps.first()
         );
     }

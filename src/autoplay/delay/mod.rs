@@ -3,8 +3,9 @@
 //! The model computes a **target total thinking time** for the current
 //! decision window — the interval the server observes between opening the
 //! window and receiving our action. That interval already contains network
-//! latency, proxy overhead and bot inference, so the caller converts the
-//! target into a sleep with `target - elapsed_since_window_opened` (see
+//! latency, proxy overhead, bot inference and the click sequence itself,
+//! so the caller converts the target into a sleep with
+//! `target - elapsed_since_window_opened - click_overhead` (see
 //! `majsoul::push_pre_delay`), not by sleeping the target verbatim.
 //!
 //! Layering:

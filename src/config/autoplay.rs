@@ -188,7 +188,7 @@ pub struct MajsoulAutoplayConfig {
     /// Empirically Laya's input system samples hover state before a
     /// mousedown registers a hit on the tile sprite — clicks issued
     /// without a hover delay (or shorter than ~100ms) get dropped on
-    /// the floor. Default 150ms; do not lower below 100ms.
+    /// the floor. Default 200ms; do not lower below 100ms.
     pub hover_delay_ms: u32,
     /// How long to hold the mouse button down between mousePressed and
     /// mouseReleased. Non-zero so the engine doesn't collapse the pair
@@ -209,8 +209,8 @@ impl Default for MajsoulAutoplayConfig {
             pre_click_delay_min_ms: 1000,
             pre_click_delay_max_ms: 3000,
             inter_click_delay_ms: 300,
-            hover_delay_ms: 150,
-            click_hold_ms: 50,
+            hover_delay_ms: 200,
+            click_hold_ms: 100,
             dealer_first_discard_extra_delay_ms: 2000,
         }
     }

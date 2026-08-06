@@ -84,11 +84,13 @@ local OTHER = {
 local function routine_probability(ctx, giri)
   local p = (ROUTINE[giri] or {})[ctx.tile_class or "middle"] or 0.04
   -- The bot's confidence is a good proxy for "this tile was already
-  -- decided": a dominant top candidate doubles the routine odds, a
-  -- contested one collapses them.
+  -- decided": a dominant top candidate doubles the routine odds.
   if ctx.top_prob ~= nil then
     if ctx.top_prob > 0.97 then p = p * 1.8 end
-    if ctx.top_prob < 0.60 then p = p * 0.3 end
+    -- Disabled: some bots report flat policy probabilities (top well
+    -- under 0.60 on nearly every decision), which turned this into a
+    -- permanent slowdown rather than a "contested call" signal.
+    -- if ctx.top_prob < 0.60 then p = p * 0.3 end
   end
   -- A riichi on the table means every discard gets a safety read.
   if ctx.opponent_riichi then p = p * 0.4 end
