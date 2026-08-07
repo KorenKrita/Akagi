@@ -8,6 +8,7 @@
 //! See `README.md` in this directory for the contributor-facing how-to.
 
 pub mod api;
+pub mod flya;
 pub mod install;
 pub mod manager;
 pub mod manifest;

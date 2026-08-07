@@ -17,6 +17,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -70,7 +77,25 @@ export function NativeApiFields({
   const [err, setErr] = useState<string | null>(null)
 
   const set = (patch: Partial<NativeApiConfig>) => onChange({ ...value, ...patch })
-  const hasUrlKey = value.base_url.trim() !== '' && value.key.trim() !== ''
+  const provider = value.provider ?? 'ot3'
+  const isFlya = provider === 'flya'
+  const activeBaseUrl = isFlya ? (value.flya_base_url ?? 'https://api.nashout.com') : value.base_url
+  const activeKey = isFlya ? (value.flya_key ?? '') : value.key
+  const activeModel4p = isFlya ? (value.flya_model_4p ?? '') : value.model_4p
+  const activeModel3p = isFlya ? (value.flya_model_3p ?? '') : value.model_3p
+  const hasUrlKey = activeBaseUrl.trim() !== '' && activeKey.trim() !== ''
+  const setActive = (patch: { base_url?: string; key?: string; model_4p?: string; model_3p?: string }) => {
+    if (isFlya) {
+      set({
+        ...(patch.base_url !== undefined && { flya_base_url: patch.base_url }),
+        ...(patch.key !== undefined && { flya_key: patch.key }),
+        ...(patch.model_4p !== undefined && { flya_model_4p: patch.model_4p }),
+        ...(patch.model_3p !== undefined && { flya_model_3p: patch.model_3p }),
+      })
+    } else {
+      set(patch)
+    }
+  }
 
   // The server URL is a developer-only field: pointing a novice at a rogue
   // server is the obvious scam vector, so the input stays locked unless
@@ -89,9 +114,11 @@ export function NativeApiFields({
   }, [value])
 
   const queryModels = async (v: NativeApiConfig): Promise<ModelInfo[]> => {
+    const flya = (v.provider ?? 'ot3') === 'flya'
     const list = await invoke<ModelInfo[]>('native_api_models', {
-      baseUrl: v.base_url,
-      key: v.key,
+      baseUrl: flya ? (v.flya_base_url ?? 'https://api.nashout.com') : v.base_url,
+      key: flya ? (v.flya_key ?? '') : v.key,
+      provider: v.provider ?? 'ot3',
       useSystemProxy: v.use_system_proxy,
     })
     setModels(list)
@@ -103,7 +130,10 @@ export function NativeApiFields({
   // for that mode. Never clobbers a model the user already chose.
   const toggleEnabled = async (on: boolean) => {
     const next = { ...value, enabled: on }
-    if (!on || !(next.base_url.trim() && next.key.trim())) {
+    const nextFlya = (next.provider ?? 'ot3') === 'flya'
+    const nextBase = nextFlya ? (next.flya_base_url ?? 'https://api.nashout.com') : next.base_url
+    const nextKey = nextFlya ? (next.flya_key ?? '') : next.key
+    if (!on || !(nextBase.trim() && nextKey.trim())) {
       onChange(next)
       return
     }
@@ -119,9 +149,14 @@ export function NativeApiFields({
       // Fill only still-empty model slots so a model the user just chose wins.
       const cur = valueRef.current
       const filled = { ...cur }
-      if (!filled.model_4p && first4p) filled.model_4p = first4p
-      if (!filled.model_3p && first3p) filled.model_3p = first3p
-      if (filled.model_4p !== cur.model_4p || filled.model_3p !== cur.model_3p) {
+      if (nextFlya) {
+        if (!filled.flya_model_4p && first4p) filled.flya_model_4p = first4p
+        if (!filled.flya_model_3p && first3p) filled.flya_model_3p = first3p
+      } else {
+        if (!filled.model_4p && first4p) filled.model_4p = first4p
+        if (!filled.model_3p && first3p) filled.model_3p = first3p
+      }
+      if (JSON.stringify(filled) !== JSON.stringify(cur)) {
         onChange(filled)
       }
     } catch (e) {
@@ -142,8 +177,9 @@ export function NativeApiFields({
     try {
       setStatus(
         await invoke<KeyStatus>('native_api_key_status', {
-          baseUrl: value.base_url,
-          key: value.key,
+          baseUrl: activeBaseUrl,
+          key: activeKey,
+          provider,
           useSystemProxy: value.use_system_proxy,
         }),
       )
@@ -189,7 +225,7 @@ export function NativeApiFields({
   }
 
   const health = async () => {
-    if (value.base_url.trim() === '') {
+    if (activeBaseUrl.trim() === '') {
       setErr(t('bots.api.need_url'))
       return
     }
@@ -197,7 +233,9 @@ export function NativeApiFields({
     setErr(null)
     try {
       const h = await invoke<{ status: string; models: string[] }>('native_api_health', {
-        baseUrl: value.base_url,
+        baseUrl: activeBaseUrl,
+        key: activeKey,
+        provider,
         useSystemProxy: value.use_system_proxy,
       })
       toast.success(t('bots.api.health_ok', { status: h.status }), {
@@ -214,6 +252,28 @@ export function NativeApiFields({
     <div className="grid gap-4">
       <p className="text-sm text-muted-foreground">{t('bots.api.desc')}</p>
       <p className="text-xs text-muted-foreground -mt-2">{t('bots.api.apply_immediately')}</p>
+
+      <div className="grid gap-1.5">
+        <Label>{t('bots.api.provider')}</Label>
+        <Select
+          value={provider}
+          onValueChange={(next: 'ot3' | 'flya') => {
+            set({ provider: next })
+            setStatus(null)
+            setModels(null)
+            setErr(null)
+          }}
+        >
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ot3">OT3</SelectItem>
+            <SelectItem value="flya">FlyA</SelectItem>
+          </SelectContent>
+        </Select>
+        <span className="text-xs text-muted-foreground">
+          {t(isFlya ? 'bots.api.provider_flya_hint' : 'bots.api.provider_ot3_hint')}
+        </span>
+      </div>
 
       <div className="flex items-center justify-between gap-4">
         <div className="flex flex-col">
@@ -235,9 +295,9 @@ export function NativeApiFields({
           {!devMode && <Lock className="h-3 w-3 text-muted-foreground" />}
         </Label>
         <Input
-          value={value.base_url}
-          onChange={(e) => set({ base_url: e.target.value })}
-          placeholder="https://mjapi.shinkuan.me"
+          value={activeBaseUrl}
+          onChange={(e) => setActive({ base_url: e.target.value })}
+          placeholder={isFlya ? 'https://api.nashout.com' : 'https://mjapi.shinkuan.me'}
           autoComplete="off"
           spellCheck={false}
           disabled={!devMode}
@@ -260,8 +320,8 @@ export function NativeApiFields({
         <div className="flex gap-2">
           <Input
             type={showKey ? 'text' : 'password'}
-            value={value.key}
-            onChange={(e) => set({ key: e.target.value })}
+            value={activeKey}
+            onChange={(e) => setActive({ key: e.target.value })}
             placeholder="••••••••••••••••••••••••••••••••"
             autoComplete="off"
             spellCheck={false}
@@ -283,8 +343,8 @@ export function NativeApiFields({
         <div className="grid gap-1.5">
           <Label>{t('bots.api.model_4p')}</Label>
           <Input
-            value={value.model_4p}
-            onChange={(e) => set({ model_4p: e.target.value })}
+            value={activeModel4p}
+            onChange={(e) => setActive({ model_4p: e.target.value })}
             placeholder="4p-model"
             autoComplete="off"
             spellCheck={false}
@@ -294,8 +354,8 @@ export function NativeApiFields({
         <div className="grid gap-1.5">
           <Label>{t('bots.api.model_3p')}</Label>
           <Input
-            value={value.model_3p}
-            onChange={(e) => set({ model_3p: e.target.value })}
+            value={activeModel3p}
+            onChange={(e) => setActive({ model_3p: e.target.value })}
             placeholder="3p-model"
             autoComplete="off"
             spellCheck={false}
@@ -319,7 +379,7 @@ export function NativeApiFields({
                 variant="secondary"
                 className="h-7 font-mono text-xs"
                 title={m.desc}
-                onClick={() => set(m.game === '3p' ? { model_3p: m.id } : { model_4p: m.id })}
+                onClick={() => setActive(m.game === '3p' ? { model_3p: m.id } : { model_4p: m.id })}
               >
                 {m.id}
               </Button>
@@ -365,21 +425,25 @@ export function NativeApiFields({
           <Activity className={`h-4 w-4 ${checkingHealth ? 'animate-spin' : ''}`} />
           {t('bots.api.health')}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setRedeemOpen(true)} className="gap-1.5">
-          <Ticket className="h-4 w-4" />
-          {t('bots.api.redeem')}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setBuyOpen(true)} className="gap-1.5">
-          <ShoppingCart className="h-4 w-4" />
-          {t('bots.api.buy')}
-        </Button>
+        {!isFlya && (
+          <>
+            <Button variant="outline" size="sm" onClick={() => setRedeemOpen(true)} className="gap-1.5">
+              <Ticket className="h-4 w-4" />
+              {t('bots.api.redeem')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setBuyOpen(true)} className="gap-1.5">
+              <ShoppingCart className="h-4 w-4" />
+              {t('bots.api.buy')}
+            </Button>
+          </>
+        )}
       </div>
 
-      {purchasePhase !== 'idle' && !buyOpen && (
+      {!isFlya && purchasePhase !== 'idle' && !buyOpen && (
         <PurchaseChip phase={purchasePhase} onOpen={() => setBuyOpen(true)} />
       )}
 
-      {redeemOpen && (
+      {!isFlya && redeemOpen && (
         <RedeemDialog
           baseUrl={value.base_url}
           useSystemProxy={value.use_system_proxy}
@@ -389,7 +453,7 @@ export function NativeApiFields({
         />
       )}
 
-      {buyOpen && (
+      {!isFlya && buyOpen && (
         <PurchaseDialog
           baseUrl={value.base_url}
           useSystemProxy={value.use_system_proxy}

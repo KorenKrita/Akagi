@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+/// Remote inference protocol selected by the user.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiProvider {
+    #[default]
+    Ot3,
+    Flya,
+}
+
 /// Optional cloud-inference settings for the built-in (native) bot.
 ///
 /// When [`NativeApiConfig::is_active`] is true, the built-in bot proxies each
@@ -20,6 +29,9 @@ pub struct NativeApiConfig {
     /// Route built-in-bot decisions through the remote API. Ignored unless a
     /// `base_url` and `key` are also set (see [`NativeApiConfig::is_active`]).
     pub enabled: bool,
+    /// Which remote protocol to use. Existing configs omit this field and
+    /// therefore remain on OT3.
+    pub provider: ApiProvider,
     /// Base URL of the inference server, e.g. `https://host` or
     /// `http://127.0.0.1:8080`. A trailing slash is tolerated.
     pub base_url: String,
@@ -32,21 +44,33 @@ pub struct NativeApiConfig {
     pub model_3p: String,
     /// Use the operating system proxy for online API and key-purchase traffic.
     pub use_system_proxy: bool,
+    /// FlyA settings are kept separately so switching providers never
+    /// overwrites the user's OT3 credentials or model choices.
+    pub flya_base_url: String,
+    pub flya_key: String,
+    pub flya_model_4p: String,
+    pub flya_model_3p: String,
 }
 
 /// Default inference server. Pre-filled so users don't have to type it; the API
 /// still stays inactive until they enable it and paste a key.
 pub const DEFAULT_API_BASE_URL: &str = "https://mjapi.shinkuan.me";
+pub const DEFAULT_FLYA_BASE_URL: &str = "https://api.nashout.com";
 
 impl Default for NativeApiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            provider: ApiProvider::Ot3,
             base_url: DEFAULT_API_BASE_URL.to_string(),
             key: String::new(),
             model_4p: String::new(),
             model_3p: String::new(),
             use_system_proxy: false,
+            flya_base_url: DEFAULT_FLYA_BASE_URL.to_string(),
+            flya_key: String::new(),
+            flya_model_4p: String::new(),
+            flya_model_3p: String::new(),
         }
     }
 }
@@ -56,16 +80,33 @@ impl NativeApiConfig {
     /// server URL and a key). The manager uses this to decide whether to build
     /// the API-backed runner or the local one.
     pub fn is_active(&self) -> bool {
-        self.enabled && !self.base_url.trim().is_empty() && !self.key.trim().is_empty()
+        self.enabled
+            && !self.active_base_url().trim().is_empty()
+            && !self.active_key().trim().is_empty()
+    }
+
+    pub fn active_base_url(&self) -> &str {
+        match self.provider {
+            ApiProvider::Ot3 => &self.base_url,
+            ApiProvider::Flya => &self.flya_base_url,
+        }
+    }
+
+    pub fn active_key(&self) -> &str {
+        match self.provider {
+            ApiProvider::Ot3 => &self.key,
+            ApiProvider::Flya => &self.flya_key,
+        }
     }
 
     /// Model id to request for the given player count. Empty string ⇒ omit the
     /// `model` field and let the server pick its game default.
     pub fn model_for(&self, num_players: u8) -> &str {
-        if num_players == 3 {
-            &self.model_3p
-        } else {
-            &self.model_4p
+        match (self.provider, num_players) {
+            (ApiProvider::Ot3, 3) => &self.model_3p,
+            (ApiProvider::Ot3, _) => &self.model_4p,
+            (ApiProvider::Flya, 3) => &self.flya_model_3p,
+            (ApiProvider::Flya, _) => &self.flya_model_4p,
         }
     }
 }
@@ -142,5 +183,39 @@ impl Default for BotConfig {
             dir: "mjai_bot".to_string(),
             api: NativeApiConfig::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_api_config_defaults_to_ot3() {
+        let cfg: NativeApiConfig = toml::from_str(
+            r#"enabled = true
+base_url = "https://ot3.example"
+key = "legacy-key"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.provider, ApiProvider::Ot3);
+        assert_eq!(cfg.active_base_url(), "https://ot3.example");
+        assert_eq!(cfg.active_key(), "legacy-key");
+    }
+
+    #[test]
+    fn flya_uses_separate_credentials_and_models() {
+        let cfg = NativeApiConfig {
+            enabled: true,
+            provider: ApiProvider::Flya,
+            flya_key: "flyat_test".into(),
+            flya_model_3p: "flya-3p".into(),
+            ..NativeApiConfig::default()
+        };
+        assert!(cfg.is_active());
+        assert_eq!(cfg.active_base_url(), DEFAULT_FLYA_BASE_URL);
+        assert_eq!(cfg.active_key(), "flyat_test");
+        assert_eq!(cfg.model_for(3), "flya-3p");
     }
 }

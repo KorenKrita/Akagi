@@ -12,13 +12,25 @@ import { create } from 'zustand'
 type ApiStatusStore = {
   degraded: boolean
   error?: string
-  setDegraded: (degraded: boolean, error?: string) => void
+  lastAttemptAt?: number
+  retrying: boolean
+  setHealth: (degraded: boolean, error?: string, attempted?: boolean) => void
+  setRetrying: (retrying: boolean) => void
   reset: () => void
 }
 
 export const useApiStatusStore = create<ApiStatusStore>((set) => ({
   degraded: false,
   error: undefined,
-  setDegraded: (degraded, error) => set({ degraded, error: degraded ? error : undefined }),
-  reset: () => set({ degraded: false, error: undefined }),
+  lastAttemptAt: undefined,
+  retrying: false,
+  setHealth: (degraded, error, attempted = false) =>
+    set((state) => ({
+      degraded,
+      error: degraded ? error : undefined,
+      lastAttemptAt: attempted ? Date.now() : state.lastAttemptAt,
+      retrying: false,
+    })),
+  setRetrying: (retrying) => set({ retrying }),
+  reset: () => set({ degraded: false, error: undefined, lastAttemptAt: undefined, retrying: false }),
 }))

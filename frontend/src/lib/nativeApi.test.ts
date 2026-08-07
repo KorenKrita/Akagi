@@ -56,6 +56,24 @@ describe('checkApiBeforeSave', () => {
     expect(invoke).toHaveBeenCalledWith('native_api_key_status', {
       baseUrl: cfg.base_url,
       key: cfg.key,
+      provider: 'ot3',
+      useSystemProxy: false,
+    })
+  })
+
+  it('checks FlyA with its separate credentials and provider', async () => {
+    invoke.mockResolvedValueOnce({ plan: 'FlyA paygo (active)' })
+    const cfg = api({
+      provider: 'flya',
+      flya_base_url: 'https://api.nashout.com',
+      flya_key: 'flyat_test',
+    })
+    expect(await checkApiBeforeSave(cfg)).toEqual({ ok: true })
+    expect(invoke).toHaveBeenCalledWith('native_api_key_status', {
+      baseUrl: 'https://api.nashout.com',
+      key: 'flyat_test',
+      provider: 'flya',
+      useSystemProxy: false,
     })
   })
 

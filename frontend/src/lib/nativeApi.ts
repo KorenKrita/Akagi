@@ -23,13 +23,18 @@ export type ApiSaveCheck =
  */
 export async function checkApiBeforeSave(api: NativeApiConfig): Promise<ApiSaveCheck> {
   if (!api.enabled) return { ok: true }
-  if (api.base_url.trim() === '' || api.key.trim() === '') {
+  const flya = (api.provider ?? 'ot3') === 'flya'
+  const baseUrl = flya ? (api.flya_base_url ?? 'https://api.nashout.com') : api.base_url
+  const key = flya ? (api.flya_key ?? '') : api.key
+  if (baseUrl.trim() === '' || key.trim() === '') {
     return { ok: false, kind: 'missing' }
   }
   try {
     await invoke<KeyStatus>('native_api_key_status', {
-      baseUrl: api.base_url,
-      key: api.key,
+      baseUrl,
+      key,
+      provider: api.provider ?? 'ot3',
+      useSystemProxy: api.use_system_proxy,
     })
     return { ok: true }
   } catch (e) {

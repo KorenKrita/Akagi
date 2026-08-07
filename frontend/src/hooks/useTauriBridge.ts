@@ -137,10 +137,11 @@ export function useTauriBridge() {
       useNotifyStore.getState().pushToast(n)
       // Drive the persistent "Online API" health indicator (Statusbar) off the
       // same channel the backend uses for degrade/recover toasts.
-      if (n.id === 'native-api-health') {
+      if (n.id?.startsWith('native-api-health')) {
+        const attempted = n.id.includes('-failure-') || n.id.includes('-attempt-')
         useApiStatusStore
           .getState()
-          .setDegraded(n.level === 'warn' || n.level === 'error', n.body)
+          .setHealth(n.level === 'warn' || n.level === 'error', n.body, attempted)
       }
       // Feed env install/sync progress to the blocking overlay (which is
       // shown for the duration of `withInstallBlock`). Ids: `bot-install-*`

@@ -151,11 +151,17 @@ export type AutoplayConfig = {
  *  Mirrors `crate::config::NativeApiConfig`. */
 export type NativeApiConfig = {
   enabled: boolean
+  /** Existing configs default to OT3 in the backend. */
+  provider?: 'ot3' | 'flya'
   base_url: string
   key: string
   model_4p: string
   model_3p: string
   use_system_proxy: boolean
+  flya_base_url?: string
+  flya_key?: string
+  flya_model_4p?: string
+  flya_model_3p?: string
   /** Upstream v3.3.3 custom-proxy fields; optional for configs created by the
    * local system-proxy implementation. */
   proxy_enabled?: boolean

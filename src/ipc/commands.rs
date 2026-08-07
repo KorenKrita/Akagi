@@ -1386,12 +1386,29 @@ pub async fn native_api_redeem(
 pub async fn native_api_key_status(
     base_url: String,
     key: String,
+    provider: Option<crate::config::ApiProvider>,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::api::KeyStatus> {
-    crate::bot::api::ApiClient::new(&base_url, &key)
+    match provider.unwrap_or_default() {
+        crate::config::ApiProvider::Ot3 => crate::bot::api::ApiClient::new_with_proxy(
+            &base_url,
+            &key,
+            use_system_proxy.unwrap_or(false),
+        )
         .map_err(|e| format!("{e:#}"))?
         .key_status()
         .await
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| format!("{e:#}")),
+        crate::config::ApiProvider::Flya => crate::bot::flya::FlyApiClient::new_with_proxy(
+            &base_url,
+            &key,
+            use_system_proxy.unwrap_or(false),
+        )
+        .map_err(|e| format!("{e:#}"))?
+        .key_status()
+        .await
+        .map_err(|e| format!("{e:#}")),
+    }
 }
 
 /// List the models a key's plan may use (`GET /v3/models`).
@@ -1399,20 +1416,109 @@ pub async fn native_api_key_status(
 pub async fn native_api_models(
     base_url: String,
     key: String,
+    provider: Option<crate::config::ApiProvider>,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<Vec<crate::bot::api::ModelInfo>> {
-    crate::bot::api::ApiClient::new(&base_url, &key)
+    match provider.unwrap_or_default() {
+        crate::config::ApiProvider::Ot3 => crate::bot::api::ApiClient::new_with_proxy(
+            &base_url,
+            &key,
+            use_system_proxy.unwrap_or(false),
+        )
         .map_err(|e| format!("{e:#}"))?
         .models()
         .await
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| format!("{e:#}")),
+        crate::config::ApiProvider::Flya => crate::bot::flya::FlyApiClient::new_with_proxy(
+            &base_url,
+            &key,
+            use_system_proxy.unwrap_or(false),
+        )
+        .map_err(|e| format!("{e:#}"))?
+        .models()
+        .await
+        .map_err(|e| format!("{e:#}")),
+    }
 }
 
 /// Liveness + per-model queue depth (`GET /healthz`, no auth).
 #[tauri::command]
-pub async fn native_api_health(base_url: String) -> CmdResult<crate::bot::api::Health> {
-    crate::bot::api::health(&base_url)
+pub async fn native_api_health(
+    base_url: String,
+    key: Option<String>,
+    provider: Option<crate::config::ApiProvider>,
+    use_system_proxy: Option<bool>,
+) -> CmdResult<crate::bot::api::Health> {
+    match provider.unwrap_or_default() {
+        crate::config::ApiProvider::Ot3 => {
+            crate::bot::api::health_with_proxy(&base_url, use_system_proxy.unwrap_or(false))
+                .await
+                .map_err(|e| format!("{e:#}"))
+        }
+        crate::config::ApiProvider::Flya => crate::bot::flya::FlyApiClient::new_with_proxy(
+            &base_url,
+            key.as_deref().unwrap_or_default(),
+            use_system_proxy.unwrap_or(false),
+        )
+        .map_err(|e| format!("{e:#}"))?
+        .health()
         .await
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| format!("{e:#}")),
+    }
+}
+
+/// Probe the configured inference server immediately and release every live
+/// native bot's circuit breaker so its next real decision retries inference.
+#[tauri::command]
+pub async fn retry_native_api(state: State<'_, AppState>) -> CmdResult<crate::bot::api::Health> {
+    let cfg = state.config.read().await.bot.api.clone();
+    if !cfg.is_active() {
+        return Err("在线 API 尚未完整启用（请检查地址和密钥）".to_string());
+    }
+
+    crate::bot::native::request_api_retry();
+    let result = match cfg.provider {
+        crate::config::ApiProvider::Ot3 => {
+            crate::bot::api::health_with_proxy(cfg.active_base_url(), cfg.use_system_proxy).await
+        }
+        crate::config::ApiProvider::Flya => {
+            match crate::bot::flya::FlyApiClient::new_with_proxy(
+                cfg.active_base_url(),
+                cfg.active_key(),
+                cfg.use_system_proxy,
+            ) {
+                Ok(client) => client.health().await,
+                Err(error) => Err(error),
+            }
+        }
+    };
+
+    match result {
+        Ok(health) => {
+            let _ = state.notify_bus.send(
+                Notification::success("在线推理 API 已连接")
+                    .body("连接探测成功；下一次 Bot 决策将使用在线推理。")
+                    .id(format!(
+                        "{}-attempt-success",
+                        crate::bot::native::NATIVE_API_HEALTH_ID
+                    )),
+            );
+            Ok(health)
+        }
+        Err(error) => {
+            let reason = crate::bot::native::api_failure_reason(&error);
+            let _ = state.notify_bus.send(
+                Notification::warn("在线推理 API 手动重试失败")
+                    .body(reason.clone())
+                    .id(format!(
+                        "{}-failure-{}",
+                        crate::bot::native::NATIVE_API_HEALTH_ID,
+                        ulid::Ulid::new()
+                    )),
+            );
+            Err(reason)
+        }
+    }
 }
 
 // ---------- Self-serve key purchase (PayPal, `/paypal/*`) ----------
@@ -1539,6 +1645,7 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::native_api_key_status,
             $crate::ipc::commands::native_api_models,
             $crate::ipc::commands::native_api_health,
+            $crate::ipc::commands::retry_native_api,
             $crate::ipc::commands::native_api_create_order,
             $crate::ipc::commands::native_api_order_result,
             $crate::ipc::commands::native_api_create_subscription,

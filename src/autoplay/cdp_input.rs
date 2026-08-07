@@ -18,9 +18,161 @@ const WS_HOOK_SCRIPT: &str = r#"
   const NativeWebSocket = window.__akagiNativeWebSocket || window.WebSocket;
   window.__akagiNativeWebSocket = NativeWebSocket;
   window.__akagiSockets = window.__akagiSockets || [];
+
+  // Majsoul's request/response envelope starts with a type byte followed by
+  // a little-endian u16 msg_id.  Autoplay sends through the very same wrapper
+  // as the game client so one monotonically increasing sequence owns the wire
+  // for each WebSocket, regardless of who produced a request.
+  const LIQI_REQUEST = 2;
+  const LIQI_RESPONSE = 3;
+  function nextMsgId(id) {
+    return id === 0xffff ? 1 : id + 1;
+  }
+  function bytesOf(data) {
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (ArrayBuffer.isView(data)) {
+      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    }
+    return null;
+  }
+  function copyWithMsgId(data, msgId) {
+    const source = bytesOf(data);
+    if (!source || source.length < 3) return data;
+    const copy = new Uint8Array(source);
+    copy[1] = msgId & 0xff;
+    copy[2] = msgId >>> 8;
+    if (data instanceof ArrayBuffer) return copy.buffer;
+    if (data instanceof DataView) return new DataView(copy.buffer);
+    if (ArrayBuffer.isView(data) && data.constructor !== Uint8Array) {
+      try { return new data.constructor(copy.buffer); } catch (_) {}
+    }
+    return copy;
+  }
+  function msgIdOf(data, type) {
+    const bytes = bytesOf(data);
+    if (!bytes || bytes.length < 3 || bytes[0] !== type) return null;
+    return bytes[1] | (bytes[2] << 8);
+  }
+
   function remember(ws, url) {
     const resolvedUrl = String(url || ws.url || "");
-    window.__akagiSockets.push({ ws, url: resolvedUrl });
+    const nativeSend = ws.send.bind(ws);
+    const state = {
+      nextMsgId: null,
+      // Wire id -> id supplied by the game/autoplay producer. Responses are
+      // translated through this table before page code can observe them.
+      pendingByWireId: new Map(),
+      // Retained for diagnostics: every non-sequential client id records both
+      // the supplied value and the value placed on the wire.
+      corrections: [],
+    };
+    const entry = { ws, url: resolvedUrl, msgIds: state };
+    window.__akagiSockets.push(entry);
+
+    function prepareRequest(data) {
+      const originalId = msgIdOf(data, LIQI_REQUEST);
+      if (originalId === null) return data;
+
+      // The first uplink request establishes this connection's baseline. All
+      // later requests, including injected autoplay requests, consume exactly
+      // one id from this per-socket sequence.
+      const wireId = state.nextMsgId === null ? originalId : state.nextMsgId;
+      if (state.nextMsgId !== null && originalId !== wireId) {
+        const correction = { original: originalId, expected: wireId };
+        state.corrections.push(correction);
+        if (state.corrections.length > 256) state.corrections.shift();
+        console.warn(
+          `[Akagi] corrected WebSocket msg_id ${originalId} -> ${wireId}`,
+          resolvedUrl
+        );
+      }
+      state.pendingByWireId.set(wireId, originalId);
+      state.nextMsgId = nextMsgId(wireId);
+      return originalId === wireId ? data : copyWithMsgId(data, wireId);
+    }
+
+    // Blob contents are only readable asynchronously. Once one is queued,
+    // queue subsequent sends behind it as well so their wire order and ids
+    // still match the client's call order.
+    let sendQueue = Promise.resolve();
+    let queuedSends = 0;
+    function enqueueSend(task) {
+      queuedSends += 1;
+      sendQueue = sendQueue
+        .then(task)
+        .catch((error) => console.error('[Akagi] WebSocket send translation failed', error))
+        .finally(() => { queuedSends -= 1; });
+    }
+    ws.send = function(data) {
+      if (data instanceof Blob) {
+        enqueueSend(async () => {
+          const buffer = await data.arrayBuffer();
+          const prepared = prepareRequest(buffer);
+          const outgoing = prepared === buffer
+            ? data
+            : new Blob([prepared], { type: data.type });
+          nativeSend(outgoing);
+        });
+        return;
+      }
+      if (queuedSends > 0) {
+        enqueueSend(() => nativeSend(prepareRequest(data)));
+        return;
+      }
+      return nativeSend(prepareRequest(data));
+    };
+
+    // This listener is installed inside the constructor, before the game can
+    // register its own listeners. A translated synthetic event is dispatched
+    // synchronously, preserving listener order and the WebSocket event API.
+    const translatedEvents = new WeakSet();
+    let blobMessages = Promise.resolve();
+    ws.addEventListener('message', (event) => {
+      if (translatedEvents.has(event)) return;
+
+      // `binaryType` defaults to "blob". Queue all Blob events (not only
+      // responses) so the asynchronous conversion cannot reorder a notify
+      // relative to the response before or after it.
+      if (event.data instanceof Blob) {
+        event.stopImmediatePropagation();
+        blobMessages = blobMessages.then(async () => {
+          const buffer = await event.data.arrayBuffer();
+          const wireId = msgIdOf(buffer, LIQI_RESPONSE);
+          let data = event.data;
+          if (wireId !== null && state.pendingByWireId.has(wireId)) {
+            const originalId = state.pendingByWireId.get(wireId);
+            state.pendingByWireId.delete(wireId);
+            if (originalId !== wireId) {
+              data = new Blob([copyWithMsgId(buffer, originalId)], { type: event.data.type });
+            }
+          }
+          const translated = new MessageEvent('message', {
+            data,
+            origin: event.origin,
+            lastEventId: event.lastEventId,
+          });
+          translatedEvents.add(translated);
+          ws.dispatchEvent(translated);
+        }).catch((error) => console.error('[Akagi] WebSocket message translation failed', error));
+        return;
+      }
+
+      const wireId = msgIdOf(event.data, LIQI_RESPONSE);
+      if (wireId === null || !state.pendingByWireId.has(wireId)) return;
+      const originalId = state.pendingByWireId.get(wireId);
+      state.pendingByWireId.delete(wireId);
+      if (originalId === wireId) return;
+
+      event.stopImmediatePropagation();
+      const translated = new MessageEvent('message', {
+        data: copyWithMsgId(event.data, originalId),
+        origin: event.origin,
+        lastEventId: event.lastEventId,
+      });
+      translatedEvents.add(translated);
+      ws.dispatchEvent(translated);
+    });
+
     ws.addEventListener('close', () => {
       window.__akagiSockets = (window.__akagiSockets || []).filter((s) => (s.ws || s) !== ws);
     });
