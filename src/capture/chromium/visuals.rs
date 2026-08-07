@@ -29,19 +29,17 @@ pub struct VisualContext {
     pub game_tracker: Arc<Mutex<GameTracker>>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 struct Slot {
     tile: String,
     x: f64,
     y: f64,
-    #[serde(skip)]
     drawn: bool,
 }
 
 #[derive(Serialize)]
 struct RiskSlot {
-    x: f64,
-    y: f64,
+    tile: String,
     risk: f64,
 }
 
@@ -117,8 +115,7 @@ async fn update_risk(page: &Page, ctx: &VisualContext, analysis: &AnalysisResult
         .filter_map(|slot| {
             let idx = Tile34::from_mjai(&slot.tile)?.idx() as usize;
             Some(RiskSlot {
-                x: slot.x,
-                y: slot.y,
+                tile: slot.tile,
                 risk: *analysis.mixed_risk.get(idx)?,
             })
         })
@@ -258,6 +255,25 @@ mod tests {
         assert_eq!(
             Tile34::from_mjai("5mr").unwrap().idx(),
             Tile34::from_mjai("5m").unwrap().idx()
+        );
+    }
+
+    #[test]
+    fn script_hooks_webgl_material_colour() {
+        for required in [
+            "getContext",
+            "useProgram",
+            "bindTexture",
+            "drawElements",
+            "_MainTex_ST",
+            "_Tint",
+            "_Color",
+        ] {
+            assert!(SCRIPT.contains(required), "missing {required}");
+        }
+        assert!(
+            !SCRIPT.contains("border: `4px"),
+            "risk must not use overlay boxes"
         );
     }
 }
