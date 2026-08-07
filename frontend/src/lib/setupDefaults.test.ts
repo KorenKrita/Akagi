@@ -41,6 +41,8 @@ function makeConfig(over: {
         start_url: 'https://game.maj-soul.com/1/',
         cft_channel: 'stable',
         force_cft: false,
+        show_danger_overlay: false,
+        show_recommendation_overlay: false,
         extra_args: [],
       },
     },

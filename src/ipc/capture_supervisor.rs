@@ -141,8 +141,12 @@ pub async fn spawn_capture_supervisor(state: AppState) -> Result<()> {
         session: state.log_session.clone(),
         platform,
         mjai_bus: state.mjai_bus.clone(),
+        bot_response_bus: state.bot_response_bus.clone(),
+        analysis_bus: state.analysis_bus.clone(),
         notify_bus: state.notify_bus.clone(),
         autoplay: Some(state.autoplay_context.clone()),
+        analysis_cache: state.analysis_cache.clone(),
+        game_tracker: state.game_tracker.clone(),
         http: http_cfg,
     };
     let status_bus = state.capture_status_bus.clone();

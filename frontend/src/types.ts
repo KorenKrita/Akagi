@@ -78,6 +78,8 @@ export type ChromiumConfig = {
   start_url: string
   cft_channel: string
   force_cft: boolean
+  show_danger_overlay: boolean
+  show_recommendation_overlay: boolean
   extra_args: string[]
 }
 

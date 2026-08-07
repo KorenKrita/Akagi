@@ -94,6 +94,10 @@ pub struct ChromiumConfig {
     pub cft_channel: String,
     /// Force using Chrome-for-Testing even when system Chrome is detected.
     pub force_cft: bool,
+    /// Draw deal-in risk colours over the player's hand in controlled Chromium.
+    pub show_danger_overlay: bool,
+    /// Mark the bot's recommended discard over the player's hand.
+    pub show_recommendation_overlay: bool,
     /// Extra CLI args appended after our defaults. Advanced users only.
     pub extra_args: Vec<String>,
 }
@@ -106,6 +110,8 @@ impl Default for ChromiumConfig {
             start_url: "https://game.maj-soul.com/1/".to_string(),
             cft_channel: "stable".to_string(),
             force_cft: false,
+            show_danger_overlay: false,
+            show_recommendation_overlay: false,
             extra_args: vec![],
         }
     }
@@ -162,6 +168,8 @@ mod tests {
                 start_url: "https://example.test/".into(),
                 cft_channel: "131.0.6778.85".into(),
                 force_cft: true,
+                show_danger_overlay: true,
+                show_recommendation_overlay: true,
                 extra_args: vec!["--lang=ja".into()],
             },
             http: Default::default(),
@@ -171,6 +179,8 @@ mod tests {
         assert_eq!(back.mode, CaptureMode::Chromium);
         assert_eq!(back.chromium.executable, "/opt/chrome/chrome");
         assert!(back.chromium.force_cft);
+        assert!(back.chromium.show_danger_overlay);
+        assert!(back.chromium.show_recommendation_overlay);
         assert_eq!(back.chromium.extra_args, vec!["--lang=ja"]);
     }
 

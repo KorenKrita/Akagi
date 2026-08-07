@@ -1012,6 +1012,8 @@ function CaptureCard({
     start_url: platformInfo(draft.platform.kind).defaultStartUrl,
     cft_channel: 'stable',
     force_cft: false,
+    show_danger_overlay: false,
+    show_recommendation_overlay: false,
     extra_args: [],
   }
   const [detected, setDetected] = useState<DetectedBrowser[] | null>(null)
@@ -1169,6 +1171,18 @@ function CaptureCard({
               label={t('settings.force_cft')}
               value={chromium.force_cft}
               onChange={(v) => setChromium({ force_cft: v })}
+            />
+            <Toggle
+              label={t('settings.show_danger_overlay')}
+              hint={t('settings.show_danger_overlay_hint')}
+              value={chromium.show_danger_overlay ?? false}
+              onChange={(v) => setChromium({ show_danger_overlay: v })}
+            />
+            <Toggle
+              label={t('settings.show_recommendation_overlay')}
+              hint={t('settings.show_recommendation_overlay_hint')}
+              value={chromium.show_recommendation_overlay ?? false}
+              onChange={(v) => setChromium({ show_recommendation_overlay: v })}
             />
             <CftPanel chromium={chromium} setChromium={setChromium} />
           </>

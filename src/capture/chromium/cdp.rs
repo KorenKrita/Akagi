@@ -22,6 +22,7 @@
 
 use crate::autoplay::{cdp_input::install_ws_hook, AutoplayContext};
 use crate::bridge::Direction;
+use crate::capture::chromium::visuals::{self, VisualContext};
 use crate::capture::flow::{slugify, FlowBridges};
 use crate::config::HttpCaptureConfig;
 use crate::event_bus::MjaiBus;
@@ -136,6 +137,7 @@ pub async fn run(
     inspector: InspectorWriter,
     autoplay: Option<Arc<AutoplayContext>>,
     http_cfg: HttpCaptureConfig,
+    visuals: Option<VisualContext>,
 ) -> Result<()> {
     info!("CDP connecting to {endpoint}");
     let (browser_owned, mut handler) = Browser::connect(endpoint)
@@ -200,6 +202,7 @@ pub async fn run(
                     inspector.clone(),
                     autoplay.clone(),
                     http_cfg.clone(),
+                    visuals.clone(),
                 )
                 .await
                 {
@@ -243,6 +246,7 @@ async fn attach_page(
     inspector: InspectorWriter,
     autoplay: Option<Arc<AutoplayContext>>,
     http_cfg: HttpCaptureConfig,
+    visuals: Option<VisualContext>,
 ) -> Result<JoinHandle<()>> {
     page.execute(NetworkEnableParams::default())
         .await
@@ -252,6 +256,17 @@ async fn attach_page(
             warn!("autoplay: failed to install WebSocket hook: {e:#}");
         }
     }
+    let visuals_task = if let Some(ctx) = visuals.clone() {
+        match visuals::install(&page, ctx).await {
+            Ok(task) => Some(task),
+            Err(e) => {
+                warn!("failed to install game visuals: {e:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut on_created = page
         .event_listener::<EventWebSocketCreated>()
         .await
@@ -344,6 +359,24 @@ async fn attach_page(
                         let mut b = bridge.lock().expect("bridge mutex poisoned");
                         b.parse(Direction::Down, &payload)
                     };
+                    if visuals.as_ref().is_some_and(|ctx| ctx.show_recommendation)
+                        && !result.events.is_empty()
+                    {
+                        visuals::clear_recommendation(&page).await;
+                    }
+                    if visuals.as_ref().is_some_and(|ctx| ctx.show_danger)
+                        && result.events.iter().any(|event| {
+                            matches!(
+                                event,
+                                crate::schema::MjaiEvent::Hora { .. }
+                                    | crate::schema::MjaiEvent::Ryukyoku { .. }
+                                    | crate::schema::MjaiEvent::EndKyoku
+                                    | crate::schema::MjaiEvent::EndGame
+                            )
+                        })
+                    {
+                        visuals::clear_risk(&page).await;
+                    }
                     if let Some(ctx) = &autoplay {
                         if result
                             .parsed
@@ -524,6 +557,9 @@ async fn attach_page(
                 }
                 else => break,
             }
+        }
+        if let Some(task) = visuals_task {
+            task.abort();
         }
     });
     Ok(handle)
