@@ -130,10 +130,6 @@ export type DelayModelConfig = {
   bank_on_long_thought: boolean
   riichi_extra_ms: number
   kan_extra_ms: number
-  close_margin: number
-  close_margin_extra_ms: number
-  obvious_top_prob: number
-  obvious_max_ms: number
   safety_margin_ms: number
   bank_use_fraction: number
   bank_max_single_ms: number

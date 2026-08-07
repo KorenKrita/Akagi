@@ -758,13 +758,26 @@ mod tests {
             "in-riichi median {riichi_med} off calibration (~1.4s)"
         );
 
-        // Near-tie -> long thought with bank allowed.
-        let mut i = base_input(&cfg, &d);
-        i.probs = Some(crate::autoplay::delay::DecisionProbs {
-            top: 0.40,
-            second: Some(0.399),
-        });
-        assert!(s.try_decide(&i).unwrap().allow_bank);
+        // The default model ignores the bot's probabilities: a near-tie
+        // must not shift the batch median (each batch re-rolls the rng,
+        // so allow generous sampling slack).
+        let mut tie_samples: Vec<u32> = (0..300)
+            .map(|_| {
+                let mut i = base_input(&cfg, &d);
+                i.probs = Some(crate::autoplay::delay::DecisionProbs {
+                    top: 0.40,
+                    second: Some(0.399),
+                });
+                s.try_decide(&i).unwrap().total_target_ms
+            })
+            .collect();
+        tie_samples.sort_unstable();
+        let tie_med = tie_samples[tie_samples.len() / 2] as f64;
+        let ratio = tie_med / med as f64;
+        assert!(
+            (0.8..=1.25).contains(&ratio),
+            "near-tie median {tie_med} vs base {med} — probs must not shift the model"
+        );
 
         // Claim windows are the fast reaction bucket: batch median well
         // under the tedashi one.
@@ -808,11 +821,11 @@ mod tests {
             fast as f64 / n as f64
         };
 
-        // Flat probs, margin above the near-tie threshold so only the
-        // removed rule could have fired.
+        // Flat probs with a tiny margin — the shape that used to trip
+        // both removed rules (routine collapse and near-tie extra time).
         let flat = fast_fraction(Some(crate::autoplay::delay::DecisionProbs {
             top: 0.11,
-            second: Some(0.08),
+            second: Some(0.105),
         }));
         assert!(
             flat > 0.27,

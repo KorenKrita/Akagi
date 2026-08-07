@@ -91,17 +91,6 @@ pub struct DelayModelConfig {
     pub riichi_extra_ms: u32,
     /// Extra target time when the action is a kan declaration, ms. 0 = off.
     pub kan_extra_ms: u32,
-    /// When the top-two candidate probabilities are closer than this, the
-    /// decision counts as "hard": `close_margin_extra_ms` is added and the
-    /// budget layer may dip into the server's extra time pool.
-    pub close_margin: f64,
-    /// Extra target time for a hard decision, ms. 0 = off.
-    pub close_margin_extra_ms: u32,
-    /// When the top candidate's probability exceeds this, the decision
-    /// counts as "obvious" and the target is capped at `obvious_max_ms`.
-    pub obvious_top_prob: f64,
-    /// Cap for obvious decisions, ms. 0 = cap disabled.
-    pub obvious_max_ms: u32,
     /// Reserved headroom inside the server window for network RTT and
     /// scheduling jitter, ms. The soft cap is
     /// `time_fixed - safety_margin - click_overhead`.
@@ -157,10 +146,6 @@ impl Default for DelayModelConfig {
             bank_on_long_thought: true,
             riichi_extra_ms: 0,
             kan_extra_ms: 0,
-            close_margin: 0.005,
-            close_margin_extra_ms: 0,
-            obvious_top_prob: 0.995,
-            obvious_max_ms: 0,
             safety_margin_ms: 1000,
             bank_use_fraction: 0.25,
             bank_max_single_ms: 5000,

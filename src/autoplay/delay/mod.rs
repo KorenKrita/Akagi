@@ -11,8 +11,10 @@
 //! Layering:
 //! - [`decide`] — the pure built-in model. Base distribution (uniform by
 //!   default, log-normal opt-in) plus additive bonuses for decision types
-//!   that genuinely take a human longer (riichi declarable, kan, top-two
-//!   candidates nearly tied) and a cap for obvious decisions. Defaults are
+//!   that genuinely take a human longer (riichi declarable, kan). The
+//!   model deliberately ignores the bot's probability distribution:
+//!   measured bot policies can be nearly flat, which turned every
+//!   confidence-based rule into a permanent bias. Defaults are
 //!   behaviour-equivalent with the historical fixed `uniform(min, max)`.
 //! - Budget enforcement (soft/hard caps from the server-granted
 //!   [`TimeBudget`](crate::autoplay::budget::TimeBudget)) sits on top —
@@ -144,7 +146,8 @@ pub struct DelayInput<'a> {
     pub junme: u32,
     pub legal_action_count: usize,
     /// Normalized top/second candidate probabilities, if the bot's meta
-    /// could be interpreted. See [`probs::normalize_meta`].
+    /// could be interpreted (see [`probs::normalize_meta`]). The built-in
+    /// model ignores them; they are exposed to user Lua scripts only.
     pub probs: Option<DecisionProbs>,
     /// Server time budget for this window, if known.
     pub budget: Option<BudgetSnapshot>,
@@ -192,20 +195,6 @@ pub fn decide<R: Rng + ?Sized>(input: &DelayInput, rng: &mut R) -> DelayDecision
     if input.kind.is_kan() {
         target = target.saturating_add(d.kan_extra_ms);
     }
-    if let Some(p) = input.probs {
-        if let Some(margin) = p.margin() {
-            if margin < d.close_margin {
-                // Genuinely hard call — think longer, and the budget layer
-                // may spend extra time pool on it.
-                target = target.saturating_add(d.close_margin_extra_ms);
-                allow_bank = true;
-            }
-        }
-        if d.obvious_max_ms > 0 && p.top > d.obvious_top_prob {
-            target = target.min(d.obvious_max_ms);
-        }
-    }
-
     // Budget enforcement, then the functional floor. The floor is applied
     // last: clicking into the dealing animation loses the click entirely,
     // which is strictly worse than shaving budget headroom (and in
@@ -572,70 +561,35 @@ mod tests {
         );
     }
 
-    /// A near-tie between the top two candidates marks the decision as
-    /// hard: extra time + permission to use the bank.
+    /// Regression: the built-in model must ignore the bot's probability
+    /// distribution entirely. Confidence-based rules (near-tie extra
+    /// time, obvious-decision caps) turned into permanent biases on bots
+    /// with flat policy probabilities.
     #[test]
-    fn close_margin_marks_hard_decision() {
+    fn probs_do_not_affect_the_decision() {
         let c = cfg();
-        let d = DelayModelConfig {
-            close_margin_extra_ms: 2000,
-            ..uniform()
-        };
-        let mut i = input(&c, &d);
-        i.probs = Some(DecisionProbs {
-            top: 0.41,
-            second: Some(0.409),
-        });
-        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
-        let dec = decide(&i, &mut r);
-        assert!(dec.allow_bank, "near-tie must allow bank");
-        assert!(dec.total_target_ms >= c.pre_click_delay_min_ms + 2000);
-    }
-
-    /// An obvious decision (top prob ~1) is capped when the cap is enabled,
-    /// and uncapped by default.
-    #[test]
-    fn obvious_decision_cap() {
-        let c = cfg();
-        let probs = Some(DecisionProbs {
-            top: 0.999,
-            second: Some(0.001),
-        });
-
-        // Disabled by default: behaves like legacy.
         let d = uniform();
-        let mut i = input(&c, &d);
-        i.probs = probs;
-        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
-        let dec = decide(&i, &mut r);
-        assert!(dec.total_target_ms >= c.pre_click_delay_min_ms);
-
-        let capped = DelayModelConfig {
-            obvious_max_ms: 800,
-            // Below the cap so the cap is observable — the UI-readiness
-            // floor (min_delay_ms) intentionally beats the obvious cap.
-            min_delay_ms: 500,
-            ..uniform()
-        };
-        let mut i = input(&c, &capped);
-        i.probs = probs;
-        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
-        let dec = decide(&i, &mut r);
-        assert!((500..=800).contains(&dec.total_target_ms));
-
-        // And with the default floor, the floor wins over the cap.
-        let floored = DelayModelConfig {
-            obvious_max_ms: 800,
-            ..uniform()
-        };
-        let mut i = input(&c, &floored);
-        i.probs = probs;
-        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
-        let dec = decide(&i, &mut r);
-        assert_eq!(
-            dec.total_target_ms, floored.min_delay_ms,
-            "UI-readiness floor must beat the obvious cap"
-        );
+        for probs in [
+            None,
+            Some(DecisionProbs {
+                top: 0.41,
+                second: Some(0.409), // near-tie
+            }),
+            Some(DecisionProbs {
+                top: 0.999,
+                second: Some(0.001), // obvious
+            }),
+        ] {
+            let mut i = input(&c, &d);
+            i.probs = probs;
+            let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+            let dec = decide(&i, &mut r);
+            let mut r = StdRng::seed_from_u64(AKAGI_SEED);
+            let mut base = input(&c, &d);
+            base.probs = None;
+            let expected = decide(&base, &mut r);
+            assert_eq!(dec, expected, "probs {probs:?} must not change the outcome");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -687,47 +641,25 @@ mod tests {
         assert_eq!(dec.total_target_ms, 5000 - d.safety_margin_ms - 700);
     }
 
-    /// With the long-thought gate off, only a near-tie may spend the
-    /// extra pool, bounded by fraction and absolute single-spend cap —
-    /// and never beyond the hard cap.
+    /// With the long-thought gate off, the built-in model never spends
+    /// the extra pool: the soft cap binds even against a fat bank.
     #[test]
-    fn hard_cap_requires_bank_permission_in_strict_mode() {
+    fn strict_mode_never_spends_bank() {
         let c = tight_budget_cfg();
-        // Near-tie marks allow_bank (a non-zero bonus keeps the rule on).
         let d = DelayModelConfig {
-            close_margin_extra_ms: 1,
             bank_on_long_thought: false,
             ..uniform()
         };
-        let budget = BudgetSnapshot {
+        let mut i = input(&c, &d);
+        i.budget = Some(BudgetSnapshot {
             fixed_ms: 5000,
             add_ms: 20_000,
             elapsed_ms: 0,
-        };
-
-        // Not a near-tie: soft cap despite a fat bank.
-        let mut i = input(&c, &d);
-        i.budget = Some(budget);
+        });
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let dec = decide(&i, &mut r);
         assert!(!dec.allow_bank);
         assert_eq!(dec.total_target_ms, 5000 - d.safety_margin_ms);
-
-        // Near-tie: hard cap = soft + min(20000 * 0.25, bank_max_single).
-        let mut i = input(&c, &d);
-        i.budget = Some(budget);
-        i.probs = Some(DecisionProbs {
-            top: 0.5,
-            second: Some(0.499),
-        });
-        let mut r = StdRng::seed_from_u64(AKAGI_SEED);
-        let dec = decide(&i, &mut r);
-        assert!(dec.allow_bank);
-        let expected_bank = 5000u32.min(d.bank_max_single_ms);
-        assert_eq!(
-            dec.total_target_ms,
-            5000 - d.safety_margin_ms + expected_bank
-        );
     }
 
     /// Default (calibrated) behaviour: a base sample that naturally
@@ -801,17 +733,11 @@ mod tests {
     /// hand tiles (discard animation + button pop-in).
     #[test]
     fn button_decisions_use_button_floor() {
-        let c = cfg();
-        let d = DelayModelConfig {
-            // Force tiny samples so the floor is what decides.
-            obvious_max_ms: 1,
-            obvious_top_prob: 0.5,
-            ..uniform()
-        };
-        let probs = Some(DecisionProbs {
-            top: 0.99,
-            second: Some(0.01),
-        });
+        // Force tiny samples so the floor is what decides.
+        let mut c = cfg();
+        c.pre_click_delay_min_ms = 1;
+        c.pre_click_delay_max_ms = 1;
+        let d = uniform();
 
         for kind in [
             DecisionKind::Chi,
@@ -827,7 +753,6 @@ mod tests {
         ] {
             let mut i = input(&c, &d);
             i.kind = kind;
-            i.probs = probs;
             let mut r = StdRng::seed_from_u64(AKAGI_SEED);
             let dec = decide(&i, &mut r);
             assert_eq!(
@@ -837,8 +762,7 @@ mod tests {
         }
 
         // A plain discard keeps the lower tile floor.
-        let mut i = input(&c, &d);
-        i.probs = probs;
+        let i = input(&c, &d);
         let mut r = StdRng::seed_from_u64(AKAGI_SEED);
         let dec = decide(&i, &mut r);
         assert_eq!(dec.total_target_ms, d.min_delay_ms);
