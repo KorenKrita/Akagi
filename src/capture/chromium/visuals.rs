@@ -274,6 +274,10 @@ mod tests {
         assert!(SCRIPT.contains("Math.abs(st[1] - .25)"));
         assert!(!SCRIPT.contains("getUniformLocation(program, '_Color')"));
         assert!(
+            SCRIPT.find("if (hi < 0)").unwrap() < SCRIPT.find("if (hi === 0)").unwrap(),
+            "over-range risks must clamp to red before the zero-risk branch"
+        );
+        assert!(
             !SCRIPT.contains("border: `4px"),
             "risk must not use overlay boxes"
         );

@@ -28,8 +28,8 @@
   const riskColour = (risk) => {
     const stops = [[0, .55, .72, 1], [5, .5, 1, .55], [10, 1, .78, .4], [16, 1, .4, .4]];
     let hi = stops.findIndex((s) => risk <= s[0]);
-    if (hi <= 0) return stops[0].slice(1);
     if (hi < 0) return stops.at(-1).slice(1);
+    if (hi === 0) return stops[0].slice(1);
     const a = stops[hi - 1], b = stops[hi], t = (risk - a[0]) / (b[0] - a[0]);
     return a.slice(1).map((v, i) => v + (b[i + 1] - v) * t);
   };
