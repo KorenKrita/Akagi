@@ -11,6 +11,9 @@
   const tileFromST = (st) => {
     // Mahjong Soul Unity atlas mapping verified by Sunalamye/Naki.
     if (!st || st.length < 4) return null;
+    // A tile occupies one cell in the 10x4 atlas. Generic Unity UI commonly
+    // uses (1,1,0,0), whose zero offset would otherwise be mistaken for East.
+    if (Math.abs(st[0] - .1) > .015 || Math.abs(st[1] - .25) > .015) return null;
     const u = Math.round(st[2] * 10) / 10;
     const v = Math.round(st[3] * 100) / 100;
     const suit = SUITS[String(v)];
@@ -59,7 +62,8 @@
       let loc = locations.get(program);
       if (loc === undefined) {
         const st = gl.getUniformLocation(program, '_MainTex_ST');
-        const color = gl.getUniformLocation(program, '_Tint') || gl.getUniformLocation(program, '_Color');
+        // Mahjong Soul hand tiles use _Tint; _Color is shared by generic UI.
+        const color = gl.getUniformLocation(program, '_Tint');
         loc = st && color ? { st, color } : null;
         locations.set(program, loc);
       }

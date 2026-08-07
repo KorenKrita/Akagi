@@ -267,10 +267,12 @@ mod tests {
             "drawElements",
             "_MainTex_ST",
             "_Tint",
-            "_Color",
         ] {
             assert!(SCRIPT.contains(required), "missing {required}");
         }
+        assert!(SCRIPT.contains("Math.abs(st[0] - .1)"));
+        assert!(SCRIPT.contains("Math.abs(st[1] - .25)"));
+        assert!(!SCRIPT.contains("getUniformLocation(program, '_Color')"));
         assert!(
             !SCRIPT.contains("border: `4px"),
             "risk must not use overlay boxes"
