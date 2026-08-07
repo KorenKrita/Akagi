@@ -270,9 +270,6 @@ export function NativeApiFields({
             <SelectItem value="flya">FlyA</SelectItem>
           </SelectContent>
         </Select>
-        <span className="text-xs text-muted-foreground">
-          {t(isFlya ? 'bots.api.provider_flya_hint' : 'bots.api.provider_ot3_hint')}
-        </span>
       </div>
 
       <div className="flex items-center justify-between gap-4">

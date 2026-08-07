@@ -508,8 +508,6 @@
     "native_version": "built-in",
     "api": {
       "provider": "API provider",
-      "provider_ot3_hint": "Use the existing OT3 /v3 API. Purchase and redeem tools remain available.",
-      "provider_flya_hint": "Use FlyA's public beta API. The first key check activates a new FlyA key.",
       "use_system_proxy": "Use system proxy",
       "use_system_proxy_hint": "Route cloud inference requests through the system proxy.",
       "title": "Cloud inference (built-in bot)",

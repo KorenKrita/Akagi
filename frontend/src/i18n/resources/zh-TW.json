@@ -508,8 +508,6 @@
     "native_version": "內建",
     "api": {
       "provider": "API 服務商",
-      "provider_ot3_hint": "使用原有的 OT3 /v3 API，並保留購買和兌換功能。",
-      "provider_flya_hint": "使用 FlyA 公測 API；首次檢查金鑰會自動啟用 FlyA 金鑰。",
       "use_system_proxy": "使用系統代理",
       "use_system_proxy_hint": "透過系統代理發送雲端推理請求。",
       "title": "雲端推論(內建 Bot)",

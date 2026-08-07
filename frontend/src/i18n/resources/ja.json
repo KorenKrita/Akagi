@@ -508,8 +508,6 @@
     "native_version": "内蔵",
     "api": {
       "provider": "API プロバイダー",
-      "provider_ot3_hint": "既存の OT3 /v3 API を使用します。購入・引き換え機能も利用できます。",
-      "provider_flya_hint": "FlyA パブリックベータ API を使用します。最初のキーチェックでキーが有効化されます。",
       "use_system_proxy": "システムプロキシを使用",
       "use_system_proxy_hint": "クラウド推論リクエストにシステムプロキシを使用します。",
       "title": "クラウド推論(内蔵ボット)",
