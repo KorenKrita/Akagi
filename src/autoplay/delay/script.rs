@@ -758,13 +758,26 @@ mod tests {
             "in-riichi median {riichi_med} off calibration (~1.4s)"
         );
 
-        // Near-tie -> long thought with bank allowed.
-        let mut i = base_input(&cfg, &d);
-        i.probs = Some(crate::autoplay::delay::DecisionProbs {
-            top: 0.40,
-            second: Some(0.399),
-        });
-        assert!(s.try_decide(&i).unwrap().allow_bank);
+        // The default model ignores the bot's probabilities: a near-tie
+        // must not shift the batch median (each batch re-rolls the rng,
+        // so allow generous sampling slack).
+        let mut tie_samples: Vec<u32> = (0..300)
+            .map(|_| {
+                let mut i = base_input(&cfg, &d);
+                i.probs = Some(crate::autoplay::delay::DecisionProbs {
+                    top: 0.40,
+                    second: Some(0.399),
+                });
+                s.try_decide(&i).unwrap().total_target_ms
+            })
+            .collect();
+        tie_samples.sort_unstable();
+        let tie_med = tie_samples[tie_samples.len() / 2] as f64;
+        let ratio = tie_med / med as f64;
+        assert!(
+            (0.8..=1.25).contains(&ratio),
+            "near-tie median {tie_med} vs base {med} — probs must not shift the model"
+        );
 
         // Claim windows are the fast reaction bucket: batch median well
         // under the tedashi one.
@@ -777,6 +790,47 @@ mod tests {
             .collect();
         claims.sort_unstable();
         assert!(claims[claims.len() / 2] < med);
+    }
+
+    /// Regression: bots that report flat policy probabilities (top well
+    /// under 0.60 on nearly every decision — e.g. the native bot's HUD
+    /// probs) used to trip a `top_prob < 0.60 → routine × 0.3` rule in
+    /// the bundled script, all but eliminating the fast "routine flick"
+    /// cluster and inflating every discard. Flat probs must keep the
+    /// same routine odds as no probs at all.
+    #[test]
+    fn bundled_default_flat_probs_keep_routine_fraction() {
+        let s = DelayScript::compile(DEFAULT_SCRIPT, "delay_default.lua").unwrap();
+        let cfg = MajsoulAutoplayConfig::default();
+        let d = DelayModelConfig::default();
+
+        // Tsumogiri honor: the bucket with the largest routine weight
+        // (0.15). With the collapse rule that dropped to 0.045, pushing
+        // the fast (≤1.2s) fraction from ~30% down to ~24%.
+        let fast_fraction = |probs: Option<crate::autoplay::delay::DecisionProbs>| {
+            let n = 3000;
+            let fast = (0..n)
+                .filter(|_| {
+                    let mut i = base_input(&cfg, &d);
+                    i.is_tsumogiri = true;
+                    i.tile_class = Some(crate::autoplay::delay::TileClass::Honor);
+                    i.probs = probs;
+                    s.try_decide(&i).unwrap().total_target_ms <= 1200
+                })
+                .count();
+            fast as f64 / n as f64
+        };
+
+        // Flat probs with a tiny margin — the shape that used to trip
+        // both removed rules (routine collapse and near-tie extra time).
+        let flat = fast_fraction(Some(crate::autoplay::delay::DecisionProbs {
+            top: 0.11,
+            second: Some(0.105),
+        }));
+        assert!(
+            flat > 0.27,
+            "flat-prob fast fraction {flat:.3} — routine collapse is back"
+        );
     }
 
     /// `ensure_default` generates the bundled script once and never
