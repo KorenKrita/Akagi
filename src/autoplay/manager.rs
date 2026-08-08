@@ -53,6 +53,7 @@ pub struct AutoplayManager {
     /// Directory holding the loaded config file; the script lives at
     /// `<config_dir>/delay.lua`.
     config_dir: std::path::PathBuf,
+    rematch_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 #[derive(Default)]
@@ -89,6 +90,7 @@ impl AutoplayManager {
             state: ManagerState::default(),
             delay_script: crate::autoplay::delay::ScriptHost::default(),
             config_dir,
+            rematch_task: None,
         }
     }
 
@@ -97,6 +99,7 @@ impl AutoplayManager {
         let mut bot_rx = response_bus.subscribe();
         let mut mjai_rx = self.mjai_bus.subscribe();
         info!("autoplay manager started");
+        self.start_lobby_watcher();
 
         loop {
             tokio::select! {
@@ -420,6 +423,18 @@ impl AutoplayManager {
         let Some(frame) = frame else {
             return PacketDispatch::BuildReturnedNone;
         };
+        if let Some(result) = self.ctx.send_mitm_packet(&frame).await {
+            return match result {
+                Ok(()) => {
+                    info!("autoplay: queued MITM packet for {:?}", action);
+                    PacketDispatch::Sent
+                }
+                Err(_) => {
+                    debug!("autoplay: MITM packet WebSocket is closed for {:?}", action);
+                    PacketDispatch::HookNoOpenSocket
+                }
+            };
+        }
         let page = { self.ctx.page.read().await.clone() };
         let Some(page) = page else {
             return PacketDispatch::NoPage;
@@ -568,6 +583,9 @@ impl AutoplayManager {
     fn handle_mjai_event(&mut self, ev: &MjaiEvent) {
         match ev {
             MjaiEvent::StartGame { id, .. } => {
+                if let Some(task) = self.rematch_task.take() {
+                    task.abort();
+                }
                 // Capture our seat directly from the StartGame event rather
                 // than going through the tracker. This avoids the try_lock
                 // race entirely and makes cached_our_seat available from the
@@ -575,9 +593,28 @@ impl AutoplayManager {
                 let seat = *id;
                 self.state = ManagerState::default();
                 self.state.cached_our_seat = seat;
+                self.ctx
+                    .auto_join_set_phase(crate::autoplay::context::AutoJoinPhase::InGame);
             }
             MjaiEvent::EndGame => {
                 self.state = ManagerState::default();
+                if let Some(task) = self.rematch_task.take() {
+                    task.abort();
+                }
+                info!("auto-join: EndGame received; starting settlement flow");
+                let cfg = Arc::clone(&self.cfg);
+                let ctx = Arc::clone(&self.ctx);
+                self.rematch_task = Some(tokio::spawn(async move {
+                    let settings = {
+                        let cfg = cfg.read().await;
+                        if !cfg.autoplay.enabled || !cfg.autoplay.majsoul.auto_join_game {
+                            return;
+                        }
+                        cfg.autoplay.majsoul.clone()
+                    };
+                    ctx.auto_join_record_completed();
+                    crate::autoplay::majsoul::rematch::run(ctx, settings).await;
+                }));
             }
             MjaiEvent::StartKyoku { .. } | MjaiEvent::EndKyoku => {
                 // Per-kyoku reset: keep last seen rect cache and cached seat,
@@ -625,6 +662,14 @@ impl AutoplayManager {
             }
             _ => {}
         }
+    }
+
+    fn start_lobby_watcher(&mut self) {
+        let cfg = Arc::clone(&self.cfg);
+        let ctx = Arc::clone(&self.ctx);
+        self.rematch_task = Some(tokio::spawn(async move {
+            crate::autoplay::majsoul::rematch::wait_for_main_menu(ctx, cfg).await;
+        }));
     }
 
     /// Best-effort seat lookup. Uses the cached seat from `StartGame` first,

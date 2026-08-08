@@ -53,6 +53,7 @@ impl CaptureBackend for HudsuckerBackend {
             Some(ctx.mjai_bus),
             Some(ctx.notify_bus),
             self.force_close,
+            ctx.autoplay,
             shutdown_fut,
         )
         .await

@@ -14,17 +14,17 @@
 //!   Filled lazily by the autoplay manager (one `Runtime.evaluate` per
 //!   refresh) and invalidated on round transitions.
 //!
-//! Both fields are populated only when the chromium capture backend is
-//! active. The MITM backend leaves the context untouched, so reads return
-//! `None` and the manager skips the click.
+//! The page/canvas fields are populated only by Chromium. Packet dispatch
+//! fields can instead be populated by the MITM backend.
 
 use crate::capture::flow::SharedBridge;
 use chromiumoxide::page::Page;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 #[derive(Default)]
 pub struct AutoplayContext {
@@ -32,6 +32,8 @@ pub struct AutoplayContext {
     pub canvas_rect: Arc<RwLock<Option<CanvasRect>>>,
     pub packet_bridge: Arc<RwLock<Option<SharedBridge>>>,
     pub packet_ws_url: Arc<RwLock<Option<String>>>,
+    /// MITM client→server WebSocket leg selected from the gameplay flow.
+    pub mitm_packet_tx: Arc<RwLock<Option<mpsc::UnboundedSender<Vec<u8>>>>>,
     /// The most recently connected gameplay flow, used as the fallback when
     /// no ActionPrototype flow has been observed yet.
     pub fallback_page: Arc<RwLock<Option<Page>>>,
@@ -45,6 +47,45 @@ pub struct AutoplayContext {
     /// the manager's delay model. Uses a `std::sync::RwLock` (not tokio)
     /// because the writer is the bridge's synchronous `parse()` path.
     pub time_budget: crate::autoplay::budget::SharedTimeBudget,
+    auto_join: StdMutex<AutoJoinRuntime>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoJoinPhase {
+    Disabled,
+    WaitingForLobby,
+    Settling,
+    Joining,
+    Matching,
+    InGame,
+    Stopped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoJoinStopReason {
+    GameLimit,
+    TimeLimit,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoJoinStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub phase: AutoJoinPhase,
+    pub stop_reason: Option<AutoJoinStopReason>,
+    pub completed_games: u32,
+    pub max_games: Option<u32>,
+    pub remaining_games: Option<u32>,
+    pub remaining_seconds: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct AutoJoinRuntime {
+    started_at: Option<Instant>,
+    completed_games: u32,
+    phase: Option<AutoJoinPhase>,
 }
 
 impl AutoplayContext {
@@ -70,6 +111,101 @@ impl AutoplayContext {
             false
         }
     }
+
+    pub async fn send_mitm_packet(
+        &self,
+        frame: &[u8],
+    ) -> Option<Result<(), mpsc::error::SendError<Vec<u8>>>> {
+        self.mitm_packet_tx
+            .read()
+            .await
+            .clone()
+            .map(|tx| tx.send(frame.to_vec()))
+    }
+
+    pub fn auto_join_start(&self) {
+        let mut state = self.auto_join.lock().expect("auto-join mutex poisoned");
+        state.started_at.get_or_insert_with(Instant::now);
+        state.phase = Some(AutoJoinPhase::WaitingForLobby);
+    }
+
+    pub fn auto_join_set_phase(&self, phase: AutoJoinPhase) {
+        let mut state = self.auto_join.lock().expect("auto-join mutex poisoned");
+        state.phase = Some(phase);
+    }
+
+    pub fn auto_join_record_completed(&self) {
+        let mut state = self.auto_join.lock().expect("auto-join mutex poisoned");
+        state.started_at.get_or_insert_with(Instant::now);
+        state.completed_games = state.completed_games.saturating_add(1);
+        state.phase = Some(AutoJoinPhase::Settling);
+    }
+
+    pub fn auto_join_can_join(&self, cfg: &crate::config::MajsoulAutoplayConfig) -> bool {
+        let mut state = self.auto_join.lock().expect("auto-join mutex poisoned");
+        state.started_at.get_or_insert_with(Instant::now);
+        let reason = auto_join_stop_reason(&state, cfg);
+        state.phase = Some(if reason.is_some() {
+            AutoJoinPhase::Stopped
+        } else {
+            AutoJoinPhase::Joining
+        });
+        reason.is_none()
+    }
+
+    pub fn auto_join_status(
+        &self,
+        enabled: bool,
+        cfg: &crate::config::MajsoulAutoplayConfig,
+    ) -> AutoJoinStatus {
+        let state = self.auto_join.lock().expect("auto-join mutex poisoned");
+        let enabled = enabled && cfg.auto_join_game;
+        let reason = enabled
+            .then(|| auto_join_stop_reason(&state, cfg))
+            .flatten();
+        let max_games =
+            (cfg.auto_join_stop_after_games > 0).then_some(cfg.auto_join_stop_after_games);
+        let remaining_games = max_games.map(|max| max.saturating_sub(state.completed_games));
+        let remaining_seconds = (cfg.auto_join_stop_after_minutes > 0).then(|| {
+            let limit = Duration::from_secs(u64::from(cfg.auto_join_stop_after_minutes) * 60);
+            let elapsed = state.started_at.map(|at| at.elapsed()).unwrap_or_default();
+            limit.saturating_sub(elapsed).as_secs()
+        });
+        AutoJoinStatus {
+            enabled,
+            running: enabled && reason.is_none(),
+            phase: if !enabled {
+                AutoJoinPhase::Disabled
+            } else if reason.is_some() {
+                AutoJoinPhase::Stopped
+            } else {
+                state.phase.unwrap_or(AutoJoinPhase::WaitingForLobby)
+            },
+            stop_reason: reason,
+            completed_games: state.completed_games,
+            max_games,
+            remaining_games,
+            remaining_seconds,
+        }
+    }
+}
+
+fn auto_join_stop_reason(
+    state: &AutoJoinRuntime,
+    cfg: &crate::config::MajsoulAutoplayConfig,
+) -> Option<AutoJoinStopReason> {
+    if cfg.auto_join_stop_after_games > 0 && state.completed_games >= cfg.auto_join_stop_after_games
+    {
+        return Some(AutoJoinStopReason::GameLimit);
+    }
+    if cfg.auto_join_stop_after_minutes > 0
+        && state.started_at.is_some_and(|at| {
+            at.elapsed() >= Duration::from_secs(u64::from(cfg.auto_join_stop_after_minutes) * 60)
+        })
+    {
+        return Some(AutoJoinStopReason::TimeLimit);
+    }
+    None
 }
 
 fn frame_fingerprint(bytes: &[u8]) -> u64 {
@@ -155,5 +291,45 @@ mod tests {
         };
         assert!(!rect.contains(-1.0, 0.0));
         assert!(!rect.contains(0.0, 1000.0));
+    }
+
+    #[tokio::test]
+    async fn mitm_packet_dispatch_uses_registered_uplink() {
+        let ctx = AutoplayContext::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        *ctx.mitm_packet_tx.write().await = Some(tx);
+
+        assert!(ctx.send_mitm_packet(&[1, 2, 3]).await.unwrap().is_ok());
+        assert_eq!(rx.recv().await, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn auto_join_stops_when_either_limit_is_reached() {
+        let ctx = AutoplayContext::new();
+        let mut cfg = crate::config::MajsoulAutoplayConfig::default();
+        cfg.auto_join_game = true;
+        cfg.auto_join_stop_after_games = 2;
+        ctx.auto_join_start();
+        ctx.auto_join_record_completed();
+        assert!(ctx.auto_join_can_join(&cfg));
+        ctx.auto_join_record_completed();
+        assert!(!ctx.auto_join_can_join(&cfg));
+        assert_eq!(
+            ctx.auto_join_status(true, &cfg).stop_reason,
+            Some(AutoJoinStopReason::GameLimit)
+        );
+
+        let ctx = AutoplayContext::new();
+        cfg.auto_join_stop_after_games = 0;
+        cfg.auto_join_stop_after_minutes = 1;
+        {
+            let mut state = ctx.auto_join.lock().unwrap();
+            state.started_at = Some(Instant::now() - Duration::from_secs(60));
+        }
+        assert!(!ctx.auto_join_can_join(&cfg));
+        assert_eq!(
+            ctx.auto_join_status(true, &cfg).stop_reason,
+            Some(AutoJoinStopReason::TimeLimit)
+        );
     }
 }

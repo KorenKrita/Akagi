@@ -705,6 +705,7 @@ Tags must be on the `v3` branch.
 | [`eric200203/mahgen`](https://github.com/eric200203/mahgen) (mahjong-tile rendering DSL) | `src/game_state/mahgen_view.rs`, frontend `<mah-gen>` | DSL syntax for pre-encoding hand / meld / river strings backend-side. |
 | [`smly/mjai.app`](https://github.com/smly/mjai.app) (mahjong AI competition platform) | `mjai_bot/`, `src/bot/` | Bot subprocess convention — JSONL stdin/stdout, argv `python bot.py <player_id>`, `AKAGI_PLAYER_ID` env, end-of-batch flush points. |
 | [`shinkuan/Akagi`](https://github.com/shinkuan/Akagi/tree/v2) | Architecture / behaviour parity | The original feature set we are reproducing: MITM proxy, mjai bridge, pluggable bots, recommendation HUD. |
+| [`SpCoGov/MahjongCopilotRezetyan`](https://github.com/SpCoGov/MahjongCopilotRezetyan/tree/df9a1532fb0d61875a1b15a1259ef2d23665eaf7) (**GPL-3.0**) | `src/autoplay/majsoul/rematch.rs`, `src/autoplay/majsoul/coords.rs`, `assets/autoplay/majsoul/` | Auto-rematch flow, ranked-menu coordinates, image comparison, and the copied `mainmenu.png` / `mainmenu_mask.png` templates. Source commit: `df9a1532`. |
 
 ## License & Attribution
 
@@ -718,6 +719,14 @@ Apache-2.0 §4(d), redistributions must include both files.
 - **mahjong-helper** (MIT) — `src/analysis/` is a Rust port of `util/`.
 - **riichienv-core** / RiichiEnv (Apache-2.0) — Cargo dependency.
 - **mahgen** (MIT) — DSL + `<mah-gen>` custom element.
+
+**GPL-3.0 code and assets copied into this tree**
+
+- **MahjongCopilotRezetyan** — the auto-rematch flow, coordinates, image
+  comparison, and main-menu templates are copied/ported from commit
+  [`df9a1532`](https://github.com/SpCoGov/MahjongCopilotRezetyan/commit/df9a1532fb0d61875a1b15a1259ef2d23665eaf7).
+  Its license is bundled at
+  [`assets/autoplay/majsoul/LICENSE`](./assets/autoplay/majsoul/LICENSE).
 
 **Reference-only** (no code copied; listed in `NOTICE` for credit)
 

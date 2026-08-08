@@ -11,6 +11,7 @@
 //!   (`autoplay_majsoul.py`, the main action handler).
 
 pub mod coords;
+pub mod rematch;
 
 use crate::autoplay::delay::{self, DecisionKind, DelayInput};
 use crate::autoplay::platform::{ActionContext, PlanResult, PlatformAutoplay, ReachState, Step};
@@ -706,6 +707,7 @@ mod tests {
             hover_delay_ms: 0,
             click_hold_ms: 0,
             dealer_first_discard_extra_delay_ms: 0,
+            ..Default::default()
         }
     }
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import {
   Responsive,
@@ -11,7 +12,7 @@ import {
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 
-import { HelpCircle } from 'lucide-react'
+import { Clock3, Gamepad2, HelpCircle } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/sonner'
@@ -29,6 +30,8 @@ import { renderTile } from '@/tiles/registry'
 import { AddTileMenu } from '@/components/AddTileMenu'
 import { DashboardOnboardingDialog } from '@/components/DashboardOnboardingDialog'
 import { OverlayToggle } from '@/components/OverlayToggle'
+import { Card, CardContent } from '@/components/ui/card'
+import type { AutoJoinStatus } from '@/types'
 
 const BOT_DISABLED_TOAST_ID = 'bot-disabled-warning'
 
@@ -113,6 +116,8 @@ export function GameDashboard() {
 
       <DashboardOnboardingDialog open={helpOpen} onOpenChange={handleHelpOpenChange} />
 
+      <AutoJoinPanel />
+
       <div ref={containerRef} className="flex-1 overflow-auto">
         {mounted && (
           <Responsive
@@ -142,6 +147,68 @@ export function GameDashboard() {
       </div>
     </div>
   )
+}
+
+function AutoJoinPanel() {
+  const { t } = useTranslation()
+  const [status, setStatus] = useState<AutoJoinStatus | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    const refresh = () => {
+      invoke<AutoJoinStatus>('get_auto_join_status')
+        .then((next) => { if (alive) setStatus(next) })
+        .catch(() => {})
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 1_000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  const phase = status?.phase ?? 'disabled'
+  const games = status?.max_games == null
+    ? `${status?.completed_games ?? 0} / ∞`
+    : `${status.completed_games} / ${status.max_games}`
+  const time = status?.remaining_seconds == null
+    ? '∞'
+    : formatRemaining(status.remaining_seconds)
+
+  return (
+    <Card className="mx-4 mt-3 shrink-0">
+      <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3 text-sm">
+        <div className="flex items-center gap-2 font-medium">
+          <span className={`size-2 rounded-full ${status?.running ? 'bg-emerald-500' : 'bg-zinc-500'}`} />
+          {t('game.auto_join.title')}: {t(`game.auto_join.phase_${phase}`)}
+        </div>
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Gamepad2 className="size-4" />
+          {t('game.auto_join.games')}: <span className="font-mono text-foreground">{games}</span>
+          {status?.remaining_games != null && ` (${t('game.auto_join.remaining')} ${status.remaining_games})`}
+        </div>
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Clock3 className="size-4" />
+          {t('game.auto_join.time')}: <span className="font-mono text-foreground">{time}</span>
+        </div>
+        {status?.stop_reason && (
+          <div className="text-amber-500">
+            {t(`game.auto_join.reason_${status.stop_reason}`)}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function formatRemaining(seconds: number) {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+    : `${minutes}:${String(secs).padStart(2, '0')}`
 }
 
 // RGL only emits layouts for currently rendered (visible) tiles. Merge with

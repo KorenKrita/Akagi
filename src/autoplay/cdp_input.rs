@@ -306,6 +306,19 @@ pub async fn dispatch_click(
     Ok(())
 }
 
+pub async fn dispatch_mouse_wheel(page: &Page, x: f64, y: f64, delta_y: f64) -> Result<()> {
+    let wheel = DispatchMouseEventParams::builder()
+        .r#type(DispatchMouseEventType::MouseWheel)
+        .x(x)
+        .y(y)
+        .delta_x(0.0)
+        .delta_y(delta_y)
+        .build()
+        .map_err(|e| anyhow!("build mouseWheel: {e}"))?;
+    page.execute(wheel).await.context("CDP mouseWheel")?;
+    Ok(())
+}
+
 /// Read the game canvas's `getBoundingClientRect()` via `Runtime.evaluate`.
 ///
 /// Majsoul renders into the first `<canvas>` element on the page; Tenhou

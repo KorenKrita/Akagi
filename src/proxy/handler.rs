@@ -1,4 +1,5 @@
 use crate::{
+    autoplay::AutoplayContext,
     bridge::{self, Bridge, Direction},
     capture::http::{self as httpcap, BodyPlan, ExchangePairing, HttpCapturePolicy},
     config::Platform,
@@ -31,7 +32,7 @@ use std::{
         Arc, Mutex as StdMutex,
     },
 };
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, Notify};
 use tracing::{debug, error, info, warn};
 
 const TAG_CLIENT_TO_SERVER: u8 = 0;
@@ -89,6 +90,9 @@ pub struct ProxyHandler {
     /// Whether to correct the client's certificate report. See
     /// `rewrite::majsoul_cert`.
     rewrite_cert_report: bool,
+    /// MITM uplink sinks, keyed like `bridges`, for packet autoplay.
+    packet_senders: Arc<StdMutex<HashMap<SocketAddr, mpsc::UnboundedSender<Vec<u8>>>>>,
+    autoplay: Option<Arc<AutoplayContext>>,
 }
 
 impl ProxyHandler {
@@ -106,6 +110,7 @@ impl ProxyHandler {
         http_policy: HttpCapturePolicy,
         certs: Arc<CertStore>,
         rewrite_cert_report: bool,
+        autoplay: Option<Arc<AutoplayContext>>,
     ) -> anyhow::Result<Self> {
         let binary = session.binary_logger("proxy")?;
         let inspector = session.inspector();
@@ -126,6 +131,8 @@ impl ProxyHandler {
             pairing: Arc::new(ExchangePairing::default()),
             certs,
             rewrite_cert_report,
+            packet_senders: Arc::new(StdMutex::new(HashMap::new())),
+            autoplay,
         })
     }
 
@@ -312,13 +319,11 @@ impl ProxyHandler {
                             None
                         }
                     };
-                // No time-budget slot: the MITM path has no `Page` handle,
-                // so autoplay (the only consumer) can never click here.
                 Arc::new(StdMutex::new(bridge::for_platform(
                     self.platform,
                     flow_log,
                     Some(self.session.clone()),
-                    None,
+                    self.autoplay.as_ref().map(|ctx| ctx.time_budget.clone()),
                 )))
             })
             .clone()
@@ -696,6 +701,14 @@ impl WebSocketHandler for ProxyHandler {
         let server_uri = server_uri(&ctx);
         let bridge = self.acquire_bridge(client, &server_uri);
         let force_close = self.force_close.clone();
+        let (packet_tx, mut packet_rx) = mpsc::unbounded_channel();
+        let is_uplink = matches!(ctx, WebSocketContext::ClientToServer { .. });
+        if is_uplink {
+            self.packet_senders
+                .lock()
+                .expect("packet senders mutex poisoned")
+                .insert(client, packet_tx.clone());
+        }
 
         loop {
             tokio::select! {
@@ -705,11 +718,23 @@ impl WebSocketHandler for ProxyHandler {
                     let _ = sink.send(Message::Close(None)).await;
                     break;
                 }
+                Some(frame) = packet_rx.recv() => {
+                    let message = Message::Binary(frame.into());
+                    let Some(out) = self.handle_message(&ctx, message, &bridge, true).await else {
+                        continue;
+                    };
+                    if let Err(e) = sink.send(out).await {
+                        if !matches!(e, tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) {
+                            error!("WebSocket packet injection error: {e}");
+                        }
+                        break;
+                    }
+                }
                 next = stream.next() => {
                     let Some(message) = next else { break };
                     match message {
                         Ok(message) => {
-                            let Some(out) = self.handle_message(&ctx, message, &bridge).await else {
+                            let Some(out) = self.handle_message(&ctx, message, &bridge, false).await else {
                                 continue;
                             };
                             match sink.send(out).await {
@@ -740,6 +765,21 @@ impl WebSocketHandler for ProxyHandler {
             }
         }
 
+        if is_uplink {
+            self.packet_senders
+                .lock()
+                .expect("packet senders mutex poisoned")
+                .remove(&client);
+            if let Some(autoplay) = &self.autoplay {
+                let mut selected = autoplay.mitm_packet_tx.write().await;
+                if selected
+                    .as_ref()
+                    .is_some_and(|tx| tx.same_channel(&packet_tx))
+                {
+                    *selected = None;
+                }
+            }
+        }
         self.release_bridge(client, bridge);
     }
 }
@@ -750,6 +790,7 @@ impl ProxyHandler {
         ctx: &WebSocketContext,
         msg: Message,
         bridge: &SharedBridge,
+        injected: bool,
     ) -> Option<Message> {
         let client = client_addr(ctx);
         let (tag, dir, dir_arrow, uri) = match ctx {
@@ -775,7 +816,32 @@ impl ProxyHandler {
                     let mut b = bridge.lock().expect("bridge mutex poisoned");
                     b.parse(dir, buf)
                 };
-                self.record_frame(client, dir, FrameRaw::Binary(b64(buf)), buf.len(), &result);
+                if dir == Direction::Down
+                    && result
+                        .parsed
+                        .as_ref()
+                        .is_some_and(|p| p.method == ".lq.ActionPrototype")
+                {
+                    let tx = self
+                        .packet_senders
+                        .lock()
+                        .expect("packet senders mutex poisoned")
+                        .get(&client)
+                        .cloned();
+                    if let (Some(autoplay), Some(tx)) = (&self.autoplay, tx) {
+                        *autoplay.packet_bridge.write().await = Some(bridge.clone());
+                        *autoplay.mitm_packet_tx.write().await = Some(tx);
+                        info!("autoplay: MITM packet target selected from ActionPrototype flow {client}");
+                    }
+                }
+                self.record_frame(
+                    client,
+                    dir,
+                    FrameRaw::Binary(b64(buf)),
+                    buf.len(),
+                    &result,
+                    injected,
+                );
                 self.dispatch_events(dir_arrow, &uri, result.events);
             }
             Message::Text(t) => {
@@ -792,6 +858,7 @@ impl ProxyHandler {
                     FrameRaw::Text(t.to_string()),
                     buf.len(),
                     &result,
+                    injected,
                 );
                 self.dispatch_events(dir_arrow, &uri, result.events);
             }
@@ -826,6 +893,7 @@ impl ProxyHandler {
         raw: FrameRaw,
         size: usize,
         result: &bridge::ParseResult,
+        injected: bool,
     ) {
         let direction = match dir {
             Direction::Down => FrameDirection::Down,
@@ -839,7 +907,7 @@ impl ProxyHandler {
             raw,
             parsed: result.parsed.clone(),
             emitted: result.events.len(),
-            injected: false,
+            injected,
         });
     }
 }

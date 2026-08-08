@@ -7,6 +7,7 @@ mod upstream;
 pub use handler::ProxyHandler;
 
 use crate::{
+    autoplay::AutoplayContext,
     config::{HttpCaptureConfig, Platform, ProxyConfig},
     event_bus::{MjaiBus, NotifyBus},
     logger::Session,
@@ -33,6 +34,7 @@ pub async fn start_proxy<F>(
     mjai_tx: Option<MjaiBus>,
     notify_tx: Option<NotifyBus>,
     force_close: Arc<Notify>,
+    autoplay: Option<Arc<AutoplayContext>>,
     shutdown: F,
 ) -> Result<()>
 where
@@ -59,6 +61,7 @@ where
         http_cfg.policy(),
         certs.clone(),
         config.rewrite_certificate_report,
+        autoplay,
     )?;
 
     let upstream_proxy = if config.upstream_enabled {

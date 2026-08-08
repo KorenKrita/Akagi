@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { Slider } from '@/components/ui/slider'
 import {
   Select,
   SelectContent,
@@ -749,10 +750,23 @@ function AutoplayCard({
       hover_delay_ms: 150,
       click_hold_ms: 50,
       dealer_first_discard_extra_delay_ms: 2000,
+      auto_join_game: false,
+      auto_join_level: 2,
+      auto_join_mode: '3e' as const,
+      auto_join_stop_after_games: 0,
+      auto_join_stop_after_minutes: 0,
     },
     delay: defaultDelayModel(),
   }
   const delay = ap.delay ?? defaultDelayModel()
+  const preClickDelay = [
+    Math.min(ap.majsoul.pre_click_delay_min_ms, ap.majsoul.pre_click_delay_max_ms),
+    Math.max(ap.majsoul.pre_click_delay_min_ms, ap.majsoul.pre_click_delay_max_ms),
+  ]
+  const preClickDelaySliderMax = Math.max(
+    10_000,
+    Math.ceil(preClickDelay[1] / 1000) * 1000,
+  )
   const captureIsChromium = draft.capture?.mode === 'chromium'
   const setApField = (patch: Partial<typeof ap>) =>
     setDraft({ ...draft, autoplay: { ...ap, ...patch } })
@@ -780,7 +794,88 @@ function AutoplayCard({
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.enable_help')}
         </p>
-        {ap.enabled && !captureIsChromium && (
+        <Toggle
+          label={t('settings.autoplay.auto_join_game')}
+          value={ap.majsoul.auto_join_game ?? false}
+          onChange={(v) => setMajsoulField({ auto_join_game: v })}
+        />
+        {ap.majsoul.auto_join_game && (
+          <>
+            <Field label={t('settings.autoplay.auto_join_level')}>
+              <Select
+                value={String(ap.majsoul.auto_join_level ?? 2)}
+                onValueChange={(v) =>
+                  setMajsoulField({ auto_join_level: Number(v) })
+                }
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[0, 1, 2, 3, 4].map((level) => (
+                    <SelectItem key={level} value={String(level)}>
+                      {t(`settings.autoplay.auto_join_level_${level}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={t('settings.autoplay.auto_join_mode')}>
+              <Select
+                value={ap.majsoul.auto_join_mode ?? '3e'}
+                onValueChange={(v) =>
+                  setMajsoulField({
+                    auto_join_mode: v as typeof ap.majsoul.auto_join_mode,
+                  })
+                }
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(['4e', '4s', '3e', '3s'] as const).map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {t(`settings.autoplay.auto_join_mode_${mode}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field
+              label={t('settings.autoplay.auto_join_stop_after_games')}
+              hint={t('settings.autoplay.auto_join_zero_unlimited')}
+            >
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={1}
+                value={ap.majsoul.auto_join_stop_after_games ?? 0}
+                onChange={(e) =>
+                  setMajsoulField({
+                    auto_join_stop_after_games: Math.max(0, Math.floor(Number(e.target.value || 0))),
+                  })
+                }
+              />
+            </Field>
+            <Field
+              label={t('settings.autoplay.auto_join_stop_after_minutes')}
+              hint={t('settings.autoplay.auto_join_zero_unlimited')}
+            >
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={1}
+                value={ap.majsoul.auto_join_stop_after_minutes ?? 0}
+                onChange={(e) =>
+                  setMajsoulField({
+                    auto_join_stop_after_minutes: Math.max(0, Math.floor(Number(e.target.value || 0))),
+                  })
+                }
+              />
+            </Field>
+          </>
+        )}
+        {ap.enabled &&
+          !captureIsChromium &&
+          (ap.majsoul.mode ?? 'packet_with_click_fallback') === 'click' && (
           <p className="text-xs text-amber-500">
             {t('settings.autoplay.requires_chromium')}
           </p>
@@ -836,34 +931,22 @@ function AutoplayCard({
           </p>
         )}
         {delay.mode === 'legacy' && (
-          <>
-            <Field label={t('settings.autoplay.pre_click_delay_min')}>
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={ap.majsoul.pre_click_delay_min_ms}
-                onChange={(e) =>
-                  setMajsoulField({
-                    pre_click_delay_min_ms: Number(e.target.value || 0),
-                  })
-                }
-              />
-            </Field>
-            <Field label={t('settings.autoplay.pre_click_delay_max')}>
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={ap.majsoul.pre_click_delay_max_ms}
-                onChange={(e) =>
-                  setMajsoulField({
-                    pre_click_delay_max_ms: Number(e.target.value || 0),
-                  })
-                }
-              />
-            </Field>
-          </>
+          <Field
+            label={`${t('settings.autoplay.pre_click_delay_range')}: ${preClickDelay[0]}–${preClickDelay[1]} ms`}
+          >
+            <Slider
+              min={0}
+              max={preClickDelaySliderMax}
+              step={100}
+              value={preClickDelay}
+              onValueChange={([min, max]) =>
+                setMajsoulField({
+                  pre_click_delay_min_ms: min,
+                  pre_click_delay_max_ms: max,
+                })
+              }
+            />
+          </Field>
         )}
         <Field
           label={t('settings.autoplay.min_delay')}
