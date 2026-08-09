@@ -88,6 +88,11 @@ pub struct Decision {
     pub candidates: Vec<(BotAction, f32)>,
     /// Raw action logits (indexed by the mode's action space).
     pub logits: Vec<f32>,
+    /// The full legal set (before the top-N cut in `candidates`) held exactly
+    /// one action, so this "decision" is forced — any policy, local or remote,
+    /// can only play `action`. Callers that pay per query (the online API) use
+    /// this to answer locally instead of spending a call on a foregone move.
+    pub forced: bool,
 }
 
 enum Backend {
@@ -195,7 +200,8 @@ impl Engine {
     /// legal action (not our turn / nothing to respond to).
     pub fn decide(&mut self) -> Result<Option<Decision>> {
         let seat = self.seat;
-        let (mut ranked, logits, last_discarder, drawn, reach_pai) = match &mut self.backend {
+        let (mut ranked, logits, last_discarder, drawn, reach_pai, forced) = match &mut self.backend
+        {
             Backend::Four { state, model } => {
                 // `last_discard` is `(discarder_pid, tile)`.
                 let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
@@ -204,6 +210,9 @@ impl Engine {
                 if legal.is_empty() {
                     return Ok(None);
                 }
+                // Forced ⇔ the *legal* set is a singleton — `ranked` is cut to
+                // SHOW_TOP_N below, so its length can't be used for this.
+                let forced = legal.len() == 1;
                 let logits = model.forward_logits(&obs)?;
                 let ranked = rank_by_logits(&legal, &logits, 4, SHOW_TOP_N);
                 let Some((top, _)) = ranked.first() else {
@@ -214,7 +223,7 @@ impl Engine {
                 } else {
                     None
                 };
-                (ranked, logits, last_discarder, drawn, reach_pai)
+                (ranked, logits, last_discarder, drawn, reach_pai, forced)
             }
             Backend::Three { state, model } => {
                 let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
@@ -223,6 +232,7 @@ impl Engine {
                 if legal.is_empty() {
                     return Ok(None);
                 }
+                let forced = legal.len() == 1;
                 let logits = model.forward_logits(&obs)?;
                 let ranked = rank_by_logits(&legal, &logits, 3, SHOW_TOP_N);
                 let Some((top, _)) = ranked.first() else {
@@ -233,7 +243,7 @@ impl Engine {
                 } else {
                     None
                 };
-                (ranked, logits, last_discarder, drawn, reach_pai)
+                (ranked, logits, last_discarder, drawn, reach_pai, forced)
             }
         };
 
@@ -256,6 +266,7 @@ impl Engine {
             action,
             candidates,
             logits,
+            forced,
         }))
     }
 
