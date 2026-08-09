@@ -44,6 +44,24 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 // While in riichi, Majsoul auto-discards. Suppress unless
                 // this dahai is the riichi-declaring tile (Path B follow-up).
                 if ctx.self_riichi_accepted && ctx.reach_state != ReachState::AwaitingDahai {
+                    // …with one exception: the auto-discard is held back
+                    // while an own-draw operation prompt is open — kita on
+                    // a drawn North (sanma), a riichi-legal ankan, or a
+                    // tsumo agari. Majsoul waits for an answer, so a bot
+                    // decision to tsumogiri must decline the prompt via
+                    // the X button; the client then discards the draw on
+                    // its own. Returning with no click here left the game
+                    // hanging until the turn timer and the entire time
+                    // bank drained (the server eventually auto-declines).
+                    if riichi_prompt_pending(ctx, pai) {
+                        push_pre_delay(&mut result.steps, ctx, DecisionKind::Pass, 0);
+                        if let Some(button) = action_button_for(MajsoulOpType::None, ctx) {
+                            result.steps.push(Step::Click {
+                                x_norm: button.0,
+                                y_norm: button.1,
+                            });
+                        }
+                    }
                     return result;
                 }
                 // The dealer-opening hand-sort animation wait (clicks
@@ -703,6 +721,27 @@ fn pass_button_visible(ctx: &ActionContext) -> bool {
         .any(|a| a.action_type == ActionType::Pass)
 }
 
+/// True when our own riichi draw has an operation prompt open — the
+/// engine offers something beyond the forced tsumogiri. While such a
+/// prompt is showing, Majsoul does NOT auto-discard; it waits for an
+/// answer, so a bot decision to tsumogiri must be executed by clicking
+/// the X (decline), never by doing nothing.
+///
+/// `dahai_pai` is the tile the bot wants to tsumogiri — during riichi
+/// this is always the drawn tile. It gates the kita case: the engine
+/// generates a Kita action for *every* North in hand, including one
+/// locked into the riichi'd hand's structure where Majsoul shows no
+/// prompt (riichi only allows pulling the just-drawn North). Ankan and
+/// tsumo need no such gate — the engine only emits them for the drawn
+/// tile.
+fn riichi_prompt_pending(ctx: &ActionContext, dahai_pai: &str) -> bool {
+    ctx.legal_actions.iter().any(|a| match a.action_type {
+        ActionType::Kita => dahai_pai == "N",
+        ActionType::Ankan | ActionType::Tsumo => true,
+        _ => false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -869,6 +908,143 @@ mod tests {
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(result.steps.is_empty(), "no click while riichi accepted");
+    }
+
+    /// Regression: in sanma, drawing a North while in riichi opens the
+    /// kita prompt and Majsoul holds the auto-discard until it is
+    /// answered. The bot deciding to tsumogiri the North must decline
+    /// the prompt via the X button — the old unconditional suppression
+    /// returned no steps and the game hung until the turn timer and the
+    /// entire time bank drained.
+    #[test]
+    fn dahai_of_drawn_north_under_riichi_declines_kita_prompt() {
+        let snap = snapshot_3p_with_kita(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "5s", "5s", "E", "E", "N",
+            ],
+            vec![],
+            Some("N"),
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "N".into(),
+            tsumogiri: true,
+        };
+        let cfg_ref = cfg();
+        // What the engine offers on a drawn North during riichi: the
+        // forced tsumogiri plus the kita (N = tile ids 120..=123).
+        let legal = vec![
+            Action::new(ActionType::Discard, Some(120), vec![], Some(0)),
+            Action::new(ActionType::Kita, Some(120), vec![], Some(0)),
+        ];
+        let ctx = ctx_for(
+            &act,
+            &snap,
+            &legal,
+            Some("1z"),
+            Some("N"),
+            true,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert_eq!(result.steps.len(), 2, "sleep + X click, got {result:?}");
+        match &result.steps[1] {
+            Step::Click { x_norm, y_norm } => {
+                // The X (pass / cancel) is always the rightmost button —
+                // slot 0 — regardless of what else is on the row.
+                assert_eq!(*x_norm, 10.875);
+                assert_eq!(*y_norm, 7.0);
+            }
+            _ => panic!("expected a click on the X button"),
+        }
+    }
+
+    /// A structural North locked inside a riichi'd hand makes the engine
+    /// offer Kita on every subsequent draw, but Majsoul only prompts
+    /// when the drawn tile itself is the North — an ordinary tsumogiri
+    /// must stay suppressed (a ghost X click would land on empty UI).
+    #[test]
+    fn dahai_under_riichi_with_hand_north_but_other_draw_stays_suppressed() {
+        let snap = snapshot_3p_with_kita(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "5s", "5s", "N", "N", "5p",
+            ],
+            vec![],
+            Some("5p"),
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5p".into(),
+            tsumogiri: true,
+        };
+        let cfg_ref = cfg();
+        let legal = vec![
+            Action::new(ActionType::Discard, Some(53), vec![], Some(0)),
+            Action::new(ActionType::Kita, Some(120), vec![], Some(0)),
+        ];
+        let ctx = ctx_for(
+            &act,
+            &snap,
+            &legal,
+            Some("1z"),
+            Some("5p"),
+            true,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            result.steps.is_empty(),
+            "no prompt on screen — stay suppressed, got {result:?}"
+        );
+    }
+
+    /// The same trap with a riichi-legal ankan (3p and 4p alike): the
+    /// kan prompt holds the auto-discard, so a bot decision to keep the
+    /// hand closed must decline via the X button.
+    #[test]
+    fn dahai_under_riichi_with_ankan_prompt_declines_via_x() {
+        let snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "1m", "1m", "4p", "5p", "6p", "7s", "8s", "9s", "5s", "5s", "E", "E", "1m",
+            ],
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "1m".into(),
+            tsumogiri: true,
+        };
+        let cfg_ref = cfg();
+        let legal = vec![
+            Action::new(ActionType::Discard, Some(3), vec![], Some(0)),
+            Action::new(ActionType::Ankan, Some(0), vec![0, 1, 2, 3], Some(0)),
+        ];
+        let ctx = ctx_for(
+            &act,
+            &snap,
+            &legal,
+            Some("1z"),
+            Some("1m"),
+            true,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert_eq!(result.steps.len(), 2, "sleep + X click, got {result:?}");
+        match &result.steps[1] {
+            Step::Click { x_norm, y_norm } => {
+                assert_eq!(*x_norm, 10.875);
+                assert_eq!(*y_norm, 7.0);
+            }
+            _ => panic!("expected a click on the X button"),
+        }
     }
 
     #[test]
