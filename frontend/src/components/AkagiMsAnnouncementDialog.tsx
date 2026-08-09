@@ -1,9 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppWindow, Bot, Gamepad2, Zap } from 'lucide-react'
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -11,38 +10,49 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { AKAGIMS_GITHUB_URL, openExternal } from '@/lib/external'
-import { useUiPrefsStore } from '@/stores/uiPrefsStore'
+import { AKAGIMS_DOWNLOAD_URL, openExternal } from '@/lib/external'
+import { MAX_AKAGIMS_ANNOUNCEMENT_SHOWS, useUiPrefsStore } from '@/stores/uiPrefsStore'
 import screenshot from '@/assets/akagims-fullauto.jpg'
 
 // Delay so the announcement doesn't pop over the very first paint; keeps it
 // clear of the UpdateNotifier toast (3s) which stacks fine next to a dialog.
 const OPEN_DELAY_MS = 1500
 
-// One-time release announcement for AkagiMS, shown on the first launch of a
-// version that ships it. Dismissing it (any way the dialog closes) marks the
-// `akagi.announcement.akagims` flag so it never reappears.
+// Release announcement for AkagiMS. Closing it distinguishes intent:
+// "Got it" dismisses for good, while X / Esc / outside-click only ends this
+// showing — the dialog comes back on a later launch until it has been shown
+// MAX_AKAGIMS_ANNOUNCEMENT_SHOWS times in total. A quieter permanent entry
+// point lives in the sidebar footer and the Overview promo card.
 export function AkagiMsAnnouncementDialog() {
   const { t } = useTranslation()
-  const seen = useUiPrefsStore((s) => s.akagimsAnnouncementSeen)
-  const markSeen = useUiPrefsStore((s) => s.markAkagimsAnnouncementSeen)
+  const dismissed = useUiPrefsStore((s) => s.akagimsAnnouncementDismissed)
+  const shows = useUiPrefsStore((s) => s.akagimsAnnouncementShows)
+  const markDismissed = useUiPrefsStore((s) => s.markAkagimsAnnouncementDismissed)
+  const recordShown = useUiPrefsStore((s) => s.recordAkagimsAnnouncementShown)
   const [open, setOpen] = useState(false)
+  // One-shot per app launch: recordShown bumps `shows`, which re-runs the
+  // effect — without the ref that re-run would arm a second timer and count
+  // the same launch twice.
+  const fired = useRef(false)
 
   useEffect(() => {
-    if (seen) return
-    const timer = setTimeout(() => setOpen(true), OPEN_DELAY_MS)
+    if (fired.current) return
+    if (dismissed || shows >= MAX_AKAGIMS_ANNOUNCEMENT_SHOWS) return
+    fired.current = true
+    const timer = setTimeout(() => {
+      setOpen(true)
+      recordShown()
+    }, OPEN_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [seen])
+  }, [dismissed, shows, recordShown])
 
-  if (seen) return null
-
-  const handleOpenChange = (v: boolean) => {
-    setOpen(v)
-    if (!v) markSeen()
+  const handleGotIt = () => {
+    markDismissed()
+    setOpen(false)
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={(v) => setOpen(v)}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t('announcements.akagims.title')}</DialogTitle>
@@ -80,13 +90,11 @@ export function AkagiMsAnnouncementDialog() {
         </div>
 
         <DialogFooter className="bg-transparent p-0 border-0 mx-0 mb-0 flex-wrap gap-2">
-          <DialogClose asChild>
-            <Button variant="secondary" size="sm">
-              {t('announcements.akagims.got_it')}
-            </Button>
-          </DialogClose>
-          <Button size="sm" onClick={() => openExternal(AKAGIMS_GITHUB_URL)}>
-            {t('announcements.akagims.view_github')}
+          <Button variant="secondary" size="sm" onClick={handleGotIt}>
+            {t('announcements.akagims.got_it')}
+          </Button>
+          <Button size="sm" onClick={() => openExternal(AKAGIMS_DOWNLOAD_URL)}>
+            {t('announcements.akagims.view_download')}
           </Button>
         </DialogFooter>
       </DialogContent>

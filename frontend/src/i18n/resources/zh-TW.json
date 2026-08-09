@@ -736,8 +736,11 @@
       "feature_fullauto_desc": "自己排段位戰、打完、關掉結算畫面、再排下一局。",
       "feature_zero_setup_title": "即開即用",
       "feature_zero_setup_desc": "下載、解壓、執行。AI 就在程式裡。",
-      "view_github": "前往 GitHub",
-      "got_it": "知道了"
+      "view_download": "前往下載",
+      "got_it": "知道了",
+      "card_title": "AkagiMS — 專為雀魂打造的獨立版",
+      "card_desc": "內建遊戲客戶端、全自動打牌、即開即用。下載、解壓、執行就好。",
+      "card_dismiss": "關閉"
     }
   },
   "install_overlay": {

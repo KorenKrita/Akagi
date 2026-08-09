@@ -736,8 +736,11 @@
       "feature_fullauto_desc": "Queues ranked matches, plays them out, closes the results and queues the next one.",
       "feature_zero_setup_title": "Zero setup",
       "feature_zero_setup_desc": "Download, unzip, run. The AI ships inside the binary.",
-      "view_github": "View on GitHub",
-      "got_it": "Got it"
+      "view_download": "Download",
+      "got_it": "Got it",
+      "card_title": "AkagiMS — the standalone app for Mahjong Soul",
+      "card_desc": "Embedded game client, full-auto play, zero setup. Download, unzip, run.",
+      "card_dismiss": "Dismiss"
     }
   },
   "install_overlay": {
