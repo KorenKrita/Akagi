@@ -10,6 +10,10 @@ const SCALE_KEY = 'akagi.ui.scale'
 // this tracks "has seen the tutorial", not layout state.
 const ONBOARDED_KEY = 'akagi.dashboard.onboarded'
 
+// One-time flag: has the user dismissed the AkagiMS release announcement
+// dialog shown on first launch of a version that ships it?
+const AKAGIMS_ANNOUNCEMENT_KEY = 'akagi.announcement.akagims'
+
 export const SCALE_MIN = 0.7
 export const SCALE_MAX = 1.5
 export const SCALE_STEP = 0.05
@@ -31,10 +35,10 @@ function loadScale(): number {
   }
 }
 
-function loadOnboarded(): boolean {
+function loadFlag(key: string): boolean {
   if (typeof localStorage === 'undefined') return false
   try {
-    return localStorage.getItem(ONBOARDED_KEY) === '1'
+    return localStorage.getItem(key) === '1'
   } catch {
     return false
   }
@@ -47,6 +51,9 @@ type UiPrefsStore = {
   /** Whether the dashboard onboarding hint has been dismissed at least once. */
   dashboardOnboarded: boolean
   markDashboardOnboarded: () => void
+  /** Whether the AkagiMS release announcement has been dismissed. */
+  akagimsAnnouncementSeen: boolean
+  markAkagimsAnnouncementSeen: () => void
 }
 
 export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
@@ -68,7 +75,7 @@ export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
     }
     set({ scale: SCALE_DEFAULT })
   },
-  dashboardOnboarded: loadOnboarded(),
+  dashboardOnboarded: loadFlag(ONBOARDED_KEY),
   markDashboardOnboarded: () => {
     try {
       localStorage.setItem(ONBOARDED_KEY, '1')
@@ -76,5 +83,14 @@ export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
       /* quota — ignore */
     }
     set({ dashboardOnboarded: true })
+  },
+  akagimsAnnouncementSeen: loadFlag(AKAGIMS_ANNOUNCEMENT_KEY),
+  markAkagimsAnnouncementSeen: () => {
+    try {
+      localStorage.setItem(AKAGIMS_ANNOUNCEMENT_KEY, '1')
+    } catch {
+      /* quota — ignore */
+    }
+    set({ akagimsAnnouncementSeen: true })
   },
 }))

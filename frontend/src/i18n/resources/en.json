@@ -723,6 +723,23 @@
       "none_skipped": "None"
     }
   },
+  "announcements": {
+    "akagims": {
+      "title": "Meet AkagiMS — built for Mahjong Soul",
+      "intro": "A new sibling app from the Akagi project is out now.",
+      "screenshot_alt": "AkagiMS playing a ranked match by itself in full-auto mode",
+      "feature_majsoul_title": "Made for Mahjong Soul",
+      "feature_majsoul_desc": "Purpose-built for one game, with everything tuned around it.",
+      "feature_embedded_title": "Built-in game client",
+      "feature_embedded_desc": "Mahjong Soul opens inside the app window — no proxy, no certificate, no second browser.",
+      "feature_fullauto_title": "Full-auto play",
+      "feature_fullauto_desc": "Queues ranked matches, plays them out, closes the results and queues the next one.",
+      "feature_zero_setup_title": "Zero setup",
+      "feature_zero_setup_desc": "Download, unzip, run. The AI ships inside the binary.",
+      "view_github": "View on GitHub",
+      "got_it": "Got it"
+    }
+  },
   "install_overlay": {
     "title": "Installing…",
     "warning": "Please don’t close the app or start a game until the installation finishes."

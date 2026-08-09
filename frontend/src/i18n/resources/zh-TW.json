@@ -723,6 +723,23 @@
       "none_skipped": "無"
     }
   },
+  "announcements": {
+    "akagims": {
+      "title": "認識 AkagiMS — 專為雀魂打造",
+      "intro": "Akagi 專案的新姊妹作,現已推出。",
+      "screenshot_alt": "AkagiMS 正在全自動模式下自己打一局段位戰",
+      "feature_majsoul_title": "專為雀魂設計",
+      "feature_majsoul_desc": "只為一款遊戲打造,一切都圍繞它調校。",
+      "feature_embedded_title": "內建遊戲客戶端",
+      "feature_embedded_desc": "雀魂直接在程式視窗裡開啟 — 不用代理、不用憑證、不用第二個瀏覽器。",
+      "feature_fullauto_title": "全自動打牌",
+      "feature_fullauto_desc": "自己排段位戰、打完、關掉結算畫面、再排下一局。",
+      "feature_zero_setup_title": "即開即用",
+      "feature_zero_setup_desc": "下載、解壓、執行。AI 就在程式裡。",
+      "view_github": "前往 GitHub",
+      "got_it": "知道了"
+    }
+  },
   "install_overlay": {
     "title": "安裝中…",
     "warning": "安裝完成前，請勿關閉程式或前往對局。"

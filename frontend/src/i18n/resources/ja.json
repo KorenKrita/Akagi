@@ -723,6 +723,23 @@
       "none_skipped": "なし"
     }
   },
+  "announcements": {
+    "akagims": {
+      "title": "AkagiMS のご紹介 — 雀魂のために",
+      "intro": "Akagi プロジェクトの新しい姉妹アプリが公開されました。",
+      "screenshot_alt": "AkagiMS が全自動モードで段位戦をプレイ中",
+      "feature_majsoul_title": "雀魂専用設計",
+      "feature_majsoul_desc": "ひとつのゲームのために作られ、すべてがそのために調整されています。",
+      "feature_embedded_title": "ゲームクライアント内蔵",
+      "feature_embedded_desc": "雀魂がアプリのウィンドウ内で開きます — プロキシも証明書も別のブラウザも不要。",
+      "feature_fullauto_title": "全自動プレイ",
+      "feature_fullauto_desc": "段位戦の予約から対局、結果画面を閉じて次の対局まで自動で行います。",
+      "feature_zero_setup_title": "すぐに使える",
+      "feature_zero_setup_desc": "ダウンロードして解凍、実行するだけ。AI はバイナリに同梱。",
+      "view_github": "GitHub で見る",
+      "got_it": "OK"
+    }
+  },
   "install_overlay": {
     "title": "インストール中…",
     "warning": "インストールが完了するまで、アプリを閉じたり対局を開始しないでください。"
