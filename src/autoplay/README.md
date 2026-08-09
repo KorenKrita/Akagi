@@ -29,7 +29,15 @@ Layers, in order:
 1. **Policy** — selected by `autoplay.delay.mode`. `lua` (default):
    `delay.lua` next to the config file, generated from
    `assets/delay_default.lua` (embedded as `script::DEFAULT_SCRIPT`) on
-   first use and hot-reloaded; the built-in model (per-decision-kind
+   first use and hot-reloaded. An existing `delay.lua` that is an
+   unmodified copy of an *older* bundled default is replaced by the
+   current one on start; user-edited scripts are never touched. This
+   works by verbatim comparison against every previously shipped
+   default, embedded from `assets/delay_default_superseded/` — **when
+   changing `assets/delay_default.lua`, copy the version being replaced
+   into that directory and add it to `script::SUPERSEDED_DEFAULT_SCRIPTS`**,
+   or existing installs will keep the old behaviour. The built-in model
+   (per-decision-kind
    log-normal + decision-type bonuses, `delay/mod.rs`) is the fallback
    when the script fails. `legacy`: the historical uniform draw — the
    distribution is forced to Uniform and the script is not consulted.

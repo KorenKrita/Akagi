@@ -45,6 +45,49 @@ pub const DEFAULT_SCRIPT: &str = include_str!(concat!(
     "/assets/delay_default.lua"
 ));
 
+/// Every bundled default shipped by an earlier version, verbatim. An
+/// existing `delay.lua` identical (modulo line endings) to one of these
+/// is an untouched auto-generated copy of an outdated default, so
+/// [`ScriptHost::ensure_default`] replaces it with [`DEFAULT_SCRIPT`];
+/// anything else is a user edit and is never touched.
+///
+/// When changing `assets/delay_default.lua`, copy the version being
+/// replaced into `assets/delay_default_superseded/<short-commit>.lua`
+/// and add it here — otherwise existing installs keep the old script.
+const SUPERSEDED_DEFAULT_SCRIPTS: &[&str] = &[
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/delay_default_superseded/f8c7cfd.lua"
+    )),
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/delay_default_superseded/1893c05.lua"
+    )),
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/delay_default_superseded/cb1f146.lua"
+    )),
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/delay_default_superseded/f1f2842.lua"
+    )),
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/delay_default_superseded/2e5d892.lua"
+    )),
+];
+
+/// Is `content` an unmodified copy of an earlier bundled default? Line
+/// endings are normalized on both sides: the file on disk or the
+/// compiled-in constant may carry CRLF depending on the checkout and
+/// platform, and a pure EOL difference is not a user edit.
+fn is_superseded_default(content: &str) -> bool {
+    let normalized = content.replace("\r\n", "\n");
+    SUPERSEDED_DEFAULT_SCRIPTS
+        .iter()
+        .any(|old| old.replace("\r\n", "\n") == normalized)
+}
+
 /// Hard sanity range for a script-provided target (10 minutes). Values
 /// outside are treated as a script bug, not clamped silently.
 const MAX_SCRIPT_DELAY_MS: f64 = 600_000.0;
@@ -311,31 +354,33 @@ pub struct ScriptHost {
     /// Default-file generation failed (read-only fs) — logged once,
     /// not retried every hand.
     generate_failed: bool,
+    /// The existing file was already checked against the superseded
+    /// defaults this session — the check reads the whole file, so it
+    /// runs once per host, not once per hand.
+    superseded_checked: bool,
 }
 
 impl ScriptHost {
-    /// Write [`DEFAULT_SCRIPT`] to `path` if no file exists there yet.
-    /// A deleted file is regenerated on the next start; a failure (e.g.
-    /// read-only install) is logged once and the built-in model runs.
+    /// Write [`DEFAULT_SCRIPT`] to `path` if no file exists there yet,
+    /// or if the existing file is an unmodified copy of an earlier
+    /// bundled default (see [`SUPERSEDED_DEFAULT_SCRIPTS`]) — without
+    /// this, installs that generated `delay.lua` on an older version
+    /// would keep its behaviour forever after an update. A deleted file
+    /// is regenerated on the next start; a failure (e.g. read-only
+    /// install) is logged once and the built-in model runs.
     pub fn ensure_default(&mut self, path: &Path) {
-        if self.generate_failed || path.exists() {
+        if self.generate_failed {
             return;
         }
-        let write = || -> std::io::Result<()> {
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)?;
-                }
+        if path.exists() {
+            self.refresh_superseded_default(path);
+            return;
+        }
+        match write_atomic(path, DEFAULT_SCRIPT) {
+            Ok(()) => {
+                info!("generated default delay script: {}", path.display());
+                self.superseded_checked = true; // just wrote the current one
             }
-            // Write-then-rename: a crash or full disk mid-write must not
-            // leave a truncated delay.lua that the `path.exists()` gate
-            // above would then treat as the user's file forever.
-            let tmp = path.with_extension("lua.tmp");
-            std::fs::write(&tmp, DEFAULT_SCRIPT)?;
-            std::fs::rename(&tmp, path)
-        };
-        match write() {
-            Ok(()) => info!("generated default delay script: {}", path.display()),
             Err(e) => {
                 warn!(
                     "could not generate delay script at {} — using built-in model: {e}",
@@ -343,6 +388,32 @@ impl ScriptHost {
                 );
                 self.generate_failed = true;
             }
+        }
+    }
+
+    /// Overwrite `path` with [`DEFAULT_SCRIPT`] iff its content is an
+    /// unmodified copy of an earlier bundled default. User-edited
+    /// scripts never match and are left alone.
+    fn refresh_superseded_default(&mut self, path: &Path) {
+        if self.superseded_checked {
+            return;
+        }
+        self.superseded_checked = true;
+        let Ok(existing) = std::fs::read_to_string(path) else {
+            return; // unreadable — maybe_reload logs that case
+        };
+        if existing == DEFAULT_SCRIPT || !is_superseded_default(&existing) {
+            return;
+        }
+        match write_atomic(path, DEFAULT_SCRIPT) {
+            Ok(()) => info!(
+                "delay script was an outdated bundled default — updated: {}",
+                path.display()
+            ),
+            Err(e) => warn!(
+                "could not update outdated delay script at {} — keeping it: {e}",
+                path.display()
+            ),
         }
     }
 
@@ -393,6 +464,21 @@ impl ScriptHost {
     pub fn script(&self) -> Option<&DelayScript> {
         self.script.as_ref()
     }
+}
+
+/// Write-then-rename: a crash or full disk mid-write must not leave a
+/// truncated delay.lua that the exists/superseded gates in
+/// [`ScriptHost::ensure_default`] would then treat as the user's file
+/// forever.
+fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let tmp = path.with_extension("lua.tmp");
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, path)
 }
 
 #[cfg(test)]
@@ -860,6 +946,89 @@ mod tests {
                 .starts_with("-- user edit"),
             "an existing file must never be overwritten"
         );
+
+        // Same for a fresh host (no superseded_checked short-circuit):
+        // a user script simply doesn't match any old default.
+        let mut fresh = ScriptHost::default();
+        fresh.ensure_default(&path);
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .starts_with("-- user edit"),
+            "a user-edited file must survive the superseded-default check"
+        );
+    }
+
+    /// Regression (issue #231): a delay.lua auto-generated by an older
+    /// version must be replaced by the current bundled default on the
+    /// next run — updates used to leave the stale script in place until
+    /// the user deleted it by hand.
+    #[test]
+    fn outdated_bundled_default_is_refreshed() {
+        for old in SUPERSEDED_DEFAULT_SCRIPTS {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("delay.lua");
+            std::fs::write(&path, old).unwrap();
+
+            let mut host = ScriptHost::default();
+            host.ensure_default(&path);
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                DEFAULT_SCRIPT,
+                "an unmodified older default must be updated in place"
+            );
+        }
+    }
+
+    /// A pure CRLF re-encoding of an old default (Windows editors,
+    /// autocrlf checkouts) is still not a user edit.
+    #[test]
+    fn outdated_default_with_crlf_is_refreshed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("delay.lua");
+        let old = SUPERSEDED_DEFAULT_SCRIPTS.last().unwrap();
+        std::fs::write(&path, old.replace('\n', "\r\n")).unwrap();
+
+        let mut host = ScriptHost::default();
+        host.ensure_default(&path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), DEFAULT_SCRIPT);
+    }
+
+    /// The check runs once per host: rewriting the old script back mid-
+    /// session is treated as a (bizarre) user edit until the next start.
+    #[test]
+    fn superseded_check_runs_once_per_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("delay.lua");
+        let old = SUPERSEDED_DEFAULT_SCRIPTS.last().unwrap();
+        std::fs::write(&path, old).unwrap();
+
+        let mut host = ScriptHost::default();
+        host.ensure_default(&path);
+        std::fs::write(&path, old).unwrap();
+        host.ensure_default(&path);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap().as_str(),
+            *old,
+            "the whole-file comparison must not repeat every hand"
+        );
+    }
+
+    /// Maintenance guard: the superseded list must contain real *old*
+    /// versions — each one detected, none of them the current default
+    /// (copying the wrong file into the superseded directory would
+    /// otherwise go unnoticed).
+    #[test]
+    fn superseded_list_is_distinct_from_current_default() {
+        for old in SUPERSEDED_DEFAULT_SCRIPTS {
+            assert!(is_superseded_default(old));
+            assert_ne!(
+                old.replace("\r\n", "\n"),
+                DEFAULT_SCRIPT.replace("\r\n", "\n"),
+                "the current default must never be listed as superseded"
+            );
+        }
+        assert!(!is_superseded_default(DEFAULT_SCRIPT));
     }
 
     #[test]
