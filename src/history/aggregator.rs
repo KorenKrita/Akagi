@@ -78,7 +78,8 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
     let mut stats = GameStats::default();
 
     let mut kyoku_mode = match majsoul_meta.and_then(|meta| meta.match_mode) {
-        Some(2) => KyokuMode::EastSouth,
+        // 2 = 4p East-South, 12 = 3p East-South.
+        Some(2) | Some(12) => KyokuMode::EastSouth,
         _ => KyokuMode::EastOnly,
     };
 
@@ -572,6 +573,47 @@ mod tests {
 
         assert_eq!(rec.kyoku_mode, KyokuMode::EastSouth);
         assert_eq!(rec.majsoul_rank_id, Some(10401));
+    }
+
+    #[test]
+    fn planned_sanma_hanchan_stays_hanchan_when_it_ends_in_east() {
+        let events = vec![
+            MjaiEvent::StartGame {
+                names: vec!["A".into(), "B".into(), "C".into()],
+                kyoku_first: Some(0),
+                aka_flag: Some(true),
+                id: Some(0),
+                num_players: 3,
+                majsoul_meta: Some(MajsoulGameMeta {
+                    game_id: Some(7),
+                    match_mode: Some(12),
+                    rank_id: Some(20402),
+                }),
+            },
+            MjaiEvent::StartKyoku {
+                bakaze: "E".into(),
+                dora_marker: "1m".into(),
+                kyoku: 1,
+                honba: 0,
+                kyotaku: 0,
+                oya: 0,
+                scores: vec![35000, 35000, 35000],
+                tehais: vec![vec![]; 3],
+                num_players: 3,
+            },
+            MjaiEvent::confirmed_game(Some(vec![63000, 43500, -1500]), Some(vec![1, 2, 3])),
+        ];
+        let rec = aggregate(AggregateInput {
+            events: &events,
+            platform: Platform::Majsoul,
+            started_at: ts(),
+            ended_at: ts(),
+            id: "BANKRUPT-SANMA-HANCHAN".into(),
+        })
+        .unwrap();
+
+        assert_eq!(rec.kyoku_mode, KyokuMode::EastSouth);
+        assert_eq!(rec.majsoul_rank_id, Some(20402));
     }
 
     #[test]

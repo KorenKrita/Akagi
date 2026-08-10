@@ -28,7 +28,8 @@ pub struct MajsoulGameMeta {
     /// Stable hash of `ReqAuthGame.game_uuid`, used to recognize a reconnect of
     /// the same table without persisting the UUID itself.
     pub game_id: Option<u64>,
-    /// `game_config.mode.mode`: 1 = East, 2 = East-South.
+    /// `game_config.mode.mode`: 1/2 = 4p East / East-South,
+    /// 11/12 = 3p East / East-South.
     pub match_mode: Option<u8>,
     /// The recorded player's Mahjong Soul level id at game start.
     pub rank_id: Option<u32>,
