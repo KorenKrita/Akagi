@@ -38,6 +38,15 @@ const METHOD_NOTIFY_GAME_TERMINATE: &str = ".lq.NotifyGameTerminate";
 /// Reconnect replay: both responses carry a `GameRestore { actions[] }` of the
 /// current kyoku. See `handle_game_restore`.
 const METHOD_SYNC_GAME: &str = ".lq.FastTest.syncGame";
+/// The two uplink calls that mean "the client accepted an input": every
+/// discard, call, win and pass goes out as one of them. Watched so autoplay
+/// can tell a click that registered from one the UI swallowed.
+const METHOD_INPUT_OPERATION: &str = ".lq.FastTest.inputOperation";
+const METHOD_INPUT_CHI_PENG_GANG: &str = ".lq.FastTest.inputChiPengGang";
+/// `timeuse` the client stamps on an action it took by itself rather than
+/// on one the player made — a decision window that ran out, or an auto
+/// setting. Observed as exactly this value on both input methods.
+const TIMEUSE_CLIENT_AUTO: u64 = 1_000_000;
 const METHOD_ENTER_GAME: &str = ".lq.FastTest.enterGame";
 const ACTION_NEW_ROUND: &str = "ActionNewRound";
 const ACTION_DEAL_TILE: &str = "ActionDealTile";
@@ -144,6 +153,10 @@ pub struct MajsoulBridge {
     /// operation was addressed to our seat). Committed by
     /// `handle_game_restore` once the replay finishes.
     restore_budget: Option<TimeBudget>,
+    /// Counter of the client's own uplink input commands, shared with the
+    /// autoplay manager for click verification (see `autoplay::verify`).
+    /// `None` when the autoplay context isn't wired (MITM path, tests).
+    input_watch: Option<crate::autoplay::verify::SharedInputWatch>,
 }
 
 impl MajsoulBridge {
@@ -165,6 +178,7 @@ impl MajsoulBridge {
             time_budget: None,
             replaying: false,
             restore_budget: None,
+            input_watch: None,
         }
     }
 
@@ -172,6 +186,16 @@ impl MajsoulBridge {
     /// `bridge::for_platform`).
     pub fn with_time_budget(mut self, slot: Option<SharedTimeBudget>) -> Self {
         self.time_budget = slot;
+        self
+    }
+
+    /// Install the shared input-command counter (builder-style; used by
+    /// `bridge::for_platform`).
+    pub fn with_input_watch(
+        mut self,
+        watch: Option<crate::autoplay::verify::SharedInputWatch>,
+    ) -> Self {
+        self.input_watch = watch;
         self
     }
 
@@ -239,6 +263,18 @@ impl MajsoulBridge {
                 // budget slot is stale.
                 self.store_budget(None);
                 self.handle_auth_game_response(&msg.payload)
+            }
+            // The client only sends these once it has accepted an input,
+            // so they are the proof an autoplay click landed. No mjai event
+            // comes of them — the server's echo carries the game state.
+            (MessageType::Request, METHOD_INPUT_OPERATION)
+            | (MessageType::Request, METHOD_INPUT_CHI_PENG_GANG) => {
+                if let Some(watch) = &self.input_watch {
+                    if is_client_initiated(&msg.payload) {
+                        watch.note_sent(input_kind(msg.method_name.as_ref(), &msg.payload));
+                    }
+                }
+                Vec::new()
             }
             (MessageType::Notify, METHOD_ACTION_PROTOTYPE) => self.handle_action_prototype(msg),
             (MessageType::Response, METHOD_SYNC_GAME)
@@ -1326,6 +1362,50 @@ fn names_from_payload(payload: &JsonValue, seat_list: &[JsonValue]) -> Vec<Strin
         .collect()
 }
 
+/// `inputOperation` op types autoplay needs to tell apart. Anything else
+/// (and every `inputChiPengGang`) counts as `Other` — presence is what
+/// matters there, not identity. See `autoplay::verify::InputKind` for why
+/// these two are singled out:
+/// Riichi goes out as `inputOperation` with the reach op type; a plain
+/// discard of the same tile is `type: 1`. Telling them apart is what lets
+/// autoplay notice that a riichi declaration was lost while its discard
+/// went through anyway.
+const OP_TYPE_REACH: u64 = 7;
+/// A plain discard. Distinguished because an own-turn window that expires
+/// is answered by the client with a tsumogiri carrying a small, plausible
+/// `timeuse` and no `auto_operation` flag — `is_client_initiated` cannot
+/// filter it, so the discard kind lets the verifier refuse it as proof
+/// that an action-button press landed.
+const OP_TYPE_DISCARD: u64 = 1;
+
+fn input_kind(method: &str, payload: &JsonValue) -> crate::autoplay::InputKind {
+    if method != METHOD_INPUT_OPERATION {
+        return crate::autoplay::InputKind::Other;
+    }
+    match payload.get("type").and_then(JsonValue::as_u64) {
+        Some(OP_TYPE_REACH) => crate::autoplay::InputKind::Reach,
+        Some(OP_TYPE_DISCARD) => crate::autoplay::InputKind::Discard,
+        _ => crate::autoplay::InputKind::Other,
+    }
+}
+
+/// Whether an input command was the player's own press rather than the
+/// client acting for them (auto-discard setting, or a decision window
+/// that ran out). The latter must not count as proof a click landed.
+fn is_client_initiated(payload: &JsonValue) -> bool {
+    if payload
+        .get("auto_operation")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    payload
+        .get("timeuse")
+        .and_then(JsonValue::as_u64)
+        .is_none_or(|t| t < TIMEUSE_CLIENT_AUTO)
+}
+
 impl Default for MajsoulBridge {
     fn default() -> Self {
         Self::new(None, None)
@@ -1438,6 +1518,146 @@ mod tests {
             method_name: Arc::from(method),
             payload,
         }
+    }
+
+    /// Autoplay tells a click that registered from one the UI swallowed by
+    /// watching for the client's own uplink command. Both input methods
+    /// must count, and only the uplink: a response coming back is not the
+    /// client accepting anything.
+    #[test]
+    fn input_commands_are_counted_for_click_verification() {
+        let watch: crate::autoplay::verify::SharedInputWatch = Default::default();
+        let mut bridge = MajsoulBridge::new(None, None).with_input_watch(Some(watch.clone()));
+        let ticket = watch.ticket();
+
+        let events = bridge.dispatch(&req(
+            METHOD_INPUT_OPERATION,
+            json!({ "type": 1, "tile": "1m" }),
+        ));
+        assert!(events.is_empty(), "an input command is not an mjai event");
+        assert!(watch.sent_since(ticket), "a discard must count");
+
+        let ticket = watch.ticket();
+        bridge.dispatch(&req(METHOD_INPUT_CHI_PENG_GANG, json!({ "type": 1 })));
+        assert!(watch.sent_since(ticket), "a call must count");
+
+        // The server's acknowledgement is not the client sending an input.
+        let ticket = watch.ticket();
+        bridge.dispatch(&resp(METHOD_INPUT_OPERATION, json!({})));
+        assert!(!watch.sent_since(ticket));
+    }
+
+    /// The client acts on its own when a decision window runs out, and
+    /// stamps that with `timeuse: 1000000`. Counting it would report a
+    /// retry as having registered at the exact moment the press
+    /// demonstrably failed — the one case the check exists to catch.
+    #[test]
+    fn the_clients_own_timeout_action_is_not_a_click() {
+        let watch: crate::autoplay::verify::SharedInputWatch = Default::default();
+        let mut bridge = MajsoulBridge::new(None, None).with_input_watch(Some(watch.clone()));
+
+        let ticket = watch.ticket();
+        bridge.dispatch(&req(
+            METHOD_INPUT_CHI_PENG_GANG,
+            json!({ "cancel_operation": true, "index": 0, "timeuse": 1_000_000, "type": 0 }),
+        ));
+        assert!(
+            !watch.sent_since(ticket),
+            "a timed-out window is not a press"
+        );
+
+        // The explicit auto flag, where the message carries one.
+        bridge.dispatch(&req(
+            METHOD_INPUT_OPERATION,
+            json!({ "auto_operation": true, "timeuse": 3, "type": 1, "tile": "1m" }),
+        ));
+        assert!(!watch.sent_since(ticket), "an auto action is not a press");
+
+        // A human-scale think time still counts.
+        bridge.dispatch(&req(
+            METHOD_INPUT_CHI_PENG_GANG,
+            json!({ "cancel_operation": true, "index": 0, "timeuse": 2, "type": 0 }),
+        ));
+        assert!(watch.sent_since(ticket));
+    }
+
+    /// A riichi and a plain discard of the same tile are both
+    /// `inputOperation`; only the op type separates them. Autoplay needs
+    /// that separation because a riichi plan whose declaration press was
+    /// lost still sends the discard, and presence alone would read as
+    /// success.
+    #[test]
+    fn a_riichi_is_distinguished_from_a_plain_discard() {
+        let watch: crate::autoplay::verify::SharedInputWatch = Default::default();
+        let mut bridge = MajsoulBridge::new(None, None).with_input_watch(Some(watch.clone()));
+
+        let ticket = watch.ticket();
+        bridge.dispatch(&req(
+            METHOD_INPUT_OPERATION,
+            json!({ "type": 1, "tile": "4z", "moqie": false, "timeuse": 7 }),
+        ));
+        assert!(watch.sent_since(ticket), "the discard was sent");
+        assert!(!watch.reach_since(ticket), "but it declared nothing");
+
+        let ticket = watch.ticket();
+        bridge.dispatch(&req(
+            METHOD_INPUT_OPERATION,
+            json!({ "type": 7, "tile": "4z", "moqie": false, "timeuse": 5 }),
+        ));
+        assert!(watch.reach_since(ticket), "type 7 is the declaration");
+
+        // A call is not a riichi either, whatever its own type number.
+        let ticket = watch.ticket();
+        bridge.dispatch(&req(
+            METHOD_INPUT_CHI_PENG_GANG,
+            json!({ "type": 7, "index": 0, "timeuse": 2 }),
+        ));
+        assert!(watch.sent_since(ticket) && !watch.reach_since(ticket));
+    }
+
+    /// An own-turn window that runs out is answered by the client with a
+    /// tsumogiri stamped with a plausible `timeuse` and *no*
+    /// `auto_operation` flag — on the wire it is indistinguishable from a
+    /// pressed tile, so `is_client_initiated` rightly lets it through. It
+    /// must still not satisfy the button-press proof standard: a plan that
+    /// clicked only action buttons (e.g. an ankan) never presses a tile,
+    /// so a plain discard cannot mean its press landed.
+    #[test]
+    fn a_turn_timeout_tsumogiri_is_a_discard_not_a_button_press() {
+        let watch: crate::autoplay::verify::SharedInputWatch = Default::default();
+        let mut bridge = MajsoulBridge::new(None, None).with_input_watch(Some(watch.clone()));
+
+        let ticket = watch.ticket();
+        // The exact shape of the offending frame.
+        bridge.dispatch(&req(
+            METHOD_INPUT_OPERATION,
+            json!({
+                "auto_operation": false, "cancel_operation": false,
+                "moqie": true, "tile": "4m", "timeuse": 5, "type": 1
+            }),
+        ));
+        assert!(watch.sent_since(ticket), "it is a real input command");
+        assert!(
+            !watch.non_discard_since(ticket),
+            "but a plain discard cannot prove an action-button press"
+        );
+
+        // A call — what a landed claim press actually produces — does.
+        let ticket = watch.ticket();
+        bridge.dispatch(&req(
+            METHOD_INPUT_CHI_PENG_GANG,
+            json!({ "type": 2, "index": 0, "timeuse": 3 }),
+        ));
+        assert!(watch.non_discard_since(ticket));
+    }
+
+    /// Without a watch attached (the state the bridge is in on the MITM
+    /// path) the same frames must still parse harmlessly.
+    #[test]
+    fn input_commands_are_harmless_without_a_watch() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        let events = bridge.dispatch(&req(METHOD_INPUT_OPERATION, json!({ "type": 1 })));
+        assert!(events.is_empty());
     }
 
     /// Full `.lq.FastTest.syncGame` response captured from a real mid-game

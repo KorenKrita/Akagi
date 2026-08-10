@@ -32,6 +32,11 @@ pub struct AutoplayContext {
     /// the manager's delay model. Uses a `std::sync::RwLock` (not tokio)
     /// because the writer is the bridge's synchronous `parse()` path.
     pub time_budget: crate::autoplay::budget::SharedTimeBudget,
+    /// Counter of the client's own uplink input commands, bumped by the
+    /// Majsoul bridge as it parses. The manager takes a ticket before a
+    /// click and asks afterwards whether the count moved — the proof that
+    /// the click registered (see `autoplay::verify`).
+    pub input_watch: crate::autoplay::verify::SharedInputWatch,
 }
 
 impl AutoplayContext {

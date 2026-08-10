@@ -277,6 +277,7 @@ pub fn run() {
                     let tracker_for_ap = state.game_tracker.clone();
                     let mjai_for_ap = mjai_bus.clone();
                     let resp_for_ap = bot_response_bus.clone();
+                    let notify_for_ap = notify_bus.clone();
                     // Default delay-script location is resolved relative
                     // to the loaded config file's directory.
                     let config_dir_for_ap = state
@@ -294,6 +295,7 @@ pub fn run() {
                             tracker_for_ap,
                             mjai_for_ap,
                             resp_for_ap,
+                            notify_for_ap,
                             config_dir_for_ap,
                         )
                         .await

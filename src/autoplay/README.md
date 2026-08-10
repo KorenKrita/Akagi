@@ -13,8 +13,9 @@ capture backend is running (the MITM path has no page handle to click).
 | `majsoul/` | The production implementation: 16:9 coordinate tables (`coords.rs`) + plan dispatch for every mjai action type. |
 | `budget.rs` | `TimeBudget` — the server's per-decision-window time grant (`OptionalOperationList.time_fixed/time_add`, ms). Written by the Majsoul bridge, read here. Never locally accounted; always the server's own value. |
 | `delay/` | The pre-click "thinking time" model. See below. |
-| `context.rs` | `AutoplayContext` — shared slots between the capture backend, the bridge and the manager (`page`, `canvas_rect`, `time_budget`). |
-| `cdp_input.rs` | chromiumoxide wrappers: hover → press → hold → release click sequence, canvas rect query. |
+| `context.rs` | `AutoplayContext` — shared slots between the capture backend, the bridge and the manager (`page`, `canvas_rect`, `time_budget`, `input_watch`). |
+| `cdp_input.rs` | chromiumoxide wrappers: hover → press → hold → release click sequence (optionally with a mid-press cursor jiggle for retries), canvas rect query. |
+| `verify.rs` | `InputWatch` — counts the client's own uplink input commands (`inputOperation` / `inputChiPengGang`, bumped by the Majsoul bridge). The manager takes a ticket before pressing; if the count never moves, the click was swallowed and the plan is pressed again (bounded by `click_retries`, gated on the decision window still being live). Repeated dead decisions trigger a page reload (`reload_after_failures`), which reconnects into the hand via the bridge's `GameRestore` path. |
 
 ## The delay model (`delay/`)
 

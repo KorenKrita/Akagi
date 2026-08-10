@@ -734,6 +734,9 @@ function AutoplayCard({
       inter_click_delay_ms: 300,
       hover_delay_ms: 150,
       click_hold_ms: 50,
+      verify_input_ms: 300,
+      click_retries: 2,
+      reload_after_failures: 3,
       dealer_first_discard_extra_delay_ms: 2000,
     },
     delay: defaultDelayModel(),
@@ -898,6 +901,54 @@ function AutoplayCard({
             onChange={(e) =>
               setMajsoulField({
                 click_hold_ms: Number(e.target.value || 0),
+              })
+            }
+          />
+        </Field>
+        <Field
+          label={t('settings.autoplay.verify_input')}
+          hint={t('settings.autoplay.verify_input_hint')}
+        >
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            value={ap.majsoul.verify_input_ms}
+            onChange={(e) =>
+              setMajsoulField({
+                verify_input_ms: Number(e.target.value || 0),
+              })
+            }
+          />
+        </Field>
+        <Field
+          label={t('settings.autoplay.click_retries')}
+          hint={t('settings.autoplay.click_retries_hint')}
+        >
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            value={ap.majsoul.click_retries}
+            onChange={(e) =>
+              setMajsoulField({
+                click_retries: Number(e.target.value || 0),
+              })
+            }
+          />
+        </Field>
+        <Field
+          label={t('settings.autoplay.reload_after_failures')}
+          hint={t('settings.autoplay.reload_after_failures_hint')}
+        >
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            value={ap.majsoul.reload_after_failures}
+            onChange={(e) =>
+              setMajsoulField({
+                reload_after_failures: Number(e.target.value || 0),
               })
             }
           />
