@@ -306,9 +306,11 @@ mod tests {
     #[test]
     fn auto_join_stops_when_either_limit_is_reached() {
         let ctx = AutoplayContext::new();
-        let mut cfg = crate::config::MajsoulAutoplayConfig::default();
-        cfg.auto_join_game = true;
-        cfg.auto_join_stop_after_games = 2;
+        let mut cfg = crate::config::MajsoulAutoplayConfig {
+            auto_join_game: true,
+            auto_join_stop_after_games: 2,
+            ..Default::default()
+        };
         ctx.auto_join_start();
         ctx.auto_join_record_completed();
         assert!(ctx.auto_join_can_join(&cfg));

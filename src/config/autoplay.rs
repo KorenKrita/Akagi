@@ -172,18 +172,13 @@ impl Default for DelayModelConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MajsoulAutoplayMode {
+    #[default]
     PacketWithClickFallback,
     Packet,
     Click,
-}
-
-impl Default for MajsoulAutoplayMode {
-    fn default() -> Self {
-        Self::PacketWithClickFallback
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

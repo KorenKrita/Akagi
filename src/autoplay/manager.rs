@@ -491,6 +491,7 @@ impl AutoplayManager {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute_steps(
         &mut self,
         steps: &[Step],
