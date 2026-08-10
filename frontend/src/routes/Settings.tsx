@@ -278,8 +278,6 @@ export function Settings() {
         </CardContent>
       </Card>
 
-      <AutoplayCard draft={draft} setDraft={setDraft} />
-
       <UpdatesCard />
 
       <Dialog
@@ -732,7 +730,7 @@ function PlatformCard({
   )
 }
 
-function AutoplayCard({
+export function AutoplayCard({
   draft,
   setDraft,
 }: {
@@ -768,8 +766,6 @@ function AutoplayCard({
     Math.ceil(preClickDelay[1] / 1000) * 1000,
   )
   const captureIsChromium = draft.capture?.mode === 'chromium'
-  const setApField = (patch: Partial<typeof ap>) =>
-    setDraft({ ...draft, autoplay: { ...ap, ...patch } })
   const setMajsoulField = (patch: Partial<typeof ap.majsoul>) =>
     setDraft({
       ...draft,
@@ -786,93 +782,9 @@ function AutoplayCard({
         <CardTitle>{t('settings.autoplay.title')}</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <Toggle
-          label={t('settings.autoplay.enable')}
-          value={ap.enabled}
-          onChange={(v) => setApField({ enabled: v })}
-        />
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.enable_help')}
         </p>
-        <Toggle
-          label={t('settings.autoplay.auto_join_game')}
-          value={ap.majsoul.auto_join_game ?? false}
-          onChange={(v) => setMajsoulField({ auto_join_game: v })}
-        />
-        {ap.majsoul.auto_join_game && (
-          <>
-            <Field label={t('settings.autoplay.auto_join_level')}>
-              <Select
-                value={String(ap.majsoul.auto_join_level ?? 2)}
-                onValueChange={(v) =>
-                  setMajsoulField({ auto_join_level: Number(v) })
-                }
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {[0, 1, 2, 3, 4].map((level) => (
-                    <SelectItem key={level} value={String(level)}>
-                      {t(`settings.autoplay.auto_join_level_${level}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label={t('settings.autoplay.auto_join_mode')}>
-              <Select
-                value={ap.majsoul.auto_join_mode ?? '3e'}
-                onValueChange={(v) =>
-                  setMajsoulField({
-                    auto_join_mode: v as typeof ap.majsoul.auto_join_mode,
-                  })
-                }
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {(['4e', '4s', '3e', '3s'] as const).map((mode) => (
-                    <SelectItem key={mode} value={mode}>
-                      {t(`settings.autoplay.auto_join_mode_${mode}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field
-              label={t('settings.autoplay.auto_join_stop_after_games')}
-              hint={t('settings.autoplay.auto_join_zero_unlimited')}
-            >
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                step={1}
-                value={ap.majsoul.auto_join_stop_after_games ?? 0}
-                onChange={(e) =>
-                  setMajsoulField({
-                    auto_join_stop_after_games: Math.max(0, Math.floor(Number(e.target.value || 0))),
-                  })
-                }
-              />
-            </Field>
-            <Field
-              label={t('settings.autoplay.auto_join_stop_after_minutes')}
-              hint={t('settings.autoplay.auto_join_zero_unlimited')}
-            >
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                step={1}
-                value={ap.majsoul.auto_join_stop_after_minutes ?? 0}
-                onChange={(e) =>
-                  setMajsoulField({
-                    auto_join_stop_after_minutes: Math.max(0, Math.floor(Number(e.target.value || 0))),
-                  })
-                }
-              />
-            </Field>
-          </>
-        )}
         {ap.enabled &&
           !captureIsChromium &&
           (ap.majsoul.mode ?? 'packet_with_click_fallback') === 'click' && (
@@ -1043,6 +955,100 @@ function AutoplayCard({
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.platform_note')}
         </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+export function AutoJoinCard({
+  draft,
+  setDraft,
+}: {
+  draft: AppConfig
+  setDraft: (c: AppConfig) => void
+}) {
+  const { t } = useTranslation()
+  const ap = draft.autoplay
+  const setMajsoulField = (patch: Partial<typeof ap.majsoul>) =>
+    setDraft({
+      ...draft,
+      autoplay: { ...ap, majsoul: { ...ap.majsoul, ...patch } },
+    })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('game.auto_join.title')}</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <Field label={t('settings.autoplay.auto_join_level')}>
+          <Select
+            value={String(ap.majsoul.auto_join_level ?? 2)}
+            onValueChange={(v) => setMajsoulField({ auto_join_level: Number(v) })}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {[0, 1, 2, 3, 4].map((level) => (
+                <SelectItem key={level} value={String(level)}>
+                  {t(`settings.autoplay.auto_join_level_${level}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label={t('settings.autoplay.auto_join_mode')}>
+          <Select
+            value={ap.majsoul.auto_join_mode ?? '3e'}
+            onValueChange={(v) =>
+              setMajsoulField({
+                auto_join_mode: v as typeof ap.majsoul.auto_join_mode,
+              })
+            }
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {(['4e', '4s', '3e', '3s'] as const).map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {t(`settings.autoplay.auto_join_mode_${mode}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field
+          label={t('settings.autoplay.auto_join_stop_after_games')}
+          hint={t('settings.autoplay.auto_join_zero_unlimited')}
+        >
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            value={ap.majsoul.auto_join_stop_after_games ?? 0}
+            onChange={(e) =>
+              setMajsoulField({
+                auto_join_stop_after_games: Math.max(0, Math.floor(Number(e.target.value || 0))),
+              })
+            }
+          />
+        </Field>
+        <Field
+          label={t('settings.autoplay.auto_join_stop_after_minutes')}
+          hint={t('settings.autoplay.auto_join_zero_unlimited')}
+        >
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            value={ap.majsoul.auto_join_stop_after_minutes ?? 0}
+            onChange={(e) =>
+              setMajsoulField({
+                auto_join_stop_after_minutes: Math.max(0, Math.floor(Number(e.target.value || 0))),
+              })
+            }
+          />
+        </Field>
       </CardContent>
     </Card>
   )

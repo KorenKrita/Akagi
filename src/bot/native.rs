@@ -625,7 +625,10 @@ impl BotRunner for NativeBot {
             self.breaker.retry_now();
         }
 
-        let (action, meta) = if self.api.is_some() && self.breaker.allows() {
+        let (action, meta) = if self.api.is_some()
+            && self.breaker.allows()
+            && needs_remote_inference(&local.candidates)
+        {
             self.remote_decision(&local).await
         } else {
             local_reply(&local, self.seat)
@@ -662,6 +665,11 @@ impl BotRunner for NativeBot {
 /// promise.
 fn is_decision_point(candidates: &[(BotAction, f32)]) -> bool {
     !matches!(candidates, [] | [(BotAction::Pass, _)])
+}
+
+/// A single legal move is forced, so asking a remote model cannot change it.
+fn needs_remote_inference(candidates: &[(BotAction, f32)]) -> bool {
+    candidates.len() > 1
 }
 
 /// Build the reply pair (mjai action + HUD card) from the local model's
@@ -2016,6 +2024,21 @@ mod tests {
             1.0f32,
         )];
         assert!(is_decision_point(&forced_discard));
+    }
+
+    #[test]
+    fn only_real_choices_need_remote_inference() {
+        let forced = [(
+            BotAction::Dahai {
+                pai: "1m".into(),
+                tsumogiri: true,
+            },
+            1.0,
+        )];
+        assert!(!needs_remote_inference(&forced));
+
+        let choice = [forced[0].clone(), (BotAction::Hora { target: 0 }, 0.0)];
+        assert!(needs_remote_inference(&choice));
     }
 
     #[test]

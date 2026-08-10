@@ -248,7 +248,7 @@ fn push_pre_delay(
     let click_overhead_ms = per_click + extra_clicks * (per_click + cfg.inter_click_delay_ms);
 
     let opening_animation = match kind {
-        DecisionKind::Dahai => is_dealer_first_discard(ctx),
+        DecisionKind::Dahai => is_dealer_first_discard(ctx.snapshot, ctx.our_seat),
         // A kita on the opening draw of a kyoku waits out the same
         // dealing animation as the dealer's first discard.
         DecisionKind::Kita => ctx.last_kawa_tile.is_none(),
@@ -366,7 +366,7 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
     // the rack (sorted) — there's no "tsumohai" gap. Click position is
     // the index in the fully-sorted 14-tile array, using TILES[i]
     // directly (not get_pai_coord, which would add TSUMO_SPACE for i=13).
-    if is_dealer_first_discard(ctx) {
+    if is_dealer_first_discard(ctx.snapshot, ctx.our_seat) {
         let mut sorted = ctx.snapshot.players[our_seat].tehai.clone();
         sorted.sort_by(|a, b| compare_pai(a, b));
         let idx = sorted.iter().position(|x| x == pai)?;
@@ -457,12 +457,14 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
 /// non-empty kita pool must fall through to the normal tsumohai-offset
 /// path, otherwise every closed tile sorting after the rinshan gets
 /// clicked one slot too far right.
-fn is_dealer_first_discard(ctx: &ActionContext) -> bool {
-    let our_seat = ctx.our_seat as usize;
-    let Some(player) = ctx.snapshot.players.get(our_seat) else {
+pub(super) fn is_dealer_first_discard(
+    snapshot: &crate::game_state::snapshot::GameStateSnapshot,
+    our_seat: u8,
+) -> bool {
+    let Some(player) = snapshot.players.get(our_seat as usize) else {
         return false;
     };
-    ctx.snapshot.oya == ctx.our_seat
+    snapshot.oya == our_seat
         && player.tehai.len() == 14
         && player.river.is_empty()
         && player.melds.is_empty()

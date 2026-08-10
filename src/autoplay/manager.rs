@@ -17,10 +17,10 @@ use crate::autoplay::cdp_input::{
     dispatch_click, dispatch_mouse_move, dispatch_ws_binary, evaluate_canvas_rect,
 };
 use crate::autoplay::context::{AutoplayContext, CanvasRect};
-use crate::autoplay::majsoul::MajsoulAutoplay;
+use crate::autoplay::majsoul::{is_dealer_first_discard, MajsoulAutoplay};
 use crate::autoplay::platform::{ActionContext, PlatformAutoplay, ReachState, Step};
 use crate::bot::BotResponse;
-use crate::bridge::majsoul::tile::{compare_pai, mjai_to_ms};
+use crate::bridge::majsoul::tile::mjai_to_ms;
 use crate::bridge::BuildHints;
 use crate::config::{AppConfig, MajsoulAutoplayMode};
 use crate::event_bus::{BotResponseBus, MjaiBus};
@@ -801,7 +801,7 @@ fn normalize_packet_action(
         .get(our_seat as usize)
         .and_then(|p| p.drawn_tile.as_deref())
         .or(last_self_tsumo);
-    let moqie = drawn == Some(pai.as_str());
+    let moqie = !is_dealer_first_discard(snapshot, our_seat) && drawn == Some(pai.as_str());
     MjaiEvent::Dahai {
         actor: *actor,
         pai: pai.clone(),
@@ -903,8 +903,8 @@ fn packet_build_hints(
                 .get(our_seat as usize)
                 .and_then(|p| p.drawn_tile.as_deref())
                 .or(last_self_tsumo);
-            let moqie = drawn == Some(pai.as_str());
-            hints.self_operation_index = packet_dahai_index(snapshot, our_seat, pai, drawn, moqie);
+            let moqie = !is_dealer_first_discard(snapshot, our_seat) && drawn == Some(pai.as_str());
+            hints.self_operation_index = Some(0);
             hints.self_operation_tile = mjai_to_ms(pai).ok().map(str::to_string);
             hints.self_operation_moqie = Some(moqie);
         }
@@ -942,30 +942,6 @@ fn packet_build_hints(
         _ => {}
     }
     hints
-}
-
-fn packet_dahai_index(
-    snapshot: &crate::game_state::snapshot::GameStateSnapshot,
-    our_seat: u8,
-    pai: &str,
-    drawn: Option<&str>,
-    moqie: bool,
-) -> Option<u32> {
-    if moqie {
-        return Some(13);
-    }
-    let player = snapshot.players.get(our_seat as usize)?;
-    let mut sorted = player.tehai.clone();
-    sorted.sort_by(|a, b| compare_pai(a, b));
-    if let Some(drawn) = drawn {
-        if let Some(pos) = sorted.iter().rposition(|tile| tile == drawn) {
-            sorted.remove(pos);
-        }
-    }
-    sorted
-        .iter()
-        .position(|tile| tile == pai)
-        .map(|idx| idx as u32)
 }
 
 fn player_snapshot_summary(
