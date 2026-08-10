@@ -99,7 +99,7 @@ function majsoulPt(
       // Last place: dan penalty (already negative).
       danBonus = MAJSOUL_DAN_PENALTY_3P[rule.dan][modeIdx]
     }
-    return baseTerm + uma + danBonus
+    return Math.ceil(baseTerm + uma + danBonus)
   }
 
   const uma = UMA_4P[rank - 1] ?? 0
@@ -110,7 +110,7 @@ function majsoulPt(
   } else if (rank === 4) {
     danBonus = MAJSOUL_DAN_PENALTY_4P[rule.dan][modeIdx]
   }
-  return baseTerm + uma + danBonus
+  return Math.ceil(baseTerm + uma + danBonus)
 }
 
 function tenhouPt(

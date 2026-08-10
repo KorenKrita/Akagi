@@ -130,6 +130,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
+            majsoul_meta: None,
         }
     }
 

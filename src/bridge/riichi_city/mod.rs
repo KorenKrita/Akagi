@@ -199,6 +199,7 @@ impl RiichiCityBridge {
                 aka_flag: None,
                 id: Some(seat),
                 num_players: self.status.num_players,
+                majsoul_meta: None,
             });
             self.status.game_start = false;
         }
@@ -547,7 +548,7 @@ impl RiichiCityBridge {
     /// `cmd_room_end` — game over.
     fn on_room_end(&mut self) -> Vec<MjaiEvent> {
         self.status = GameStatus::default();
-        vec![MjaiEvent::EndGame]
+        vec![MjaiEvent::end_game()]
     }
 
     fn flush_pending_reach(&mut self) -> Vec<MjaiEvent> {
@@ -1259,7 +1260,7 @@ mod tests {
         let mut b = started_4p();
         let e = feed(&mut b, 18, json!({"cmd": "cmd_room_end", "data": {}}));
         assert_eq!(e.len(), 1);
-        assert!(matches!(e[0], MjaiEvent::EndGame));
+        assert!(matches!(e[0], MjaiEvent::EndGame { .. }));
     }
 
     #[test]

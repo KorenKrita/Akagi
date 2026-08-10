@@ -28,7 +28,8 @@ pub enum Platform {
     Unknown,
 }
 
-/// Game length, derived from the highest `bakaze` seen in `start_kyoku`.
+/// Game length. Uses a platform-declared match mode when available and falls
+/// back to the highest `bakaze` observed in `start_kyoku` for legacy streams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KyokuMode {
@@ -131,12 +132,14 @@ pub struct GameRecord {
     /// and the frontend skips the game in cumulative-PT charts.
     pub our_seat: Option<u8>,
 
-    /// Final scores per seat, after Mortal-style 100k normalisation
-    /// (4p) or 105k (3p). Length = `num_players`.
+    /// Final scores per seat. Authoritative platform standings are preferred;
+    /// otherwise Mortal-style 100k (4p) / 105k (3p) normalisation is used.
+    /// Length = `num_players`.
     pub final_scores: Vec<i32>,
 
-    /// Final rank (1..=num_players) per seat. Computed by `Rankings`
-    /// (descending score, ascending seat tiebreak).
+    /// Final rank (1..=num_players) per seat. Uses authoritative platform
+    /// standings when available, otherwise descending score with an ascending
+    /// seat tiebreak.
     pub final_ranks: Vec<u8>,
 
     pub our_rank: Option<u8>,

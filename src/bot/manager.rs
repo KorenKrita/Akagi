@@ -246,7 +246,7 @@ impl BotManager {
         // decide whether to render. Centralizes the "skip" decision.
         let _ = self.out_tx.send(resp);
 
-        if matches!(event, MjaiEvent::EndGame) {
+        if matches!(event, MjaiEvent::EndGame { .. }) {
             // Drain runner cleanly (writes end_game to stdin internally
             // through the next reset on the next start_game). Drop it
             // here so resources release immediately.
@@ -536,18 +536,18 @@ impl BotManager {
             // Others' calls / discards may open a chi/pon/kan/ron window.
             MjaiEvent::Dahai { actor, .. } => *actor != me,
             MjaiEvent::Kakan { actor, .. } => *actor != me,
-            // Own calls without a following rinshan tsumo: bot must pick
-            // the post-call discard. ankan/kakan get a rinshan Tsumo that
-            // flushes anyway, so they stay out of this set.
-            MjaiEvent::Chi { actor, .. }
-            | MjaiEvent::Pon { actor, .. }
-            | MjaiEvent::Daiminkan { actor, .. } => *actor == me,
+            // Own chi/pon calls need an immediate post-call discard. Kan calls
+            // draw from the dead wall first, so daiminkan stays buffered with
+            // ankan/kakan until the replacement Tsumo arrives.
+            MjaiEvent::Chi { actor, .. } | MjaiEvent::Pon { actor, .. } => *actor == me,
             // Round / game boundaries: bot may want to flush state.
-            MjaiEvent::ReachAccepted { .. }
-            | MjaiEvent::Hora { .. }
+            // reach_accepted merely closes the preceding response window and
+            // must be applied with the next real decision instead of queried
+            // on its own.
+            MjaiEvent::Hora { .. }
             | MjaiEvent::Ryukyoku { .. }
             | MjaiEvent::EndKyoku
-            | MjaiEvent::EndGame => true,
+            | MjaiEvent::EndGame { .. } => true,
             // Everything else (start_game/start_kyoku, our own dahai,
             // ankan/kakan, dora reveal, reach declaration) accumulates
             // without bothering the bot — its state catches up the next
@@ -804,7 +804,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn own_chi_and_daiminkan_also_flush() {
+    async fn own_chi_flushes_immediately() {
         let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
 
         mgr.handle(MjaiEvent::Chi {
@@ -816,6 +816,14 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(calls.lock().await.len(), 1, "own chi must flush");
+    }
+
+    /// A daiminkan is followed by a rinshan draw. Querying the bot on the kan
+    /// itself asks it to discard from a 13-tile post-call hand before it has
+    /// seen the replacement tile.
+    #[tokio::test]
+    async fn own_daiminkan_waits_for_rinshan_tsumo() {
+        let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
 
         mgr.handle(MjaiEvent::Daiminkan {
             actor: 2,
@@ -825,7 +833,58 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(calls.lock().await.len(), 2, "own daiminkan must flush");
+        assert!(
+            calls.lock().await.is_empty(),
+            "kan alone must stay buffered"
+        );
+
+        mgr.handle(MjaiEvent::Dora {
+            dora_marker: "3p".into(),
+        })
+        .await
+        .unwrap();
+        assert!(
+            calls.lock().await.is_empty(),
+            "dora reveal still is not a decision"
+        );
+
+        mgr.handle(MjaiEvent::Tsumo {
+            actor: 2,
+            pai: "9p".into(),
+        })
+        .await
+        .unwrap();
+
+        let calls = calls.lock().await;
+        assert_eq!(calls.len(), 1, "rinshan draw triggers one decision");
+        assert_eq!(calls[0].len(), 3);
+        assert!(matches!(calls[0][0], MjaiEvent::Daiminkan { actor: 2, .. }));
+        assert!(matches!(calls[0][1], MjaiEvent::Dora { .. }));
+        assert!(matches!(calls[0][2], MjaiEvent::Tsumo { actor: 2, .. }));
+    }
+
+    #[tokio::test]
+    async fn reach_accepted_is_buffered_until_the_next_real_decision() {
+        let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
+
+        mgr.handle(MjaiEvent::ReachAccepted { actor: 1 })
+            .await
+            .unwrap();
+        assert!(
+            calls.lock().await.is_empty(),
+            "reach_accepted acknowledges a completed window; it opens no new decision"
+        );
+
+        mgr.handle(MjaiEvent::Tsumo {
+            actor: 2,
+            pai: "5p".into(),
+        })
+        .await
+        .unwrap();
+        let calls = calls.lock().await;
+        assert_eq!(calls.len(), 1);
+        assert!(matches!(calls[0][0], MjaiEvent::ReachAccepted { actor: 1 }));
+        assert!(matches!(calls[0][1], MjaiEvent::Tsumo { actor: 2, .. }));
     }
 
     #[tokio::test]
@@ -861,7 +920,7 @@ mod tests {
     #[tokio::test]
     async fn end_game_flushes_drops_runner_emits_stopped() {
         let (mut mgr, calls, _, mut status_rx, _) = manager_with_mock(vec![]);
-        mgr.handle(MjaiEvent::EndGame).await.unwrap();
+        mgr.handle(MjaiEvent::end_game()).await.unwrap();
         assert_eq!(calls.lock().await.len(), 1);
         assert!(mgr.runner.is_none());
         assert!(mgr.actor_id.is_none());
@@ -939,6 +998,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 4,
+                majsoul_meta: None,
             })
             .await
             .unwrap_err();
@@ -996,6 +1056,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 4,
+                majsoul_meta: None,
             })
             .await
             .unwrap_err();
@@ -1078,6 +1139,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 4,
+                majsoul_meta: None,
             })
             .await
             .unwrap_err();
@@ -1142,6 +1204,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
+            majsoul_meta: None,
         })
         .await
         .expect("handle returns Ok (analysis-only), not an error");
@@ -1198,6 +1261,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
+            majsoul_meta: None,
         })
         .await
         .expect("native bot must spawn without a Python runtime");
