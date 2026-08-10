@@ -42,6 +42,12 @@ export function useTauriBridge() {
 
     const unlistens: Array<() => void> = []
     let cancelled = false
+    const track = (pending: Promise<() => void>) => {
+      void pending.then((unlisten) => {
+        if (cancelled) unlisten()
+        else unlistens.push(unlisten)
+      })
+    }
 
     const refreshGame = async () => {
       try {
@@ -95,45 +101,45 @@ export function useTauriBridge() {
       }
     })()
 
-    listen<MjaiEvent>('mjai-event', (e) => {
+    track(listen<MjaiEvent>('mjai-event', (e) => {
       // Fresh game: clear any lingering online-API outage from the last one.
       if (e.type === 'start_game') useApiStatusStore.getState().reset()
       useNotifyStore.getState().pushEvent(e)
       void refreshGame()
-    }).then((u) => unlistens.push(u))
+    }))
 
-    listen<AnalysisResult>('analysis-result', (a) => {
+    track(listen<AnalysisResult>('analysis-result', (a) => {
       useAnalysisStore.getState().set(a)
-    }).then((u) => unlistens.push(u))
+    }))
 
-    listen<BotStatus>('bot-status', (s) => {
+    track(listen<BotStatus>('bot-status', (s) => {
       useBotStore.getState().setStatus(s)
-    }).then((u) => unlistens.push(u))
+    }))
 
-    listen<CaptureStatus>('capture-status', (s) => {
+    track(listen<CaptureStatus>('capture-status', (s) => {
       useCaptureStore.getState().set(s)
-    }).then((u) => unlistens.push(u))
+    }))
 
-    listen<BotResponse>('bot-response', (r) => {
+    track(listen<BotResponse>('bot-response', (r) => {
       useNotifyStore.getState().pushResponse(r)
-    }).then((u) => unlistens.push(u))
+    }))
 
     // The overlay window can turn itself off (its × button). Mirror that back
     // into the config store so the Game page's toggle doesn't keep claiming the
     // overlay is open.
-    listen<OverlayConfig>('overlay-config', (o) => {
+    track(listen<OverlayConfig>('overlay-config', (o) => {
       useConfigStore.getState().setOverlay(o)
-    }).then((u) => unlistens.push(u))
+    }))
 
-    listen<HistoryEvent>('history-recorded', (ev) => {
+    track(listen<HistoryEvent>('history-recorded', (ev) => {
       if (ev.kind === 'recorded') {
         useHistoryStore.getState().prepend(ev.record)
       } else if (ev.kind === 'deleted') {
         useHistoryStore.getState().remove(ev.id)
       }
-    }).then((u) => unlistens.push(u))
+    }))
 
-    listen<Notification>('notify', (n) => {
+    track(listen<Notification>('notify', (n) => {
       useNotifyStore.getState().pushToast(n)
       // Drive the persistent "Online API" health indicator (Statusbar) off the
       // same channel the backend uses for degrade/recover toasts.
@@ -154,7 +160,7 @@ export function useTauriBridge() {
         id: n.id,
         ...(n.sticky ? { duration: Infinity } : {}),
       })
-    }).then((u) => unlistens.push(u))
+    }))
 
     return () => {
       cancelled = true

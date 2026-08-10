@@ -29,17 +29,30 @@ Layers, in order:
 1. **Policy** — selected by `autoplay.delay.mode`. `lua` (default):
    `delay.lua` next to the config file, generated from
    `assets/delay_default.lua` (embedded as `script::DEFAULT_SCRIPT`) on
-   first use and hot-reloaded; the built-in model (per-decision-kind
+   first use and hot-reloaded. An existing `delay.lua` that is an
+   unmodified copy of an *older* bundled default is replaced by the
+   current one on start; user-edited scripts are never touched. This
+   works by verbatim comparison against every previously shipped
+   default, embedded from `assets/delay_default_superseded/` — **when
+   changing `assets/delay_default.lua`, copy the version being replaced
+   into that directory and add it to `script::SUPERSEDED_DEFAULT_SCRIPTS`**,
+   or existing installs will keep the old behaviour. The built-in model
+   (per-decision-kind
    log-normal + decision-type bonuses, `delay/mod.rs`) is the fallback
    when the script fails. `legacy`: the historical uniform draw — the
    distribution is forced to Uniform and the script is not consulted.
    The default log-normal parameters are **calibrated against real
    ranked-game records** (think times measured on the server-side
    action clock of decoded game records); change them only with new
-   measurements. Bot confidence is normalized
-   first (`delay/probs.rs`): native-bot `show.items[].prob` is used raw,
-   Mortal-style `q_values` are softmaxed. Never feed raw Q values to a
-   probability threshold.
+   measurements. Both default policies deliberately **ignore the bot's
+   probability distribution**: measured bot policies can be nearly flat
+   (top ~0.11 on most decisions), which turned every confidence-based
+   rule into a permanent bias instead of a signal. Normalized probs
+   (`delay/probs.rs`: native-bot `show.items[].prob` raw, Mortal-style
+   `q_values` softmaxed — never feed raw Q values to a probability
+   threshold) are still exposed to user Lua scripts as
+   `ctx.top_prob`/`ctx.second_prob`/`ctx.margin` for custom rules tuned
+   to a specific bot.
 2. **Budget caps** (`budget_cap`) — `soft = time_fixed - safety_margin -
    click_overhead`; `hard = soft + bounded bank spend`, bank only when
    the policy returned `allow_bank`. Unconditional: overrunning the
@@ -48,6 +61,13 @@ Layers, in order:
    Soul must render buttons/tiles before a click can land; too-early
    clicks are silently lost) and the dealing-animation wait. Applied
    after the caps; a script cannot go below them.
+
+The policy's output is the target **server-observed total** for the
+window. `majsoul::push_pre_delay` converts it to a sleep by deducting
+both the time already elapsed (network + bot inference, from the budget
+snapshot) and the upcoming click sequence's own duration (hover + hold +
+candidate clicks), then re-applies the functional floor so the first
+click still lands after the UI is ready.
 
 ### Adding a new delay input
 

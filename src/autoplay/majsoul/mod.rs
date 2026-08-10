@@ -45,6 +45,24 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 // While in riichi, Majsoul auto-discards. Suppress unless
                 // this dahai is the riichi-declaring tile (Path B follow-up).
                 if ctx.self_riichi_accepted && ctx.reach_state != ReachState::AwaitingDahai {
+                    // …with one exception: the auto-discard is held back
+                    // while an own-draw operation prompt is open — kita on
+                    // a drawn North (sanma), a riichi-legal ankan, or a
+                    // tsumo agari. Majsoul waits for an answer, so a bot
+                    // decision to tsumogiri must decline the prompt via
+                    // the X button; the client then discards the draw on
+                    // its own. Returning with no click here left the game
+                    // hanging until the turn timer and the entire time
+                    // bank drained (the server eventually auto-declines).
+                    if riichi_prompt_pending(ctx, pai) {
+                        push_pre_delay(&mut result.steps, ctx, DecisionKind::Pass, 0);
+                        if let Some(button) = action_button_for(MajsoulOpType::None, ctx) {
+                            result.steps.push(Step::Click {
+                                x_norm: button.0,
+                                y_norm: button.1,
+                            });
+                        }
+                    }
                     return result;
                 }
                 // The dealer-opening hand-sort animation wait (clicks
@@ -248,7 +266,7 @@ fn push_pre_delay(
     let click_overhead_ms = per_click + extra_clicks * (per_click + cfg.inter_click_delay_ms);
 
     let opening_animation = match kind {
-        DecisionKind::Dahai => is_dealer_first_discard(ctx),
+        DecisionKind::Dahai => is_dealer_first_discard(ctx.snapshot, ctx.our_seat),
         // A kita on the opening draw of a kyoku waits out the same
         // dealing animation as the dealer's first discard.
         DecisionKind::Kita => ctx.last_kawa_tile.is_none(),
@@ -339,19 +357,32 @@ fn push_pre_delay(
     let follow_up = kind == DecisionKind::Dahai && ctx.reach_state == ReachState::AwaitingDahai;
 
     // Convert target total time to a sleep: subtract what the window has
-    // already consumed. Without a budget there is no window clock — sleep
-    // the target verbatim (legacy behaviour).
+    // already consumed AND what the click sequence itself will take —
+    // the target is the server-observed total, and hover/hold/candidate
+    // clicks all land after this sleep. Without a budget there is no
+    // window clock — only the click overhead is deducted.
     let sleep = match ctx.budget {
         Some(b) if follow_up => {
-            let residual = decision.total_target_ms.saturating_sub(b.elapsed_ms);
+            let residual = decision
+                .total_target_ms
+                .saturating_sub(b.elapsed_ms)
+                .saturating_sub(click_overhead_ms);
             let remaining =
                 delay::budget_cap(&input, decision.allow_bank).saturating_sub(b.elapsed_ms);
             residual.min(remaining).max(delay_cfg.min_delay_ms)
         }
-        Some(b) => decision.total_target_ms.saturating_sub(b.elapsed_ms),
+        Some(b) => decision
+            .total_target_ms
+            .saturating_sub(b.elapsed_ms)
+            .saturating_sub(click_overhead_ms),
         None if follow_up => delay_cfg.min_delay_ms,
-        None => decision.total_target_ms,
+        None => decision.total_target_ms.saturating_sub(click_overhead_ms),
     };
+    // The overhead deduction must not undercut UI readiness: the first
+    // click still has to land after the functional floor. Time already
+    // elapsed in the window counts toward that floor.
+    let elapsed = ctx.budget.map_or(0, |b| b.elapsed_ms);
+    let sleep = sleep.max(delay::functional_floor(&input).saturating_sub(elapsed));
     steps.push(Step::Sleep { duration_ms: sleep });
 }
 
@@ -366,7 +397,7 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
     // the rack (sorted) — there's no "tsumohai" gap. Click position is
     // the index in the fully-sorted 14-tile array, using TILES[i]
     // directly (not get_pai_coord, which would add TSUMO_SPACE for i=13).
-    if is_dealer_first_discard(ctx) {
+    if is_dealer_first_discard(ctx.snapshot, ctx.our_seat) {
         let mut sorted = ctx.snapshot.players[our_seat].tehai.clone();
         sorted.sort_by(|a, b| compare_pai(a, b));
         let idx = sorted.iter().position(|x| x == pai)?;
@@ -457,12 +488,14 @@ fn plan_dahai_click(pai: &str, ctx: &ActionContext) -> Option<Step> {
 /// non-empty kita pool must fall through to the normal tsumohai-offset
 /// path, otherwise every closed tile sorting after the rinshan gets
 /// clicked one slot too far right.
-fn is_dealer_first_discard(ctx: &ActionContext) -> bool {
-    let our_seat = ctx.our_seat as usize;
-    let Some(player) = ctx.snapshot.players.get(our_seat) else {
+pub(super) fn is_dealer_first_discard(
+    snapshot: &crate::game_state::snapshot::GameStateSnapshot,
+    our_seat: u8,
+) -> bool {
+    let Some(player) = snapshot.players.get(our_seat as usize) else {
         return false;
     };
-    ctx.snapshot.oya == ctx.our_seat
+    snapshot.oya == our_seat
         && player.tehai.len() == 14
         && player.river.is_empty()
         && player.melds.is_empty()
@@ -691,6 +724,27 @@ fn pass_button_visible(ctx: &ActionContext) -> bool {
         .any(|a| a.action_type == ActionType::Pass)
 }
 
+/// True when our own riichi draw has an operation prompt open — the
+/// engine offers something beyond the forced tsumogiri. While such a
+/// prompt is showing, Majsoul does NOT auto-discard; it waits for an
+/// answer, so a bot decision to tsumogiri must be executed by clicking
+/// the X (decline), never by doing nothing.
+///
+/// `dahai_pai` is the tile the bot wants to tsumogiri — during riichi
+/// this is always the drawn tile. It gates the kita case: the engine
+/// generates a Kita action for *every* North in hand, including one
+/// locked into the riichi'd hand's structure where Majsoul shows no
+/// prompt (riichi only allows pulling the just-drawn North). Ankan and
+/// tsumo need no such gate — the engine only emits them for the drawn
+/// tile.
+fn riichi_prompt_pending(ctx: &ActionContext, dahai_pai: &str) -> bool {
+    ctx.legal_actions.iter().any(|a| match a.action_type {
+        ActionType::Kita => dahai_pai == "N",
+        ActionType::Ankan | ActionType::Tsumo => true,
+        _ => false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -859,6 +913,143 @@ mod tests {
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(result.steps.is_empty(), "no click while riichi accepted");
+    }
+
+    /// Regression: in sanma, drawing a North while in riichi opens the
+    /// kita prompt and Majsoul holds the auto-discard until it is
+    /// answered. The bot deciding to tsumogiri the North must decline
+    /// the prompt via the X button — the old unconditional suppression
+    /// returned no steps and the game hung until the turn timer and the
+    /// entire time bank drained.
+    #[test]
+    fn dahai_of_drawn_north_under_riichi_declines_kita_prompt() {
+        let snap = snapshot_3p_with_kita(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "5s", "5s", "E", "E", "N",
+            ],
+            vec![],
+            Some("N"),
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "N".into(),
+            tsumogiri: true,
+        };
+        let cfg_ref = cfg();
+        // What the engine offers on a drawn North during riichi: the
+        // forced tsumogiri plus the kita (N = tile ids 120..=123).
+        let legal = vec![
+            Action::new(ActionType::Discard, Some(120), vec![], Some(0)),
+            Action::new(ActionType::Kita, Some(120), vec![], Some(0)),
+        ];
+        let ctx = ctx_for(
+            &act,
+            &snap,
+            &legal,
+            Some("1z"),
+            Some("N"),
+            true,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert_eq!(result.steps.len(), 2, "sleep + X click, got {result:?}");
+        match &result.steps[1] {
+            Step::Click { x_norm, y_norm } => {
+                // The X (pass / cancel) is always the rightmost button —
+                // slot 0 — regardless of what else is on the row.
+                assert_eq!(*x_norm, 10.875);
+                assert_eq!(*y_norm, 7.0);
+            }
+            _ => panic!("expected a click on the X button"),
+        }
+    }
+
+    /// A structural North locked inside a riichi'd hand makes the engine
+    /// offer Kita on every subsequent draw, but Majsoul only prompts
+    /// when the drawn tile itself is the North — an ordinary tsumogiri
+    /// must stay suppressed (a ghost X click would land on empty UI).
+    #[test]
+    fn dahai_under_riichi_with_hand_north_but_other_draw_stays_suppressed() {
+        let snap = snapshot_3p_with_kita(
+            0,
+            1,
+            vec![
+                "1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "5s", "5s", "N", "N", "5p",
+            ],
+            vec![],
+            Some("5p"),
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5p".into(),
+            tsumogiri: true,
+        };
+        let cfg_ref = cfg();
+        let legal = vec![
+            Action::new(ActionType::Discard, Some(53), vec![], Some(0)),
+            Action::new(ActionType::Kita, Some(120), vec![], Some(0)),
+        ];
+        let ctx = ctx_for(
+            &act,
+            &snap,
+            &legal,
+            Some("1z"),
+            Some("5p"),
+            true,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            result.steps.is_empty(),
+            "no prompt on screen — stay suppressed, got {result:?}"
+        );
+    }
+
+    /// The same trap with a riichi-legal ankan (3p and 4p alike): the
+    /// kan prompt holds the auto-discard, so a bot decision to keep the
+    /// hand closed must decline via the X button.
+    #[test]
+    fn dahai_under_riichi_with_ankan_prompt_declines_via_x() {
+        let snap = snapshot_with_oya(
+            0,
+            1,
+            vec![
+                "1m", "1m", "1m", "4p", "5p", "6p", "7s", "8s", "9s", "5s", "5s", "E", "E", "1m",
+            ],
+        );
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "1m".into(),
+            tsumogiri: true,
+        };
+        let cfg_ref = cfg();
+        let legal = vec![
+            Action::new(ActionType::Discard, Some(3), vec![], Some(0)),
+            Action::new(ActionType::Ankan, Some(0), vec![0, 1, 2, 3], Some(0)),
+        ];
+        let ctx = ctx_for(
+            &act,
+            &snap,
+            &legal,
+            Some("1z"),
+            Some("1m"),
+            true,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert_eq!(result.steps.len(), 2, "sleep + X click, got {result:?}");
+        match &result.steps[1] {
+            Step::Click { x_norm, y_norm } => {
+                assert_eq!(*x_norm, 10.875);
+                assert_eq!(*y_norm, 7.0);
+            }
+            _ => panic!("expected a click on the X button"),
+        }
     }
 
     #[test]
@@ -1042,6 +1233,108 @@ mod tests {
                 Some(Step::Sleep { duration_ms }) if *duration_ms == floor
             ),
             "unbudgeted follow-up must sleep exactly the UI floor: {:?}",
+            result.steps.first()
+        );
+    }
+
+    /// Regression: the click sequence (hover + hold + candidate clicks)
+    /// lands *after* the pre-click sleep, so it must be deducted from
+    /// the target — otherwise every action systematically overruns the
+    /// modelled server-observed total by the click overhead.
+    #[test]
+    fn click_overhead_is_deducted_from_sleep() {
+        let script = crate::autoplay::delay::DelayScript::compile(
+            "function decide_delay(ctx) return { delay_ms = 3000 } end",
+            "test",
+        )
+        .unwrap();
+        let snap = snapshot_with_hand(0, vec!["1m", "2m", "3m"]);
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "3m".into(),
+            tsumogiri: false,
+        };
+        let mut cfg_ref = cfg();
+        cfg_ref.hover_delay_ms = 200;
+        cfg_ref.click_hold_ms = 100; // single-click dahai → 300ms overhead
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+
+        // No budget clock: target minus the click overhead.
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms: 2700 })
+            ),
+            "no-budget sleep must be target − overhead: {:?}",
+            result.steps.first()
+        );
+
+        // With a budget clock: elapsed time comes off as well.
+        ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
+            fixed_ms: 60_000,
+            add_ms: 0,
+            elapsed_ms: 500,
+        });
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms: 2200 })
+            ),
+            "budgeted sleep must be target − elapsed − overhead: {:?}",
+            result.steps.first()
+        );
+    }
+
+    /// The overhead deduction must not undercut UI readiness: a target
+    /// sitting on the functional floor keeps its full pre-click pause.
+    #[test]
+    fn overhead_deduction_keeps_ui_floor() {
+        let script = crate::autoplay::delay::DelayScript::compile(
+            "function decide_delay(ctx) return { delay_ms = 0 } end",
+            "test",
+        )
+        .unwrap();
+        let snap = snapshot_with_hand(0, vec!["1m", "2m", "3m"]);
+        let act = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "3m".into(),
+            tsumogiri: false,
+        };
+        let mut cfg_ref = cfg();
+        cfg_ref.hover_delay_ms = 200;
+        cfg_ref.click_hold_ms = 100;
+        let mut ctx = ctx_for(
+            &act,
+            &snap,
+            &[],
+            Some("1m"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        ctx.delay_script = Some(&script);
+        let floor = ctx.delay_cfg.min_delay_ms;
+
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert!(
+            matches!(
+                result.steps.first(),
+                Some(Step::Sleep { duration_ms }) if *duration_ms == floor
+            ),
+            "sleep must not dip below the UI-readiness floor: {:?}",
             result.steps.first()
         );
     }

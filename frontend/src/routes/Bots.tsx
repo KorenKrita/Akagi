@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useBlocker } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive, Download, Cloud } from 'lucide-react'
+import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive, Download, Cloud, MousePointerClick, LogIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -37,12 +37,13 @@ import { withInstallBlock } from '@/lib/install'
 import { toast } from '@/components/ui/sonner'
 import { useBotStore } from '@/stores/botStore'
 import { useConfigStore } from '@/stores/configStore'
-import type { AppConfig, BotInfo, BotSettings, NativeApiConfig } from '@/types'
+import type { AppConfig, BotInfo, BotSettings } from '@/types'
 import { ManifestField } from '@/components/ManifestField'
 import { NativeApiFields } from '@/components/NativeApiFields'
 import { checkApiBeforeSave, persistApiConfig } from '@/lib/nativeApi'
 import { proxyConfigValid } from '@/lib/proxy'
 import { mergeExternal } from '@/lib/merge'
+import { AutoJoinCard, AutoplayCard } from '@/routes/Settings'
 
 // Reserved names of the built-in, pure-Rust bots (see `src/bot/native.rs`).
 // They have no directory, no manifest, and nothing to install/configure/delete.
@@ -260,7 +261,7 @@ export function Bots() {
         </TableBody>
       </Table>
 
-      <NativeApiSettings />
+      <BotRuntimeSettings />
 
       {editing && (
         <BotSettingsDrawer
@@ -280,6 +281,296 @@ export function Bots() {
       )}
     </div>
   )
+}
+
+function BotRuntimeSettings() {
+  const { t } = useTranslation()
+  const config = useConfigStore((s) => s.config)
+  const setConfig = useConfigStore((s) => s.setConfig)
+  const [draft, setDraft] = useState<AppConfig | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savingToggle, setSavingToggle] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const syncedConfigRef = useRef<AppConfig | null>(null)
+
+  useEffect(() => {
+    if (!config) return
+    const prev = syncedConfigRef.current
+    syncedConfigRef.current = config
+    if (!prev) {
+      setDraft(config)
+      return
+    }
+    setDraft((cur) => (cur ? mergeExternal(cur, prev, config) : config))
+  }, [config])
+
+  const automationDirty = !!config && !!draft && automationSettingsKey(draft) !== automationSettingsKey(config)
+  const apiDirty = !!config && !!draft && JSON.stringify(draft.bot.api) !== JSON.stringify(config.bot.api)
+  const dirty = automationDirty || apiDirty
+
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      dirty && currentLocation.pathname !== nextLocation.pathname,
+  )
+
+  useEffect(() => {
+    if (!dirty) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [dirty])
+
+  if (!config || !draft) return null
+
+  const autoplayDirty = autoplaySettingsKey(draft) !== autoplaySettingsKey(config)
+
+  const persistToggle = async (kind: 'autoplay' | 'autoJoin', enabled: boolean) => {
+    setSavingToggle(true)
+    setErr(null)
+    const nextDraft = withAutomationToggle(draft, kind, enabled)
+    setDraft(nextDraft)
+    const next = withAutomationToggle(config, kind, enabled)
+    try {
+      await invoke('update_config', { newConfig: next })
+      setConfig(next)
+    } catch (e) {
+      setDraft((cur) => (cur ? withAutomationToggle(cur, kind, kind === 'autoplay'
+        ? config.autoplay.enabled
+        : config.autoplay.majsoul.auto_join_game) : config))
+      setErr(String(e))
+    } finally {
+      setSavingToggle(false)
+    }
+  }
+
+  const save = async () => {
+    setSaving(true)
+    setErr(null)
+    try {
+      if (apiDirty) {
+        const check = await checkApiBeforeSave(draft.bot.api)
+        if (!check.ok) {
+          toast.error(t('bots.api.save_key_check_failed'), {
+            description: check.kind === 'missing' ? t('bots.api.need_url_key') : check.message,
+          })
+          return false
+        }
+      }
+      const next = {
+        ...config,
+        autoplay: {
+          ...draft.autoplay,
+          enabled: config.autoplay.enabled,
+          majsoul: {
+            ...draft.autoplay.majsoul,
+            auto_join_game: config.autoplay.majsoul.auto_join_game,
+          },
+        },
+        bot: { ...config.bot, api: draft.bot.api },
+      }
+      await invoke('update_config', { newConfig: next })
+      setConfig(next)
+      return true
+    } catch (e) {
+      setErr(String(e))
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const saveAndLeave = async () => {
+    if (await save()) blocker.proceed?.()
+    else blocker.reset?.()
+  }
+
+  const discardAndLeave = () => {
+    setDraft(config)
+    blocker.proceed?.()
+  }
+
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <AutomationToggle
+          icon={MousePointerClick}
+          label={t('settings.autoplay.enable')}
+          enabled={draft.autoplay.enabled}
+          disabled={savingToggle}
+          onClick={() => void persistToggle('autoplay', !draft.autoplay.enabled)}
+        />
+        <AutomationToggle
+          icon={LogIn}
+          label={t('settings.autoplay.auto_join_game')}
+          enabled={draft.autoplay.majsoul.auto_join_game}
+          disabled={savingToggle}
+          onClick={() => void persistToggle('autoJoin', !draft.autoplay.majsoul.auto_join_game)}
+        />
+      </div>
+
+      <AutoplayCard draft={draft} setDraft={setDraft} />
+      <AutoJoinCard draft={draft} setDraft={setDraft} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cloud className="h-5 w-5" />
+            {t('bots.api.title')}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <NativeApiFields
+            value={draft.bot.api}
+            onChange={(api) => setDraft({ ...draft, bot: { ...draft.bot, api } })}
+            onKeyMinted={persistApiConfig}
+          />
+        </CardContent>
+      </Card>
+
+      {err && <span className="text-sm text-red-400 [overflow-wrap:anywhere]">{err}</span>}
+      <div className="flex gap-2 border-t border-border pt-3">
+        <Button
+          variant="outline"
+          onClick={() => setDraft(resetAutoplaySettings(draft, config))}
+          disabled={!autoplayDirty || saving || savingToggle}
+        >
+          {t('common.reset')}
+        </Button>
+        <Button
+          onClick={() => void save()}
+          disabled={!dirty || saving || savingToggle || (apiDirty && !proxyConfigValid(draft.bot.api))}
+        >
+          {saving ? t('common.saving') : t('common.save')}
+        </Button>
+      </div>
+
+      <Dialog
+        open={blocker.state === 'blocked'}
+        onOpenChange={(open) => {
+          if (!open) blocker.reset?.()
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>{t('settings.unsaved_title')}</DialogTitle>
+            <DialogDescription>{t('settings.unsaved_desc')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="bg-transparent p-0 border-0 mx-0 mb-0">
+            <Button variant="outline" size="sm" onClick={() => blocker.reset?.()} disabled={saving}>
+              {t('common.stay')}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={discardAndLeave} disabled={saving}>
+              {t('common.discard')}
+            </Button>
+            <Button size="sm" onClick={saveAndLeave} disabled={saving}>
+              {saving ? t('common.saving') : t('settings.save_and_leave')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function AutomationToggle({
+  icon: Icon,
+  label,
+  enabled,
+  disabled,
+  onClick,
+}: {
+  icon: typeof MousePointerClick
+  label: string
+  enabled: boolean
+  disabled: boolean
+  onClick: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <button
+      type="button"
+      aria-pressed={enabled}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex items-center justify-between gap-4 rounded-lg border px-4 py-3 text-left transition-colors disabled:cursor-wait disabled:opacity-60 ${
+        enabled
+          ? 'border-primary/50 bg-primary/10 hover:bg-primary/15'
+          : 'border-border bg-background hover:bg-muted/60'
+      }`}
+    >
+      <span className="flex min-w-0 items-center gap-3">
+        <span className={`rounded-md p-2 ${enabled ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <span className="font-medium">{label}</span>
+      </span>
+      <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${
+        enabled ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+      }`}>
+        {t(enabled ? 'common.on' : 'common.off')}
+      </span>
+    </button>
+  )
+}
+
+function withAutomationToggle(
+  config: AppConfig,
+  kind: 'autoplay' | 'autoJoin',
+  enabled: boolean,
+): AppConfig {
+  return kind === 'autoplay'
+    ? { ...config, autoplay: { ...config.autoplay, enabled } }
+    : {
+        ...config,
+        autoplay: {
+          ...config.autoplay,
+          majsoul: { ...config.autoplay.majsoul, auto_join_game: enabled },
+        },
+      }
+}
+
+function automationSettingsKey(config: AppConfig): string {
+  return JSON.stringify({
+    ...config.autoplay,
+    enabled: false,
+    majsoul: { ...config.autoplay.majsoul, auto_join_game: false },
+  })
+}
+
+function autoplaySettingsKey(config: AppConfig): string {
+  return JSON.stringify({
+    ...config.autoplay,
+    enabled: false,
+    majsoul: {
+      ...config.autoplay.majsoul,
+      auto_join_game: false,
+      auto_join_level: 0,
+      auto_join_mode: '3e',
+      auto_join_stop_after_games: 0,
+      auto_join_stop_after_minutes: 0,
+    },
+  })
+}
+
+function resetAutoplaySettings(draft: AppConfig, stored: AppConfig): AppConfig {
+  const join = draft.autoplay.majsoul
+  return {
+    ...draft,
+    autoplay: {
+      ...stored.autoplay,
+      majsoul: {
+        ...stored.autoplay.majsoul,
+        auto_join_game: join.auto_join_game,
+        auto_join_level: join.auto_join_level,
+        auto_join_mode: join.auto_join_mode,
+        auto_join_stop_after_games: join.auto_join_stop_after_games,
+        auto_join_stop_after_minutes: join.auto_join_stop_after_minutes,
+      },
+    },
+  }
 }
 
 function DeleteBotDialog({
@@ -594,154 +885,6 @@ function BotSettingsDrawer({ name, open, onOpenChange, onEnvChanged }: { name: s
         </div>
       </SheetContent>
     </Sheet>
-  )
-}
-
-// Cloud-inference settings for the built-in native bot, as a card on the Bots
-// tab. The field editor is shared with the Setup wizard (`NativeApiFields`);
-// here we wrap it in Card chrome and an explicit Save button.
-function NativeApiSettings() {
-  const { t } = useTranslation()
-  const config = useConfigStore((s) => s.config)
-  const setConfig = useConfigStore((s) => s.setConfig)
-  const api = config?.bot.api
-
-  const [draft, setDraft] = useState<NativeApiConfig | null>(null)
-  const [saving, setSaving] = useState(false)
-  // Stored `bot.api` snapshot the draft was last synced against — the merge
-  // base for folding external config changes into the open draft.
-  const syncedApiRef = useRef<NativeApiConfig | null>(null)
-
-  useEffect(() => {
-    if (!api) return
-    const prev = syncedApiRef.current
-    syncedApiRef.current = api
-    if (!prev) {
-      // Seed the editable draft once the config loads.
-      setDraft({ ...api })
-      return
-    }
-    // The stored config changed while the draft is open (e.g. a purchased key
-    // was delivered and persisted while the purchase dialog was unmounted).
-    // Three-way merge: fields the user hasn't touched (draft still equal to
-    // the previous stored snapshot) adopt the new stored value; fields the
-    // user edited keep their draft value. `dirty` below recomputes from the
-    // merged result, so Save can never silently revert a delivered key.
-    setDraft((cur) => (cur ? mergeExternal(cur, prev, api) : { ...api }))
-  }, [api])
-
-  // Same unsaved-changes guard as the Settings page: block in-app navigation
-  // while the draft differs from the stored config, and warn on window close.
-  // (A minted or purchased key never trips this: `onKeyMinted` persists it
-  // immediately, and external persists — e.g. the purchase store's fallback —
-  // are merged into the untouched draft fields above, so stored and draft
-  // only diverge where the user really has unsaved edits.)
-  const dirty = !!api && !!draft && JSON.stringify(draft) !== JSON.stringify(api)
-
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      dirty && currentLocation.pathname !== nextLocation.pathname,
-  )
-
-  useEffect(() => {
-    if (!dirty) return
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault()
-      e.returnValue = ''
-    }
-    window.addEventListener('beforeunload', handler)
-    return () => window.removeEventListener('beforeunload', handler)
-  }, [dirty])
-
-  if (!config || !draft) return null
-
-  const save = async (): Promise<boolean> => {
-    setSaving(true)
-    try {
-      // With cloud inference enabled, refuse to persist a key that doesn't
-      // work: a saved-but-broken key silently falls back to the local model
-      // every turn, so the user would think the API is on when it isn't. Block
-      // the save and surface why — they must fix the key or turn the API off.
-      const check = await checkApiBeforeSave(draft)
-      if (!check.ok) {
-        toast.error(t('bots.api.save_key_check_failed'), {
-          description: check.kind === 'missing' ? t('bots.api.need_url_key') : check.message,
-        })
-        return false
-      }
-      const next = { ...config, bot: { ...config.bot, api: draft } }
-      await invoke('update_config', { newConfig: next })
-      setConfig(next)
-      toast.success(t('bots.api.saved'))
-      return true
-    } catch (e) {
-      toast.error(t('bots.api.save_failed'), { description: String(e) })
-      return false
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const saveAndLeave = async () => {
-    if (await save()) {
-      blocker.proceed?.()
-    } else {
-      blocker.reset?.()
-    }
-  }
-
-  const discardAndLeave = () => {
-    setDraft({ ...config.bot.api })
-    blocker.proceed?.()
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Cloud className="h-5 w-5" />
-          {t('bots.api.title')}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <NativeApiFields value={draft} onChange={setDraft} onKeyMinted={persistApiConfig} />
-        <div className="border-t border-border pt-3">
-          <Button onClick={save} disabled={saving || !dirty || !proxyConfigValid(draft)}>
-            {saving ? t('common.saving') : t('common.save')}
-          </Button>
-        </div>
-      </CardContent>
-
-      <Dialog
-        open={blocker.state === 'blocked'}
-        onOpenChange={(open) => {
-          if (!open) blocker.reset?.()
-        }}
-      >
-        <DialogContent showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>{t('settings.unsaved_title')}</DialogTitle>
-            <DialogDescription>{t('settings.unsaved_desc')}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="bg-transparent p-0 border-0 mx-0 mb-0">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => blocker.reset?.()}
-              disabled={saving}
-            >
-              {t('common.stay')}
-            </Button>
-            <Button variant="destructive" size="sm" onClick={discardAndLeave} disabled={saving}>
-              {t('common.discard')}
-            </Button>
-            <Button size="sm" onClick={saveAndLeave} disabled={saving}>
-              {saving ? t('common.saving') : t('settings.save_and_leave')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </Card>
   )
 }
 

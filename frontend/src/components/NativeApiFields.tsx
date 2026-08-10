@@ -37,6 +37,9 @@ import { useConfigStore } from '@/stores/configStore'
 import { usePurchaseStore, type PurchasePhase } from '@/stores/purchaseStore'
 import type { KeyStatus, ModelInfo, NativeApiConfig, RedeemResponse } from '@/types'
 
+/** Shape of a key the server issues: 32 letters and digits, nothing else. */
+const KEY_PATTERN = /^[A-Za-z0-9]{32}$/
+
 /**
  * Controlled editor for the built-in bot's cloud-inference settings
  * (`bot.api`). Fully controlled via `value` / `onChange` so it can bind to the
@@ -104,10 +107,13 @@ export function NativeApiFields({
   // never part of the same unsaved edit that changes the URL.
   const devMode = useConfigStore((s) => s.config?.general.developer_mode ?? false)
 
+  /** Key we have already adopted, so re-renders don't re-query the server. */
+  const adoptedKeyRef = useRef<string | null>(null)
+
   // Latest `value` as of the last committed render. Async handlers (the model
-  // auto-fill in `toggleEnabled`) resolve against this instead of the snapshot
-  // captured when the request started, so a slow request never clobbers what
-  // the user typed while it was in flight.
+  // auto-fill in `toggleEnabled` / `adoptKey`) resolve against this instead of
+  // the snapshot captured when the request started, so a slow request never
+  // clobbers what the user typed while it was in flight.
   const valueRef = useRef(value)
   useEffect(() => {
     valueRef.current = value
@@ -123,6 +129,44 @@ export function NativeApiFields({
     })
     setModels(list)
     return list
+  }
+
+  /**
+   * A complete key was typed or pasted. Take it from there: ask the server what
+   * models it grants, pick a default for each mode, and switch cloud inference
+   * on.
+   *
+   * Entering a key is the user saying they want the cloud model — making them
+   * then find a toggle (which sits above the field they just filled) and a model
+   * dropdown only invites the state where a key is set and nothing uses it.
+   *
+   * A key the server rejects enables nothing: the error surfaces and the bot
+   * stays local, which beats a config that claims cloud inference it cannot do.
+   */
+  const adoptKey = async (key: string) => {
+    const next = { ...valueRef.current, key }
+    if (!KEY_PATTERN.test(key) || !next.base_url.trim() || adoptedKeyRef.current === key) {
+      onChange(next)
+      return
+    }
+    adoptedKeyRef.current = key
+    onChange(next)
+    setEnabling(true)
+    setErr(null)
+    try {
+      const list = await queryModels(next)
+      const cur = valueRef.current
+      const filled = { ...cur, enabled: true }
+      if (!filled.model_4p) filled.model_4p = list.find((m) => m.game === '4p')?.id ?? ''
+      if (!filled.model_3p) filled.model_3p = list.find((m) => m.game === '3p')?.id ?? ''
+      onChange(filled)
+    } catch (e) {
+      // Let the next edit try again — a rejected key is often a half-pasted one.
+      adoptedKeyRef.current = null
+      setErr(String(e))
+    } finally {
+      setEnabling(false)
+    }
   }
 
   // Turning the API on: flip immediately for a responsive switch, then query
@@ -318,7 +362,9 @@ export function NativeApiFields({
           <Input
             type={showKey ? 'text' : 'password'}
             value={activeKey}
-            onChange={(e) => setActive({ key: e.target.value })}
+            onChange={(e) =>
+              isFlya ? setActive({ key: e.target.value }) : void adoptKey(e.target.value.trim())
+            }
             placeholder="••••••••••••••••••••••••••••••••"
             autoComplete="off"
             spellCheck={false}

@@ -254,7 +254,7 @@ impl MajsoulBridge {
                 };
                 OutboundCommand::SelfOperation(self_operation(
                     OP_DAHAI,
-                    hints.self_operation_index.unwrap_or(0),
+                    0,
                     tile,
                     hints.self_operation_moqie.unwrap_or(*tsumogiri),
                     false,
@@ -1678,6 +1678,7 @@ fn response_error_payload(payload: &JsonValue) -> Option<&JsonValue> {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use parser::ParsedMessage;
@@ -1741,7 +1742,7 @@ mod tests {
     }
 
     #[test]
-    fn build_dahai_request_applies_hints() {
+    fn build_dahai_request_keeps_index_zero_when_hinted() {
         let mut bridge = MajsoulBridge::default();
         bridge.seat = Some(1);
 
@@ -1763,7 +1764,7 @@ mod tests {
         let msg = parse_built(&frame);
         assert_eq!(msg.method_name.as_ref(), METHOD_INPUT_OPERATION);
         assert_eq!(msg.payload["type"], OP_DAHAI);
-        assert_eq!(msg.payload["index"], 13);
+        assert_eq!(msg.payload["index"], 0);
         assert_eq!(msg.payload["tile"], "9s");
         assert_eq!(msg.payload["moqie"], true);
     }

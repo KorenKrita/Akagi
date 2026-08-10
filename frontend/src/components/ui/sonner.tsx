@@ -1,4 +1,5 @@
 import { Toaster as SonnerToaster, toast as sonnerToast } from 'sonner'
+import { useThemeStore } from '@/stores/themeStore'
 
 export type ToastSeverity = 'info' | 'success' | 'warning' | 'error'
 
@@ -14,9 +15,10 @@ const SEVERITY_BORDER: Record<ToastSeverity, string> = {
 const DEFAULT_DURATION_MS = 5000
 
 export function Toaster() {
+  const theme = useThemeStore((s) => s.mode)
   return (
     <SonnerToaster
-      theme="dark"
+      theme={theme}
       position="bottom-right"
       richColors={false}
       closeButton
@@ -26,7 +28,7 @@ export function Toaster() {
           toast:
             'group !bg-popover !text-popover-foreground !ring-1 !ring-foreground/10 !rounded-lg !shadow-lg !border-l-4 !pl-4',
           title: 'text-sm font-medium',
-          description: 'text-xs text-muted-foreground',
+          description: 'text-xs !text-muted-foreground',
         },
       }}
     />

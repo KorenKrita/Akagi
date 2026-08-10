@@ -238,6 +238,7 @@ pub async fn run(
 /// Enable Network on the page, subscribe to the four WS events, and
 /// spawn a routing task. Returns the task handle so the poll loop can
 /// abort it when the tab closes.
+#[allow(clippy::too_many_arguments)]
 async fn attach_page(
     page: Page,
     target_id: String,
@@ -625,6 +626,7 @@ fn format_flow_id(key: &FlowKey) -> String {
 /// frames (`opcode == 2`) we re-emit the original base64 (`payload_data`)
 /// rather than re-encoding `payload`, which is identical content but
 /// avoids a copy.
+#[allow(clippy::too_many_arguments)]
 fn record_frame(
     inspector: &InspectorWriter,
     direction: FrameDirection,
