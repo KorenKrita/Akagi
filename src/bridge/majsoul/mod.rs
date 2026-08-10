@@ -1678,6 +1678,7 @@ fn response_error_payload(payload: &JsonValue) -> Option<&JsonValue> {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use parser::ParsedMessage;

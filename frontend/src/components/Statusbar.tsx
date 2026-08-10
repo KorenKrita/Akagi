@@ -45,11 +45,11 @@ export function Statusbar() {
   const retrying = useApiStatusStore((s) => s.retrying)
   const capture = useCaptureStore((s) => s.status)
   const bot = useBotStore((s) => s.status)
-  const [, refreshElapsed] = useState(0)
+  const [now, setNow] = useState(Date.now)
 
   useEffect(() => {
     if (!degraded || !lastAttemptAt) return
-    const timer = window.setInterval(() => refreshElapsed((value) => value + 1), 1_000)
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
   }, [degraded, lastAttemptAt])
 
@@ -93,7 +93,7 @@ export function Statusbar() {
     nativeActive
 
   const elapsedSeconds = lastAttemptAt
-    ? Math.max(0, Math.floor((Date.now() - lastAttemptAt) / 1_000))
+    ? Math.max(0, Math.floor((now - lastAttemptAt) / 1_000))
     : undefined
   const elapsedLabel = elapsedSeconds === undefined
     ? undefined
