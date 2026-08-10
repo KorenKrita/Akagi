@@ -22,6 +22,9 @@
 //!   `evaluate_canvas_rect`).
 //! - [`manager`] — the long-lived `AutoplayManager` task that owns
 //!   per-game state and drives the click sequence.
+//! - [`verify`] — did the click land? Counts the client's own uplink
+//!   input commands (bumped by the Majsoul bridge) so the manager can
+//!   tell a click that registered from one the UI swallowed, and retry.
 //!
 //! Entry point: [`manager::run_autoplay_manager`].
 
@@ -32,8 +35,10 @@ pub mod delay;
 pub mod majsoul;
 pub mod manager;
 pub mod platform;
+pub mod verify;
 
 pub use budget::{BudgetSource, SharedTimeBudget, TimeBudget};
 pub use context::{AutoplayContext, CanvasRect};
 pub use manager::run_autoplay_manager;
 pub use platform::{ActionContext, PlanResult, PlatformAutoplay, ReachState, Step};
+pub use verify::{InputKind, InputWatch, SharedInputWatch};

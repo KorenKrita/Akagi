@@ -10,6 +10,7 @@
 //! lazy-create + ref-count-clean-up implementation.
 
 use crate::autoplay::budget::SharedTimeBudget;
+use crate::autoplay::verify::SharedInputWatch;
 use crate::bridge::{self, Bridge};
 use crate::config::Platform;
 use crate::logger::Session;
@@ -32,6 +33,10 @@ pub struct FlowBridges<K> {
     /// Shared time-budget slot handed to every bridge this map creates.
     /// `None` when the backend has no autoplay context (MITM proxy).
     time_budget: Option<SharedTimeBudget>,
+    /// Shared input-command counter handed to every bridge this map
+    /// creates, for autoplay click verification. Wired exactly like
+    /// `time_budget`.
+    input_watch: Option<SharedInputWatch>,
     map: StdMutex<HashMap<K, SharedBridge>>,
     next_flow_id: AtomicU64,
 }
@@ -44,11 +49,13 @@ where
         session: Arc<Session>,
         platform: Platform,
         time_budget: Option<SharedTimeBudget>,
+        input_watch: Option<SharedInputWatch>,
     ) -> Self {
         Self {
             session,
             platform,
             time_budget,
+            input_watch,
             map: StdMutex::new(HashMap::new()),
             next_flow_id: AtomicU64::new(1),
         }
@@ -80,6 +87,7 @@ where
                     flow_log,
                     Some(self.session.clone()),
                     self.time_budget.clone(),
+                    self.input_watch.clone(),
                 )))
             })
             .clone()

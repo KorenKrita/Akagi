@@ -178,6 +178,7 @@ pub async fn update_config(
         let tracker_for_ap = state.game_tracker.clone();
         let mjai_for_ap = state.mjai_bus.clone();
         let resp_for_ap = state.bot_response_bus.clone();
+        let notify_for_ap = state.notify_bus.clone();
         let config_dir_for_ap = state
             .config_path
             .parent()
@@ -191,6 +192,7 @@ pub async fn update_config(
                 tracker_for_ap,
                 mjai_for_ap,
                 resp_for_ap,
+                notify_for_ap,
                 config_dir_for_ap,
             )
             .await

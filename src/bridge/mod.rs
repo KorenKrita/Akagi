@@ -81,16 +81,22 @@ pub trait Bridge: Send {
 ///   per-decision-window time budget (see `autoplay::budget`). Only the
 ///   chromium capture path wires this — the MITM path has no autoplay.
 ///   Other platforms ignore it.
+/// - `input_watch`: counter the bridge bumps on every uplink input command,
+///   so autoplay can verify a click registered (see `autoplay::verify`).
+///   Wired exactly like `time_budget`.
 pub fn for_platform(
     platform: crate::config::Platform,
     flow_log: Option<Arc<FlowLogger>>,
     session: Option<Arc<Session>>,
     time_budget: Option<crate::autoplay::budget::SharedTimeBudget>,
+    input_watch: Option<crate::autoplay::verify::SharedInputWatch>,
 ) -> Box<dyn Bridge> {
     match platform {
-        crate::config::Platform::Majsoul => {
-            Box::new(MajsoulBridge::new(flow_log, session).with_time_budget(time_budget))
-        }
+        crate::config::Platform::Majsoul => Box::new(
+            MajsoulBridge::new(flow_log, session)
+                .with_time_budget(time_budget)
+                .with_input_watch(input_watch),
+        ),
         crate::config::Platform::Tenhou => Box::new(TenhouBridge::new(flow_log, session)),
         crate::config::Platform::RiichiCity => Box::new(RiichiCityBridge::new(flow_log, session)),
     }

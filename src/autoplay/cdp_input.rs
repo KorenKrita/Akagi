@@ -32,6 +32,23 @@ pub async fn dispatch_click(
     hover_delay_ms: u32,
     click_hold_ms: u32,
 ) -> Result<()> {
+    dispatch_click_shaped(page, x, y, hover_delay_ms, click_hold_ms, false).await
+}
+
+/// As [`dispatch_click`], but able to vary the *shape* of the press.
+///
+/// `jiggle` nudges the cursor a pixel mid-press and puts it back. It
+/// exists for retries: when a press lands on the right control and the
+/// action still does not commit, the position is not what is wrong, so
+/// the only thing left to change is how the press is made.
+pub async fn dispatch_click_shaped(
+    page: &Page,
+    x: f64,
+    y: f64,
+    hover_delay_ms: u32,
+    click_hold_ms: u32,
+    jiggle: bool,
+) -> Result<()> {
     let pt = Point::new(x, y);
     page.move_mouse(pt).await.context("CDP move_mouse")?;
     if hover_delay_ms > 0 {
@@ -48,7 +65,26 @@ pub async fn dispatch_click(
         .map_err(|e| anyhow!("build mousePressed: {e}"))?;
     page.execute(press).await.context("CDP mousePressed")?;
 
-    if click_hold_ms > 0 {
+    if jiggle {
+        // Split the hold around the nudge so its total stays what the
+        // config says. The move is one CSS pixel — enough for the engine
+        // to resample the cursor while the button is down, not enough to
+        // leave the control.
+        let half = u64::from(click_hold_ms) / 2;
+        if half > 0 {
+            tokio::time::sleep(Duration::from_millis(half)).await;
+        }
+        page.move_mouse(Point::new(x + 1.0, y))
+            .await
+            .context("CDP move_mouse (jiggle out)")?;
+        page.move_mouse(pt)
+            .await
+            .context("CDP move_mouse (jiggle back)")?;
+        let rest = u64::from(click_hold_ms) - half;
+        if rest > 0 {
+            tokio::time::sleep(Duration::from_millis(rest)).await;
+        }
+    } else if click_hold_ms > 0 {
         tokio::time::sleep(Duration::from_millis(click_hold_ms as u64)).await;
     }
 
