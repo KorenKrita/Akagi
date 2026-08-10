@@ -1602,7 +1602,25 @@ fn persist_config(config: &AppConfig, path: &Path) -> std::io::Result<()> {
             std::fs::create_dir_all(parent)?;
         }
     }
-    let body = toml::to_string_pretty(config).map_err(std::io::Error::other)?;
+    // Merge into whatever is already there rather than rewriting the file:
+    // `config.toml` can hold keys this build doesn't declare — another
+    // Akagi's, or the user's own notes — and a wholesale rewrite deletes them
+    // along with every comment in the file.
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let body = match crate::config::merge_into(config, &existing) {
+        Ok(merged) => merged,
+        Err(e) => {
+            // Not valid TOML, so there is nothing to merge into — and nothing
+            // was being read from it either (`load_config` falls back to
+            // defaults on a parse error). Rewriting it is what every earlier
+            // build did, and it leaves the user with a file that works.
+            tracing::warn!(
+                "config at {} is not valid TOML ({e}); rewriting it",
+                path.display()
+            );
+            toml::to_string_pretty(config).map_err(std::io::Error::other)?
+        }
+    };
     std::fs::write(path, body)
 }
 
@@ -1706,6 +1724,69 @@ mod tests {
         assert_eq!(back.bot.active_4p, "mortal");
         assert_eq!(back.bot.active_3p, "mortal_3p");
         assert_eq!(back.proxy.addr, "127.0.0.1:9999");
+    }
+
+    /// Regression: a save used to serialise `AppConfig` over the whole file,
+    /// which deleted every section, key and comment this build doesn't
+    /// declare — `config.toml` is shared with other builds and hand-edited.
+    /// One toggle in Settings was enough to lose them.
+    #[test]
+    fn persist_config_keeps_keys_this_build_does_not_know() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let existing = "\
+# my own notes
+
+[bot]
+enabled = true
+active_4p = \"mortal\"
+some_future_knob = 42
+
+[experimental_v4]
+feature = \"on\"
+level = 3
+";
+        std::fs::write(&path, existing).unwrap();
+
+        let mut cfg: AppConfig = toml::from_str(existing).unwrap();
+        cfg.bot.active_4p = "mortal_3p_test".into();
+        persist_config(&cfg, &path).unwrap();
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            body.contains("[experimental_v4]\nfeature = \"on\"\nlevel = 3\n"),
+            "unknown section was dropped:\n{body}"
+        );
+        assert!(
+            body.contains("some_future_knob = 42"),
+            "unknown key inside a known section was dropped:\n{body}"
+        );
+        assert!(
+            body.contains("# my own notes"),
+            "comment was eaten:\n{body}"
+        );
+
+        let back: AppConfig = toml::from_str(&body).unwrap();
+        assert_eq!(back.bot.active_4p, "mortal_3p_test");
+
+        // ...and saving again changes nothing.
+        persist_config(&cfg, &path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+    }
+
+    /// A `config.toml` that isn't valid TOML has nothing to preserve — the
+    /// save must still go through instead of failing the user's edit.
+    #[test]
+    fn persist_config_rewrites_an_unparseable_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "this is not = = toml").unwrap();
+
+        let cfg = AppConfig::default();
+        persist_config(&cfg, &path).unwrap();
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        toml::from_str::<AppConfig>(&body).expect("rewritten file must parse");
     }
 
     /// Regression: when a user has `bot.enabled = false` and then flips it to

@@ -40,8 +40,6 @@
 --   ctx.top_prob        bot's top candidate probability (0..1), or nil
 --   ctx.second_prob     second candidate probability, or nil
 --   ctx.margin          top_prob - second_prob, or nil
---                       (the three above are unused by this default
---                       model — see the note before routine_probability)
 --   ctx.budget          { fixed_ms, add_ms, elapsed_ms } or nil
 --   ctx.rng()           uniform random in [0, 1)
 --   ctx.lognormal(mu, sigma)  log-normal sample in SECONDS
@@ -83,14 +81,17 @@ local OTHER = {
   in_riichi       = { 0.35, 0.30 }, -- skip while in riichi  (median ~1.4s)
 }
 
--- NOTE: this model deliberately ignores the bot's reported probabilities
--- (ctx.top_prob / ctx.second_prob / ctx.margin). Measured bot policies
--- can be nearly flat (top ~0.11 on most decisions), which turned every
--- confidence-based rule — "obvious tile" speed-ups and "contested call"
--- slow-downs alike — into a permanent bias instead of a signal. The
--- fields remain available for custom scripts tuned to a specific bot.
 local function routine_probability(ctx, giri)
   local p = (ROUTINE[giri] or {})[ctx.tile_class or "middle"] or 0.04
+  -- The bot's confidence is a good proxy for "this tile was already
+  -- decided": a dominant top candidate doubles the routine odds.
+  if ctx.top_prob ~= nil then
+    if ctx.top_prob > 0.97 then p = p * 1.8 end
+    -- Disabled: some bots report flat policy probabilities (top well
+    -- under 0.60 on nearly every decision), which turned this into a
+    -- permanent slowdown rather than a "contested call" signal.
+    -- if ctx.top_prob < 0.60 then p = p * 0.3 end
+  end
   -- A riichi on the table means every discard gets a safety read.
   if ctx.opponent_riichi then p = p * 0.4 end
   if p > 0.6 then p = 0.6 end
@@ -158,6 +159,14 @@ function decide_delay(ctx)
   -- the bot ends up not declaring.
   if ctx.can_riichi and ctx.action == "dahai" then
     think = think + 0.4 + 0.8 * ctx.rng()
+  end
+
+  -- Genuinely close call (bot's top two nearly tied): think visibly
+  -- longer, and spending the time bank on it is exactly what a human
+  -- would do.
+  if ctx.margin ~= nil and ctx.margin < 0.02 then
+    think = think + ctx.lognormal(0.6, 0.5)
+    allow_bank = true
   end
 
   -- Occasional genuine tank — recounting discards, weighing a fold.

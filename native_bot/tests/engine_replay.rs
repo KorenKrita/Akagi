@@ -53,6 +53,11 @@ fn decides_a_legal_discard_after_tsumo() {
         "unexpected action on own turn: {:?}",
         decision.action
     );
+    // A fresh 14-tile hand has many legal discards — nothing forced about it.
+    assert!(
+        !decision.forced,
+        "an opening discard choice must not be flagged forced"
+    );
     assert_eq!(decision.logits.len(), 82);
     assert!(
         decision.logits.iter().all(|v| v.is_finite()),

@@ -91,17 +91,6 @@ pub struct DelayModelConfig {
     pub riichi_extra_ms: u32,
     /// Extra target time when the action is a kan declaration, ms. 0 = off.
     pub kan_extra_ms: u32,
-    /// When the top-two candidate probabilities are closer than this, the
-    /// decision counts as "hard": `close_margin_extra_ms` is added and the
-    /// budget layer may dip into the server's extra time pool.
-    pub close_margin: f64,
-    /// Extra target time for a hard decision, ms. 0 = off.
-    pub close_margin_extra_ms: u32,
-    /// When the top candidate's probability exceeds this, the decision
-    /// counts as "obvious" and the target is capped at `obvious_max_ms`.
-    pub obvious_top_prob: f64,
-    /// Cap for obvious decisions, ms. 0 = cap disabled.
-    pub obvious_max_ms: u32,
     /// Reserved headroom inside the server window for network RTT and
     /// scheduling jitter, ms. The soft cap is
     /// `time_fixed - safety_margin - click_overhead`.
@@ -157,10 +146,6 @@ impl Default for DelayModelConfig {
             bank_on_long_thought: true,
             riichi_extra_ms: 0,
             kan_extra_ms: 0,
-            close_margin: 0.005,
-            close_margin_extra_ms: 0,
-            obvious_top_prob: 0.995,
-            obvious_max_ms: 0,
             safety_margin_ms: 1000,
             bank_use_fraction: 0.25,
             bank_max_single_ms: 5000,
@@ -199,7 +184,7 @@ pub struct MajsoulAutoplayConfig {
     /// Empirically Laya's input system samples hover state before a
     /// mousedown registers a hit on the tile sprite — clicks issued
     /// without a hover delay (or shorter than ~100ms) get dropped on
-    /// the floor. Default 150ms; do not lower below 100ms.
+    /// the floor. Default 200ms; do not lower below 100ms.
     pub hover_delay_ms: u32,
     /// How long to hold the mouse button down between mousePressed and
     /// mouseReleased. Non-zero so the engine doesn't collapse the pair
@@ -231,8 +216,8 @@ impl Default for MajsoulAutoplayConfig {
             pre_click_delay_min_ms: 1000,
             pre_click_delay_max_ms: 3000,
             inter_click_delay_ms: 300,
-            hover_delay_ms: 150,
-            click_hold_ms: 50,
+            hover_delay_ms: 200,
+            click_hold_ms: 100,
             dealer_first_discard_extra_delay_ms: 2000,
             auto_join_game: false,
             auto_join_level: 2,

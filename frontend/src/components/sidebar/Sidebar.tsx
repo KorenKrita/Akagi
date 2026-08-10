@@ -16,7 +16,7 @@ import { useSidebar } from '@/hooks/useSidebar'
 import { useIsNarrow } from '@/hooks/useIsNarrow'
 import { GithubMark, DiscordMark } from '@/components/BrandMarks'
 import { AkagiIcon, AkagiWordmark } from '@/components/BrandLogo'
-import { AKAGI_GITHUB_URL, AKAGI_DISCORD_URL, openExternal } from '@/lib/external'
+import { AKAGI_GITHUB_URL, AKAGI_DISCORD_URL, AKAGIMS_GITHUB_URL, openExternal } from '@/lib/external'
 import { HAS_TAURI } from '@/lib/tauri'
 import { LANG_LABELS, SUPPORTED_LANGS, type SupportedLang } from '@/i18n'
 import { selectHasNotifiableUpdate, useUpdaterStore } from '@/stores/updaterStore'
@@ -25,7 +25,7 @@ import { Menu } from './Menu'
 // Fallback used in the browser dev preview (no Tauri runtime → no
 // app.getVersion). Lines up with Cargo.toml so devs see a sensible
 // string until the real version resolves.
-const VERSION_FALLBACK = '3.4.1'
+const VERSION_FALLBACK = '3.4.2'
 
 export function Sidebar() {
   const { t, i18n } = useTranslation()
@@ -168,7 +168,9 @@ export function Sidebar() {
             below it but only when there's room (open state). */}
         <div
           className={cn(
-            'mt-2 shrink-0 flex items-center gap-1 border-t border-border pt-3',
+            // flex-wrap: the collapsed rail (5.625rem) fits only two of the
+            // three icon buttons per row.
+            'mt-2 shrink-0 flex flex-wrap items-center gap-1 border-t border-border pt-3',
             open ? 'justify-start px-1' : 'justify-center',
           )}
         >
@@ -185,6 +187,13 @@ export function Sidebar() {
             onClick={() => openExternal(AKAGI_DISCORD_URL)}
           >
             <DiscordMark className="h-4 w-4" />
+          </CommunityIconButton>
+          <CommunityIconButton
+            label="AkagiMS"
+            collapsed={!open}
+            onClick={() => openExternal(AKAGIMS_GITHUB_URL)}
+          >
+            <AkagiIcon className="h-4 w-4" />
           </CommunityIconButton>
         </div>
         {open && (

@@ -1,8 +1,11 @@
 //! Normalize bot decision metadata into comparable probabilities.
 //!
-//! The delay model wants "how sure was the bot" as `top` / `second`
-//! probabilities in `[0, 1]`, but each bot family reports something
-//! different:
+//! The results are exposed to user delay scripts (`ctx.top_prob` /
+//! `ctx.second_prob` / `ctx.margin`); the built-in model and the bundled
+//! default script ignore them, because measured bot policies can be
+//! nearly flat, which turns confidence thresholds into permanent biases.
+//! "How sure was the bot" is wanted as `top` / `second` probabilities in
+//! `[0, 1]`, but each bot family reports something different:
 //!
 //! - The built-in native bot emits HUD metadata
 //!   `{ show: { items: [{ label, pais, prob, value }] } }` where `prob`

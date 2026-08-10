@@ -40,8 +40,6 @@
 --   ctx.top_prob        bot's top candidate probability (0..1), or nil
 --   ctx.second_prob     second candidate probability, or nil
 --   ctx.margin          top_prob - second_prob, or nil
---                       (the three above are unused by this default
---                       model — see the note before routine_probability)
 --   ctx.budget          { fixed_ms, add_ms, elapsed_ms } or nil
 --   ctx.rng()           uniform random in [0, 1)
 --   ctx.lognormal(mu, sigma)  log-normal sample in SECONDS
@@ -53,17 +51,12 @@
 -- what is being discarded, how deep the hand is, and whether someone
 -- has declared riichi.
 
--- Probability that a discard is routine (no real thought). These are
--- MIXTURE WEIGHTS, not the measured fast-fractions directly: the
--- routine cluster only puts ~84% of its own mass under 1.2s and the
--- genuine-think cluster contributes sub-1.2s mass too, so each weight
--- w solves  w*0.844 + (1-w)*P_think(<1.2s) = measured fast-fraction
--- (tedashi h/t/m: 21%/10%/4%; tsumogiri h/t/m: 31%/26%/20%). Tedashi
--- terminal/middle round to zero — their think cluster alone already
--- covers the measured fast mass.
+-- Probability that a discard is routine (no real thought). Measured
+-- fast-fraction (<1.2s): lone honors get flicked away, middle tiles
+-- almost never do.
 local ROUTINE = {
-  tedashi   = { honor = 0.12, terminal = 0.00, middle = 0.00 },
-  tsumogiri = { honor = 0.15, terminal = 0.10, middle = 0.04 },
+  tedashi   = { honor = 0.21, terminal = 0.10, middle = 0.04 },
+  tsumogiri = { honor = 0.31, terminal = 0.26, middle = 0.20 },
 }
 
 -- Log-normal { mu, sigma } (ln-seconds) of the *genuine-think* cluster.
@@ -83,14 +76,15 @@ local OTHER = {
   in_riichi       = { 0.35, 0.30 }, -- skip while in riichi  (median ~1.4s)
 }
 
--- NOTE: this model deliberately ignores the bot's reported probabilities
--- (ctx.top_prob / ctx.second_prob / ctx.margin). Measured bot policies
--- can be nearly flat (top ~0.11 on most decisions), which turned every
--- confidence-based rule — "obvious tile" speed-ups and "contested call"
--- slow-downs alike — into a permanent bias instead of a signal. The
--- fields remain available for custom scripts tuned to a specific bot.
 local function routine_probability(ctx, giri)
-  local p = (ROUTINE[giri] or {})[ctx.tile_class or "middle"] or 0.04
+  local p = (ROUTINE[giri] or {})[ctx.tile_class or "middle"] or 0.05
+  -- The bot's confidence is a good proxy for "this tile was already
+  -- decided": a dominant top candidate doubles the routine odds, a
+  -- contested one collapses them.
+  if ctx.top_prob ~= nil then
+    if ctx.top_prob > 0.97 then p = p * 1.8 end
+    if ctx.top_prob < 0.60 then p = p * 0.3 end
+  end
   -- A riichi on the table means every discard gets a safety read.
   if ctx.opponent_riichi then p = p * 0.4 end
   if p > 0.6 then p = 0.6 end
@@ -160,6 +154,14 @@ function decide_delay(ctx)
     think = think + 0.4 + 0.8 * ctx.rng()
   end
 
+  -- Genuinely close call (bot's top two nearly tied): think visibly
+  -- longer, and spending the time bank on it is exactly what a human
+  -- would do.
+  if ctx.margin ~= nil and ctx.margin < 0.02 then
+    think = think + ctx.lognormal(0.6, 0.5)
+    allow_bank = true
+  end
+
   -- Occasional genuine tank — recounting discards, weighing a fold.
   if ctx.rng() < 0.02 then
     think = think + 2.0 + ctx.lognormal(0.8, 0.6)
@@ -172,11 +174,7 @@ function decide_delay(ctx)
   -- normal play, not an emergency. But when the bank is nearly dry,
   -- humans wrap up instead of risking the auto-discard timer.
   if ctx.budget ~= nil then
-    -- Floored at 0: a sub-second fixed_ms must degrade to "answer at
-    -- the enforced minimum", not to a negative delay_ms that Akagi
-    -- would reject (which would silently disable this script for the
-    -- whole room).
-    local free_s = math.max(ctx.budget.fixed_ms / 1000 - 1.0, 0)
+    local free_s = ctx.budget.fixed_ms / 1000 - 1.0
     local bank_s = ctx.budget.add_ms / 1000
     if think > free_s then
       if bank_s >= 3.0 then

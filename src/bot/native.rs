@@ -23,7 +23,10 @@
 //! - **Gating** — the API's rate limits are low, and calling on every opponent
 //!   discard "just in case" roughly triples the request count. So we run the
 //!   local model's cheap legal-action check first and only hit the network when
-//!   our seat genuinely has a move to make.
+//!   our seat genuinely has a move to make. Forced moves — a legal set of
+//!   exactly one action, e.g. every tsumogiri while riichi — are answered
+//!   locally too: the server could not pick anything else, so the call would
+//!   spend quota to learn nothing.
 //! - **Fallback** — if the server is unreachable, rate-limited, or the key is
 //!   invalid, we play the local model's action so a live game never stalls.
 //! - **Circuit breaker** — after a failed call the API is skipped for a growing
@@ -625,10 +628,11 @@ impl BotRunner for NativeBot {
             self.breaker.retry_now();
         }
 
-        let (action, meta) = if self.api.is_some()
-            && self.breaker.allows()
-            && needs_remote_inference(&local.candidates)
-        {
+        // A forced move (the legal set is a singleton — e.g. tsumogiri while
+        // riichi) has only one possible answer, so asking the server would
+        // spend a metered API call to learn nothing. Answer it locally.
+        let use_api = self.api.is_some() && self.breaker.allows() && !local.forced;
+        let (action, meta) = if use_api {
             self.remote_decision(&local).await
         } else {
             local_reply(&local, self.seat)
@@ -665,11 +669,6 @@ impl BotRunner for NativeBot {
 /// promise.
 fn is_decision_point(candidates: &[(BotAction, f32)]) -> bool {
     !matches!(candidates, [] | [(BotAction::Pass, _)])
-}
-
-/// A single legal move is forced, so asking a remote model cannot change it.
-fn needs_remote_inference(candidates: &[(BotAction, f32)]) -> bool {
-    candidates.len() > 1
 }
 
 /// Build the reply pair (mjai action + HUD card) from the local model's
@@ -1508,6 +1507,94 @@ mod tests {
         assert!(!bot.breaker.allows());
     }
 
+    /// Regression (#227): a forced move — the legal set is a singleton, here
+    /// the tsumogiri after our riichi — must be answered by the local model
+    /// without spending a metered API call: the server could only return the
+    /// same move.
+    ///
+    /// The mock is scripted with zero responses, so its listener is already
+    /// gone when we decide; had the bot tried the network anyway, the refused
+    /// connection would have opened the breaker and toasted a degrade warning.
+    /// Both staying quiet is the proof that no call was even attempted.
+    #[tokio::test]
+    async fn a_forced_move_is_answered_locally_without_an_api_call() {
+        let (base, served) = mock_http(vec![]);
+        let notify = crate::event_bus::notify_bus();
+        let mut rx = notify.subscribe();
+        let mut bot = bot_with(cfg_api(&base), notify).await;
+
+        let mut events = vec![
+            start_game_4p(0),
+            // Closed tenpai: 123m 456m 789m 123p + 4p tanki.
+            start_kyoku_4p_hidden([
+                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p",
+            ]),
+            MjaiEvent::Tsumo {
+                actor: 0,
+                pai: "9s".into(),
+            },
+            // Our riichi, echoed back through the bus as in a live game.
+            MjaiEvent::Reach {
+                actor: 0,
+                pai: None,
+            },
+            MjaiEvent::Dahai {
+                actor: 0,
+                pai: "9s".into(),
+                tsumogiri: true,
+            },
+            MjaiEvent::ReachAccepted { actor: 0 },
+        ];
+        for seat in 1..4u8 {
+            events.push(MjaiEvent::Tsumo {
+                actor: seat,
+                pai: "1z".into(),
+            });
+            events.push(MjaiEvent::Dahai {
+                actor: seat,
+                pai: "1z".into(),
+                tsumogiri: true,
+            });
+        }
+        // Our next draw: not the winning 4p, no kan in sight — discarding the
+        // drawn tile is the only legal action.
+        events.push(MjaiEvent::Tsumo {
+            actor: 0,
+            pai: "9s".into(),
+        });
+
+        let resp = bot.react(&events).await.unwrap();
+        assert_eq!(
+            resp.action,
+            MjaiEvent::Dahai {
+                actor: 0,
+                pai: "9s".into(),
+                tsumogiri: true,
+            },
+            "riichi forces the tsumogiri"
+        );
+        // Answered by the local model…
+        assert_eq!(
+            resp.meta.as_ref().unwrap()["show"]["title"],
+            SHOW_TITLE_LOCAL
+        );
+        // …without touching the network: no request reached the mock, no failed
+        // attempt opened the breaker, no degrade toast reached the user.
+        assert!(
+            bot.breaker.allows(),
+            "a skipped call must not touch the breaker"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "a skipped call must not toast the user"
+        );
+        assert_eq!(
+            served.join().unwrap().len(),
+            0,
+            "no API call for a forced move"
+        );
+    }
+
     // ---------- circuit breaker ----------
 
     #[test]
@@ -2024,21 +2111,6 @@ mod tests {
             1.0f32,
         )];
         assert!(is_decision_point(&forced_discard));
-    }
-
-    #[test]
-    fn only_real_choices_need_remote_inference() {
-        let forced = [(
-            BotAction::Dahai {
-                pai: "1m".into(),
-                tsumogiri: true,
-            },
-            1.0,
-        )];
-        assert!(!needs_remote_inference(&forced));
-
-        let choice = [forced[0].clone(), (BotAction::Hora { target: 0 }, 0.0)];
-        assert!(needs_remote_inference(&choice));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "akagi"
-version = "3.4.1"
+version = "3.4.2"
 edition = "2021"
 
 [lib]
@@ -23,6 +23,10 @@ tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1"
+# Format-preserving TOML for the config save path: `config.toml` can hold keys
+# this build doesn't declare (another Akagi's, or the user's own), and
+# serialising over the file would delete them. See `src/config/merge.rs`.
+toml_edit = "0.25"
 clap = { version = "4.6", features = ["derive"] }
 anyhow = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "signal", "fs", "process", "io-util", "time"] }
