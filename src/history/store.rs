@@ -248,7 +248,6 @@ mod tests {
             final_scores: vec![30000, 25000, 25000, 20000],
             final_ranks: vec![1, 2, 3, 4],
             our_rank: Some(1),
-            majsoul_rank_id: None,
             our_delta: Some(5000),
             stats: GameStats::default(),
             log_path: format!("games/{id}.mjai.jsonl"),

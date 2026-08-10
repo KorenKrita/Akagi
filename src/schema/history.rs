@@ -143,10 +143,6 @@ pub struct GameRecord {
     pub final_ranks: Vec<u8>,
 
     pub our_rank: Option<u8>,
-    /// Mahjong Soul level id at the start of this game. Legacy records omit
-    /// this field and continue to use the frontend's selected fallback rank.
-    #[serde(default)]
-    pub majsoul_rank_id: Option<u32>,
     /// `final_score[our_seat] - starting_score`. Starting = 25_000 (4p)
     /// / 35_000 (3p). Used by frontend PT formulas as the "(score-25000)
     /// /1000" base term.
@@ -264,7 +260,6 @@ mod tests {
             final_scores: vec![30000, 25000, 25000, 20000],
             final_ranks: vec![1, 2, 3, 4],
             our_rank: Some(1),
-            majsoul_rank_id: None,
             our_delta: Some(5000),
             stats: GameStats::default(),
             log_path: "games/01ARZ.mjai.jsonl".into(),
@@ -286,7 +281,6 @@ mod tests {
             final_scores: vec![],
             final_ranks: vec![],
             our_rank: None,
-            majsoul_rank_id: None,
             our_delta: None,
             stats: GameStats::default(),
             log_path: "x".into(),
@@ -312,19 +306,10 @@ mod tests {
             final_scores: vec![25000, 25000, 25000, 25000],
             final_ranks: vec![1, 2, 3, 4],
             our_rank: Some(3),
-            majsoul_rank_id: None,
             our_delta: Some(0),
             stats: GameStats::default(),
             log_path: "games/rec1.mjai.jsonl".into(),
         };
-        let mut legacy_json = serde_json::to_value(&rec).unwrap();
-        legacy_json
-            .as_object_mut()
-            .unwrap()
-            .remove("majsoul_rank_id");
-        let legacy: GameRecord = serde_json::from_value(legacy_json).unwrap();
-        assert_eq!(legacy.majsoul_rank_id, None);
-
         let ev = HistoryEvent::Recorded {
             record: Box::new(rec),
         };

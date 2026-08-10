@@ -1136,13 +1136,11 @@ impl MajsoulBridge {
             .pointer("/game_config/mode/mode")
             .and_then(JsonValue::as_u64)
             .and_then(|value| u8::try_from(value).ok());
-        let rank_id = own_rank_id(payload, account_id, self.num_players);
         let names = names_from_payload(payload, seat_list);
         info!(
             target: "akagi::bridge::majsoul",
-            "seat resolved: account_id={account_id} seat={seat} num_players={np} mode_id={mode_id:?} match_mode={match_mode:?} rank_available={rank_available} names={names:?}",
+            "seat resolved: account_id={account_id} seat={seat} num_players={np} mode_id={mode_id:?} match_mode={match_mode:?} names={names:?}",
             np = self.num_players,
-            rank_available = rank_id.is_some(),
         );
         vec![MjaiEvent::StartGame {
             names,
@@ -1153,7 +1151,6 @@ impl MajsoulBridge {
             majsoul_meta: Some(MajsoulGameMeta {
                 game_id: self.game_id,
                 match_mode,
-                rank_id,
             }),
         }]
     }
@@ -1167,19 +1164,6 @@ fn stable_game_id(game_uuid: &str) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
-}
-
-fn own_rank_id(payload: &JsonValue, account_id: u64, num_players: u8) -> Option<u32> {
-    let level_field = if num_players == 3 { "level3" } else { "level" };
-    payload
-        .get("players")?
-        .as_array()?
-        .iter()
-        .find(|player| player.get("account_id").and_then(JsonValue::as_u64) == Some(account_id))?
-        .get(level_field)?
-        .get("id")?
-        .as_u64()
-        .and_then(|value| u32::try_from(value).ok())
 }
 
 /// `result.players` is ordered by placement and each row carries its absolute
@@ -1667,7 +1651,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_game_carries_private_rank_length_and_reconnect_metadata() {
+    fn auth_game_carries_private_length_and_reconnect_metadata() {
         let mut bridge = MajsoulBridge::new(None, None);
         let game_uuid = "230723-test-game-uuid";
         bridge.dispatch(&req(
@@ -1683,7 +1667,7 @@ mod tests {
                     "mode": { "mode": 2 }
                 },
                 "players": [
-                    { "account_id": 100, "nickname": "me", "level": { "id": 10401 } }
+                    { "account_id": 100, "nickname": "me" }
                 ],
                 "seat_list": [100u64, 1u64, 2u64, 3u64]
             }),
@@ -1693,7 +1677,6 @@ mod tests {
                 let meta = majsoul_meta.expect("Mahjong Soul metadata");
                 assert_eq!(meta.game_id, Some(stable_game_id(game_uuid)));
                 assert_eq!(meta.match_mode, Some(2));
-                assert_eq!(meta.rank_id, Some(10401));
             }
             other => panic!("expected StartGame, got {other:?}"),
         }
@@ -1701,39 +1684,6 @@ mod tests {
             .unwrap()
             .get("majsoul_meta")
             .is_none());
-    }
-
-    #[test]
-    fn auth_game_uses_level3_for_three_player_rank() {
-        let mut bridge = MajsoulBridge::new(None, None);
-        bridge.dispatch(&req(METHOD_AUTH_GAME, json!({ "account_id": 100 })));
-        let events = bridge.dispatch(&resp(
-            METHOD_AUTH_GAME,
-            json!({
-                "game_config": { "mode": { "mode": 2 } },
-                "players": [{
-                    "account_id": 100,
-                    "nickname": "me",
-                    "level": { "id": 10402 },
-                    "level3": { "id": 20503 }
-                }],
-                "seat_list": [1u64, 100u64, 2u64]
-            }),
-        ));
-        match &events[0] {
-            MjaiEvent::StartGame {
-                num_players,
-                majsoul_meta,
-                ..
-            } => {
-                assert_eq!(*num_players, 3);
-                assert_eq!(
-                    majsoul_meta.expect("Mahjong Soul metadata").rank_id,
-                    Some(20503)
-                );
-            }
-            other => panic!("expected StartGame, got {other:?}"),
-        }
     }
 
     #[test]

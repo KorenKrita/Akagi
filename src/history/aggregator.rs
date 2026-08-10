@@ -332,7 +332,6 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
 
     let final_ranks = authoritative_ranks.unwrap_or_else(|| ranks_from_scores(&cur_scores));
     let our_rank = our_seat.map(|seat| final_ranks[seat as usize]);
-    let majsoul_rank_id = majsoul_meta.and_then(|meta| meta.rank_id);
     let our_delta = our_seat.map(|seat| cur_scores[seat as usize] - starting);
 
     Some(GameRecord {
@@ -347,7 +346,6 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
         final_scores: cur_scores,
         final_ranks,
         our_rank,
-        majsoul_rank_id,
         our_delta,
         stats,
         log_path: format!("games/{id}.mjai.jsonl"),
@@ -551,7 +549,6 @@ mod tests {
             *majsoul_meta = Some(MajsoulGameMeta {
                 game_id: Some(7),
                 match_mode: Some(2),
-                rank_id: Some(10401),
             });
         }
         let events = vec![
@@ -572,7 +569,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(rec.kyoku_mode, KyokuMode::EastSouth);
-        assert_eq!(rec.majsoul_rank_id, Some(10401));
     }
 
     #[test]
@@ -587,7 +583,6 @@ mod tests {
                 majsoul_meta: Some(MajsoulGameMeta {
                     game_id: Some(7),
                     match_mode: Some(12),
-                    rank_id: Some(20402),
                 }),
             },
             MjaiEvent::StartKyoku {
@@ -613,7 +608,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(rec.kyoku_mode, KyokuMode::EastSouth);
-        assert_eq!(rec.majsoul_rank_id, Some(20402));
     }
 
     #[test]

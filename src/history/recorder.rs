@@ -278,7 +278,6 @@ mod tests {
             *majsoul_meta = Some(crate::schema::MajsoulGameMeta {
                 game_id: Some(game_id),
                 match_mode: Some(2),
-                rank_id: Some(10401),
             });
         }
         event

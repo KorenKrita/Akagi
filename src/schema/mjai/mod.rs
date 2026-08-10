@@ -31,8 +31,6 @@ pub struct MajsoulGameMeta {
     /// `game_config.mode.mode`: 1/2 = 4p East / East-South,
     /// 11/12 = 3p East / East-South.
     pub match_mode: Option<u8>,
-    /// The recorded player's Mahjong Soul level id at game start.
-    pub rank_id: Option<u32>,
 }
 
 /// Why an in-process game-end event was emitted. The reason and standings are
@@ -395,7 +393,6 @@ mod tests {
             majsoul_meta: Some(MajsoulGameMeta {
                 game_id: Some(7),
                 match_mode: Some(2),
-                rank_id: Some(10401),
             }),
         };
         let start_json = serde_json::to_value(start).unwrap();
