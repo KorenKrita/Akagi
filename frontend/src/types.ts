@@ -100,13 +100,16 @@ export type DetectedBrowser = {
 export type PlatformKind = 'Majsoul' | 'Tenhou' | 'RiichiCity'
 
 export type MajsoulAutoplayConfig = {
-  mode: 'packet_with_click_fallback' | 'packet' | 'click'
+  mode: 'packet' | 'click'
   pre_click_delay_min_ms: number
   pre_click_delay_max_ms: number
+  packet_delay_min_ms: number
+  packet_delay_max_ms: number
   inter_click_delay_ms: number
   hover_delay_ms: number
   click_hold_ms: number
   dealer_first_discard_extra_delay_ms: number
+  packet_dealer_first_discard_extra_delay_ms: number
   auto_join_game: boolean
   auto_join_level: number
   auto_join_mode: '4e' | '4s' | '3e' | '3s'

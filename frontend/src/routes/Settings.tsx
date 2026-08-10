@@ -583,6 +583,37 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
+function TimeSlider({
+  label,
+  hint,
+  value,
+  max,
+  step,
+  unit,
+  onChange,
+}: {
+  label: string
+  hint?: string
+  value: number
+  max: number
+  step: number
+  unit: string
+  onChange: (value: number) => void
+}) {
+  return (
+    <Field label={`${label}: ${value} ${unit}`} hint={hint}>
+      <Slider
+        aria-label={label}
+        min={0}
+        max={Math.max(max, Math.ceil(value / step) * step)}
+        step={step}
+        value={[value]}
+        onValueChange={([next]) => onChange(next)}
+      />
+    </Field>
+  )
+}
+
 function Toggle({
   label,
   value,
@@ -741,13 +772,16 @@ export function AutoplayCard({
   const ap = draft.autoplay ?? {
     enabled: false,
     majsoul: {
-      mode: 'packet_with_click_fallback',
+      mode: 'packet',
       pre_click_delay_min_ms: 1000,
       pre_click_delay_max_ms: 3000,
+      packet_delay_min_ms: 1000,
+      packet_delay_max_ms: 3000,
       inter_click_delay_ms: 300,
       hover_delay_ms: 150,
       click_hold_ms: 50,
       dealer_first_discard_extra_delay_ms: 2000,
+      packet_dealer_first_discard_extra_delay_ms: 2000,
       auto_join_game: false,
       auto_join_level: 2,
       auto_join_mode: '3e' as const,
@@ -764,6 +798,14 @@ export function AutoplayCard({
   const preClickDelaySliderMax = Math.max(
     10_000,
     Math.ceil(preClickDelay[1] / 1000) * 1000,
+  )
+  const packetDelay = [
+    Math.min(ap.majsoul.packet_delay_min_ms, ap.majsoul.packet_delay_max_ms),
+    Math.max(ap.majsoul.packet_delay_min_ms, ap.majsoul.packet_delay_max_ms),
+  ]
+  const packetDelaySliderMax = Math.max(
+    10_000,
+    Math.ceil(packetDelay[1] / 1000) * 1000,
   )
   const captureIsChromium = draft.capture?.mode === 'chromium'
   const setMajsoulField = (patch: Partial<typeof ap.majsoul>) =>
@@ -787,14 +829,14 @@ export function AutoplayCard({
         </p>
         {ap.enabled &&
           !captureIsChromium &&
-          (ap.majsoul.mode ?? 'packet_with_click_fallback') === 'click' && (
+          (ap.majsoul.mode ?? 'packet') === 'click' && (
           <p className="text-xs text-amber-500">
             {t('settings.autoplay.requires_chromium')}
           </p>
         )}
         <Field label={t('settings.autoplay.mode')}>
           <Select
-            value={ap.majsoul.mode ?? 'packet_with_click_fallback'}
+            value={ap.majsoul.mode ?? 'packet'}
             onValueChange={(v) =>
               setMajsoulField({
                 mode: v as typeof ap.majsoul.mode,
@@ -805,9 +847,6 @@ export function AutoplayCard({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="packet_with_click_fallback">
-                {t('settings.autoplay.mode_packet_with_click_fallback')}
-              </SelectItem>
               <SelectItem value="packet">
                 {t('settings.autoplay.mode_packet')}
               </SelectItem>
@@ -817,141 +856,78 @@ export function AutoplayCard({
             </SelectContent>
           </Select>
         </Field>
-        {/* Delay policy: exactly one of legacy (fixed uniform) or the
-            Lua-scripted human-like model is active. */}
-        <Field label={t('settings.autoplay.delay_mode')}>
-          <Select
-            value={delay.mode}
-            onValueChange={(v) => setDelayField({ mode: v as DelayMode })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="lua">
-                {t('settings.autoplay.delay_mode_lua')}
-              </SelectItem>
-              <SelectItem value="legacy">
-                {t('settings.autoplay.delay_mode_legacy')}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        {delay.mode === 'lua' && (
-          <p className="text-xs text-muted-foreground">
-            {t('settings.autoplay.delay_mode_lua_help')}
-          </p>
-        )}
-        {delay.mode === 'legacy' && (
-          <Field
-            label={`${t('settings.autoplay.pre_click_delay_range')}: ${preClickDelay[0]}–${preClickDelay[1]} ms`}
-          >
-            <Slider
-              min={0}
-              max={preClickDelaySliderMax}
+        {ap.majsoul.mode === 'packet' ? (
+          <>
+            <Field
+              label={`${t('settings.autoplay.pre_click_delay_range')}: ${packetDelay[0]}–${packetDelay[1]} ms`}
+            >
+              <Slider
+                min={0}
+                max={packetDelaySliderMax}
+                step={100}
+                value={packetDelay}
+                onValueChange={([min, max]) =>
+                  setMajsoulField({ packet_delay_min_ms: min, packet_delay_max_ms: max })
+                }
+              />
+            </Field>
+            <TimeSlider
+              label={t('settings.autoplay.dealer_first_discard_extra_delay')}
+              hint={t('settings.autoplay.dealer_first_discard_extra_delay_hint')}
+              value={ap.majsoul.packet_dealer_first_discard_extra_delay_ms}
+              max={10_000}
               step={100}
-              value={preClickDelay}
-              onValueChange={([min, max]) =>
-                setMajsoulField({
-                  pre_click_delay_min_ms: min,
-                  pre_click_delay_max_ms: max,
-                })
+              unit="ms"
+              onChange={(value) =>
+                setMajsoulField({ packet_dealer_first_discard_extra_delay_ms: value })
               }
             />
-          </Field>
+          </>
+        ) : (
+          <>
+            <Field label={t('settings.autoplay.delay_mode')}>
+              <Select
+                value={delay.mode}
+                onValueChange={(v) => setDelayField({ mode: v as DelayMode })}
+              >
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="lua">{t('settings.autoplay.delay_mode_lua')}</SelectItem>
+                  <SelectItem value="legacy">{t('settings.autoplay.delay_mode_legacy')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {delay.mode === 'lua' && (
+              <p className="text-xs text-muted-foreground">
+                {t('settings.autoplay.delay_mode_lua_help')}
+              </p>
+            )}
+            {delay.mode === 'legacy' && (
+              <Field
+                label={`${t('settings.autoplay.pre_click_delay_range')}: ${preClickDelay[0]}–${preClickDelay[1]} ms`}
+              >
+                <Slider
+                  min={0}
+                  max={preClickDelaySliderMax}
+                  step={100}
+                  value={preClickDelay}
+                  onValueChange={([min, max]) =>
+                    setMajsoulField({
+                      pre_click_delay_min_ms: min,
+                      pre_click_delay_max_ms: max,
+                    })
+                  }
+                />
+              </Field>
+            )}
+            <TimeSlider label={t('settings.autoplay.min_delay')} hint={t('settings.autoplay.min_delay_hint')} value={delay.min_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setDelayField({ min_delay_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.min_button_delay')} hint={t('settings.autoplay.min_button_delay_hint')} value={delay.min_button_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setDelayField({ min_button_delay_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.inter_click_delay')} value={ap.majsoul.inter_click_delay_ms} max={2_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ inter_click_delay_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.hover_delay')} hint={t('settings.autoplay.hover_delay_hint')} value={ap.majsoul.hover_delay_ms} max={1_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ hover_delay_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.click_hold')} value={ap.majsoul.click_hold_ms} max={1_000} step={10} unit="ms" onChange={(value) => setMajsoulField({ click_hold_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.dealer_first_discard_extra_delay')} hint={t('settings.autoplay.dealer_first_discard_extra_delay_hint')} value={ap.majsoul.dealer_first_discard_extra_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setMajsoulField({ dealer_first_discard_extra_delay_ms: value })} />
+          </>
         )}
-        <Field
-          label={t('settings.autoplay.min_delay')}
-          hint={t('settings.autoplay.min_delay_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={delay.min_delay_ms}
-            onChange={(e) =>
-              // Clamp: a typed negative would fail u32 deserialization
-              // on save (min={0} doesn't block typing a minus sign).
-              setDelayField({
-                min_delay_ms: Math.max(0, Number(e.target.value || 0)),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label={t('settings.autoplay.min_button_delay')}
-          hint={t('settings.autoplay.min_button_delay_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={delay.min_button_delay_ms}
-            onChange={(e) =>
-              setDelayField({
-                min_button_delay_ms: Math.max(0, Number(e.target.value || 0)),
-              })
-            }
-          />
-        </Field>
-        <Field label={t('settings.autoplay.inter_click_delay')}>
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.inter_click_delay_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                inter_click_delay_ms: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label={t('settings.autoplay.hover_delay')}
-          hint={t('settings.autoplay.hover_delay_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.hover_delay_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                hover_delay_ms: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
-        <Field label={t('settings.autoplay.click_hold')}>
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.click_hold_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                click_hold_ms: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label={t('settings.autoplay.dealer_first_discard_extra_delay')}
-          hint={t('settings.autoplay.dealer_first_discard_extra_delay_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.dealer_first_discard_extra_delay_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                dealer_first_discard_extra_delay_ms: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.platform_note')}
         </p>
@@ -1032,23 +1008,15 @@ export function AutoJoinCard({
             }
           />
         </Field>
-        <Field
+        <TimeSlider
           label={t('settings.autoplay.auto_join_stop_after_minutes')}
           hint={t('settings.autoplay.auto_join_zero_unlimited')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            step={1}
-            value={ap.majsoul.auto_join_stop_after_minutes ?? 0}
-            onChange={(e) =>
-              setMajsoulField({
-                auto_join_stop_after_minutes: Math.max(0, Math.floor(Number(e.target.value || 0))),
-              })
-            }
-          />
-        </Field>
+          value={ap.majsoul.auto_join_stop_after_minutes ?? 0}
+          max={1_440}
+          step={1}
+          unit="min"
+          onChange={(value) => setMajsoulField({ auto_join_stop_after_minutes: value })}
+        />
       </CardContent>
     </Card>
   )

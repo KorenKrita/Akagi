@@ -27,6 +27,7 @@ use crate::event_bus::{BotResponseBus, MjaiBus};
 use crate::game_state::snapshot::Phase;
 use crate::game_state::tracker::GameTracker;
 use crate::schema::MjaiEvent;
+use rand::Rng;
 use riichienv_core::action::{Action, ActionType};
 use riichienv_core::parser::tid_to_mjai;
 use riichienv_core::state::legal_actions::GameStateLegalActions;
@@ -151,7 +152,8 @@ impl AutoplayManager {
         // In Lua mode it is generated from the bundled default when
         // missing, then hot-reloaded on change (cheap mtime stat). In
         // legacy mode the script is dropped entirely.
-        let lua_mode = delay_cfg.mode == crate::config::DelayMode::Lua;
+        let lua_mode = matches!(cfg.mode, MajsoulAutoplayMode::Click)
+            && delay_cfg.mode == crate::config::DelayMode::Lua;
         let script_path = self.config_dir.join("delay.lua");
         if lua_mode {
             self.delay_script.ensure_default(&script_path);
@@ -189,14 +191,8 @@ impl AutoplayManager {
 
         let action_retry_guard = retry_guard_for_action(&resp.action, our_seat, &snapshot);
 
-        let use_packet = matches!(
-            cfg.mode,
-            MajsoulAutoplayMode::Packet | MajsoulAutoplayMode::PacketWithClickFallback
-        );
-        let allow_click = matches!(
-            cfg.mode,
-            MajsoulAutoplayMode::Click | MajsoulAutoplayMode::PacketWithClickFallback
-        );
+        let use_packet = matches!(cfg.mode, MajsoulAutoplayMode::Packet);
+        let allow_click = matches!(cfg.mode, MajsoulAutoplayMode::Click);
 
         let packet_action = normalize_packet_action(
             &resp.action,
@@ -204,10 +200,28 @@ impl AutoplayManager {
             &snapshot,
             self.state.last_self_tsumo.as_deref(),
         );
-        let mut packet_click_fallback_reason: Option<String> = None;
-
         if use_packet && packet_action_allowed(&packet_action, our_seat, &snapshot, &legal_actions)
         {
+            let dealer_first_discard = matches!(packet_action, MjaiEvent::Dahai { .. })
+                && is_dealer_first_discard(&snapshot, our_seat);
+            let packet_delay_ms = sample_packet_delay(&cfg, dealer_first_discard);
+            tokio::time::sleep(Duration::from_millis(packet_delay_ms.into())).await;
+            if planned_budget.is_some() {
+                let current = self.ctx.time_budget.read().ok().and_then(|g| *g);
+                if current.map(|b| b.opened_at) != planned_budget.map(|b| b.opened_at) {
+                    debug!("autoplay: packet decision window closed during delay");
+                    return;
+                }
+            }
+            if let Some(guard) = action_retry_guard.as_ref() {
+                if !self.action_still_pending(guard).await {
+                    debug!(
+                        "autoplay: packet action {:?} became stale during delay",
+                        packet_action
+                    );
+                    return;
+                }
+            }
             let packet_hints = packet_build_hints(
                 &packet_action,
                 our_seat,
@@ -237,9 +251,7 @@ impl AutoplayManager {
                                 guard.before,
                                 packet_hints
                             );
-                                packet_click_fallback_reason = Some(format!(
-                                    "sent packet did not advance game state after retry; hints={packet_hints:?}"
-                                ));
+                                return;
                             } else {
                                 self.after_action_sent(&resp.action, our_seat, false);
                                 return;
@@ -265,9 +277,7 @@ impl AutoplayManager {
                         player_snapshot_summary(&snapshot, our_seat),
                         packet_hints
                     );
-                    packet_click_fallback_reason = Some(format!(
-                        "packet was not sent: {reason:?}; hints={packet_hints:?}"
-                    ));
+                    return;
                 }
             }
         } else if use_packet {
@@ -335,19 +345,6 @@ impl AutoplayManager {
             plan.inject_reach_for_followup,
             plan.awaiting_riichi_dahai
         );
-
-        if let Some(reason) = &packet_click_fallback_reason {
-            error!(
-                "autoplay: falling back to click for {:?} after packet failure: {}; phase={:?} current_player={} our_seat={} legal_actions=[{}] player={}",
-                resp.action,
-                reason,
-                snapshot.phase,
-                snapshot.current_player,
-                our_seat,
-                legal_actions_summary(&legal_actions),
-                player_snapshot_summary(&snapshot, our_seat)
-            );
-        }
 
         // Resolve a canvas rect (cache + TTL). If we can't, drop the
         // click - the page handle isn't ready yet (e.g. user still on
@@ -767,6 +764,17 @@ fn retry_guard_for_action(
     }
 }
 
+fn sample_packet_delay(cfg: &crate::config::MajsoulAutoplayConfig, dealer_first: bool) -> u32 {
+    let lo = cfg.packet_delay_min_ms.min(cfg.packet_delay_max_ms);
+    let hi = cfg.packet_delay_min_ms.max(cfg.packet_delay_max_ms);
+    let base = rand::rng().random_range(lo..=hi);
+    base.saturating_add(if dealer_first {
+        cfg.packet_dealer_first_discard_extra_delay_ms
+    } else {
+        0
+    })
+}
+
 fn snapshot_fingerprint(
     snapshot: &crate::game_state::snapshot::GameStateSnapshot,
     our_seat: u8,
@@ -997,6 +1005,18 @@ mod tests {
             bus,
             std::env::temp_dir(),
         )
+    }
+
+    #[test]
+    fn packet_delay_uses_its_own_range_and_dealer_extra() {
+        let cfg = crate::config::MajsoulAutoplayConfig {
+            packet_delay_min_ms: 123,
+            packet_delay_max_ms: 123,
+            packet_dealer_first_discard_extra_delay_ms: 456,
+            ..Default::default()
+        };
+        assert_eq!(sample_packet_delay(&cfg, false), 123);
+        assert_eq!(sample_packet_delay(&cfg, true), 579);
     }
 
     /// Regression: `cached_our_seat` must be populated immediately when
