@@ -248,6 +248,7 @@ mod tests {
             final_scores: vec![30000, 25000, 25000, 20000],
             final_ranks: vec![1, 2, 3, 4],
             our_rank: Some(1),
+            majsoul_rank_id: None,
             our_delta: Some(5000),
             stats: GameStats::default(),
             log_path: format!("games/{id}.mjai.jsonl"),
@@ -262,8 +263,9 @@ mod tests {
                 aka_flag: Some(true),
                 id: Some(0),
                 num_players: 4,
+                majsoul_meta: None,
             },
-            MjaiEvent::EndGame,
+            MjaiEvent::end_game(),
         ]
     }
 

@@ -28,7 +28,8 @@ pub enum Platform {
     Unknown,
 }
 
-/// Game length, derived from the highest `bakaze` seen in `start_kyoku`.
+/// Game length. Uses a platform-declared match mode when available and falls
+/// back to the highest `bakaze` observed in `start_kyoku` for legacy streams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KyokuMode {
@@ -131,15 +132,21 @@ pub struct GameRecord {
     /// and the frontend skips the game in cumulative-PT charts.
     pub our_seat: Option<u8>,
 
-    /// Final scores per seat, after Mortal-style 100k normalisation
-    /// (4p) or 105k (3p). Length = `num_players`.
+    /// Final scores per seat. Authoritative platform standings are preferred;
+    /// otherwise Mortal-style 100k (4p) / 105k (3p) normalisation is used.
+    /// Length = `num_players`.
     pub final_scores: Vec<i32>,
 
-    /// Final rank (1..=num_players) per seat. Computed by `Rankings`
-    /// (descending score, ascending seat tiebreak).
+    /// Final rank (1..=num_players) per seat. Uses authoritative platform
+    /// standings when available, otherwise descending score with an ascending
+    /// seat tiebreak.
     pub final_ranks: Vec<u8>,
 
     pub our_rank: Option<u8>,
+    /// Mahjong Soul level id at the start of this game. Legacy records omit
+    /// this field and continue to use the frontend's selected fallback rank.
+    #[serde(default)]
+    pub majsoul_rank_id: Option<u32>,
     /// `final_score[our_seat] - starting_score`. Starting = 25_000 (4p)
     /// / 35_000 (3p). Used by frontend PT formulas as the "(score-25000)
     /// /1000" base term.
@@ -257,6 +264,7 @@ mod tests {
             final_scores: vec![30000, 25000, 25000, 20000],
             final_ranks: vec![1, 2, 3, 4],
             our_rank: Some(1),
+            majsoul_rank_id: None,
             our_delta: Some(5000),
             stats: GameStats::default(),
             log_path: "games/01ARZ.mjai.jsonl".into(),
@@ -278,6 +286,7 @@ mod tests {
             final_scores: vec![],
             final_ranks: vec![],
             our_rank: None,
+            majsoul_rank_id: None,
             our_delta: None,
             stats: GameStats::default(),
             log_path: "x".into(),
@@ -303,10 +312,19 @@ mod tests {
             final_scores: vec![25000, 25000, 25000, 25000],
             final_ranks: vec![1, 2, 3, 4],
             our_rank: Some(3),
+            majsoul_rank_id: None,
             our_delta: Some(0),
             stats: GameStats::default(),
             log_path: "games/rec1.mjai.jsonl".into(),
         };
+        let mut legacy_json = serde_json::to_value(&rec).unwrap();
+        legacy_json
+            .as_object_mut()
+            .unwrap()
+            .remove("majsoul_rank_id");
+        let legacy: GameRecord = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(legacy.majsoul_rank_id, None);
+
         let ev = HistoryEvent::Recorded {
             record: Box::new(rec),
         };

@@ -20,6 +20,30 @@ pub type Tile = String;
 /// Seat index, 0..=3 (4p) or 0..=2 (3p).
 pub type Actor = u8;
 
+/// Mahjong Soul data kept inside Akagi's typed event bus. These fields are
+/// deliberately excluded from mjai JSON so subprocess bots, logs and the cloud
+/// inference API continue to receive the standard protocol shape.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MajsoulGameMeta {
+    /// Stable hash of `ReqAuthGame.game_uuid`, used to recognize a reconnect of
+    /// the same table without persisting the UUID itself.
+    pub game_id: Option<u64>,
+    /// `game_config.mode.mode`: 1 = East, 2 = East-South.
+    pub match_mode: Option<u8>,
+    /// The recorded player's Mahjong Soul level id at game start.
+    pub rank_id: Option<u32>,
+}
+
+/// Why an in-process game-end event was emitted. The reason and standings are
+/// private metadata; every variant still serializes as `{"type":"end_game"}`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GameEndReason {
+    #[default]
+    Confirmed,
+    /// Server terminated the session without a final-result payload.
+    Terminated,
+}
+
 /// Default `num_players` when absent from the wire — 4p, the historical
 /// behaviour. New 3p emitters always set the field explicitly.
 fn default_num_players() -> u8 {
@@ -46,6 +70,8 @@ pub enum MjaiEvent {
         /// deserialization of pre-3p log lines.
         #[serde(default = "default_num_players")]
         num_players: u8,
+        #[serde(skip, default)]
+        majsoul_meta: Option<MajsoulGameMeta>,
     },
     StartKyoku {
         bakaze: Tile,
@@ -140,7 +166,14 @@ pub enum MjaiEvent {
     },
 
     EndKyoku,
-    EndGame,
+    EndGame {
+        #[serde(skip, default)]
+        reason: GameEndReason,
+        #[serde(skip, default)]
+        final_scores: Option<Vec<i32>>,
+        #[serde(skip, default)]
+        final_ranks: Option<Vec<u8>>,
+    },
 
     /// Non-spec: bot's "no action this turn" reply.
     ///
@@ -149,6 +182,32 @@ pub enum MjaiEvent {
     /// bot has no decision to make. Kept in this enum so bot replies
     /// round-trip through the same type as bridge events.
     None,
+}
+
+impl MjaiEvent {
+    pub fn end_game() -> Self {
+        Self::EndGame {
+            reason: GameEndReason::Confirmed,
+            final_scores: None,
+            final_ranks: None,
+        }
+    }
+
+    pub fn confirmed_game(final_scores: Option<Vec<i32>>, final_ranks: Option<Vec<u8>>) -> Self {
+        Self::EndGame {
+            reason: GameEndReason::Confirmed,
+            final_scores,
+            final_ranks,
+        }
+    }
+
+    pub fn terminated_game() -> Self {
+        Self::EndGame {
+            reason: GameEndReason::Terminated,
+            final_scores: None,
+            final_ranks: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -322,5 +381,40 @@ mod tests {
             }
             other => panic!("expected StartKyoku, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn private_game_metadata_never_changes_mjai_json() {
+        let start = MjaiEvent::StartGame {
+            names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            kyoku_first: None,
+            aka_flag: None,
+            id: Some(0),
+            num_players: 4,
+            majsoul_meta: Some(MajsoulGameMeta {
+                game_id: Some(7),
+                match_mode: Some(2),
+                rank_id: Some(10401),
+            }),
+        };
+        let start_json = serde_json::to_value(start).unwrap();
+        assert!(start_json.get("majsoul_meta").is_none());
+
+        let end = MjaiEvent::confirmed_game(
+            Some(vec![12000, 41000, 27000, 20000]),
+            Some(vec![4, 1, 2, 3]),
+        );
+        assert_eq!(
+            serde_json::to_string(&end).unwrap(),
+            r#"{"type":"end_game"}"#
+        );
+        assert!(matches!(
+            serde_json::from_str::<MjaiEvent>(r#"{"type":"end_game"}"#).unwrap(),
+            MjaiEvent::EndGame {
+                reason: GameEndReason::Confirmed,
+                final_scores: None,
+                final_ranks: None,
+            }
+        ));
     }
 }

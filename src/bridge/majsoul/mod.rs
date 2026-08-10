@@ -17,7 +17,7 @@ use crate::{
     autoplay::budget::{BudgetSource, SharedTimeBudget, TimeBudget},
     config::Platform,
     logger::{FlowLogger, Session},
-    schema::{mjai::Actor, MjaiEvent},
+    schema::{mjai::Actor, MajsoulGameMeta, MjaiEvent},
 };
 use anyhow::{bail, Context, Result};
 use chrono::Local;
@@ -34,6 +34,7 @@ use tracing::{info, warn};
 const METHOD_AUTH_GAME: &str = ".lq.FastTest.authGame";
 const METHOD_ACTION_PROTOTYPE: &str = ".lq.ActionPrototype";
 const METHOD_NOTIFY_GAME_END_RESULT: &str = ".lq.NotifyGameEndResult";
+const METHOD_NOTIFY_GAME_TERMINATE: &str = ".lq.NotifyGameTerminate";
 /// Reconnect replay: both responses carry a `GameRestore { actions[] }` of the
 /// current kyoku. See `handle_game_restore`.
 const METHOD_SYNC_GAME: &str = ".lq.FastTest.syncGame";
@@ -94,6 +95,7 @@ pub struct MajsoulBridge {
     session: Option<Arc<Session>>,
     mjai_log: Option<Arc<FlowLogger>>,
     account_id: Option<u64>,
+    game_id: Option<u64>,
     seat: Option<Actor>,
     /// Mjai-mapped dora indicators seen so far this kyoku. Used to detect
     /// new dora markers in subsequent `ActionDealTile.doras`.
@@ -152,6 +154,7 @@ impl MajsoulBridge {
             session,
             mjai_log: None,
             account_id: None,
+            game_id: None,
             seat: None,
             doras: Vec::new(),
             dora_timing: None,
@@ -217,6 +220,11 @@ impl MajsoulBridge {
         match (&msg.msg_type, msg.method_name.as_ref()) {
             (MessageType::Request, METHOD_AUTH_GAME) => {
                 self.account_id = msg.payload.get("account_id").and_then(JsonValue::as_u64);
+                self.game_id = msg
+                    .payload
+                    .get("game_uuid")
+                    .and_then(JsonValue::as_str)
+                    .map(stable_game_id);
                 if self.account_id.is_none() {
                     warn!(
                         target: "akagi::bridge::majsoul",
@@ -236,16 +244,24 @@ impl MajsoulBridge {
             (MessageType::Response, METHOD_SYNC_GAME)
             | (MessageType::Response, METHOD_ENTER_GAME) => self.handle_game_restore(&msg.payload),
             (MessageType::Notify, METHOD_NOTIFY_GAME_END_RESULT) => {
-                // `result.players[]` carries final standings. Mjai
-                // `end_game` has no payload — the standings live in the
-                // flow log if anyone needs them. Emitting an empty event
-                // is sufficient to terminate the mjai stream.
                 info!(
                     target: "akagi::bridge::majsoul",
                     "game ended: {}", msg.payload
                 );
                 self.store_budget(None);
-                vec![MjaiEvent::EndGame]
+                let (final_scores, final_ranks) =
+                    parse_game_end_standings(&msg.payload, self.num_players)
+                        .map(|(scores, ranks)| (Some(scores), Some(ranks)))
+                        .unwrap_or((None, None));
+                vec![MjaiEvent::confirmed_game(final_scores, final_ranks)]
+            }
+            (MessageType::Notify, METHOD_NOTIFY_GAME_TERMINATE) => {
+                info!(
+                    target: "akagi::bridge::majsoul",
+                    "game terminated: {}", msg.payload
+                );
+                self.store_budget(None);
+                vec![MjaiEvent::terminated_game()]
             }
             _ => Vec::new(),
         }
@@ -1116,11 +1132,17 @@ impl MajsoulBridge {
         let mode_id = payload
             .pointer("/game_config/meta/mode_id")
             .and_then(JsonValue::as_u64);
+        let match_mode = payload
+            .pointer("/game_config/mode/mode")
+            .and_then(JsonValue::as_u64)
+            .and_then(|value| u8::try_from(value).ok());
+        let rank_id = own_rank_id(payload, account_id, self.num_players);
         let names = names_from_payload(payload, seat_list);
         info!(
             target: "akagi::bridge::majsoul",
-            "seat resolved: account_id={account_id} seat={seat} num_players={np} mode_id={mode_id:?} names={names:?}",
+            "seat resolved: account_id={account_id} seat={seat} num_players={np} mode_id={mode_id:?} match_mode={match_mode:?} rank_available={rank_available} names={names:?}",
             np = self.num_players,
+            rank_available = rank_id.is_some(),
         );
         vec![MjaiEvent::StartGame {
             names,
@@ -1128,8 +1150,65 @@ impl MajsoulBridge {
             aka_flag: None,
             id: Some(seat),
             num_players: self.num_players,
+            majsoul_meta: Some(MajsoulGameMeta {
+                game_id: self.game_id,
+                match_mode,
+                rank_id,
+            }),
         }]
     }
+}
+
+fn stable_game_id(game_uuid: &str) -> u64 {
+    // FNV-1a keeps the UUID private while providing a stable reconnect key.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in game_uuid.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn own_rank_id(payload: &JsonValue, account_id: u64, num_players: u8) -> Option<u32> {
+    let level_field = if num_players == 3 { "level3" } else { "level" };
+    payload
+        .get("players")?
+        .as_array()?
+        .iter()
+        .find(|player| player.get("account_id").and_then(JsonValue::as_u64) == Some(account_id))?
+        .get(level_field)?
+        .get("id")?
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+/// `result.players` is ordered by placement and each row carries its absolute
+/// seat plus the raw final score (`part_point_1`). Convert both to seat order.
+fn parse_game_end_standings(payload: &JsonValue, num_players: u8) -> Option<(Vec<i32>, Vec<u8>)> {
+    let n = usize::from(num_players);
+    if !(3..=4).contains(&n) {
+        return None;
+    }
+    let players = payload.pointer("/result/players")?.as_array()?;
+    if players.len() != n {
+        return None;
+    }
+
+    let mut scores = vec![None; n];
+    let mut ranks = vec![None; n];
+    for (rank0, player) in players.iter().enumerate() {
+        let seat = usize::try_from(player.get("seat")?.as_u64()?).ok()?;
+        let score = i32::try_from(player.get("part_point_1")?.as_i64()?).ok()?;
+        if seat >= n || scores[seat].is_some() {
+            return None;
+        }
+        scores[seat] = Some(score);
+        ranks[seat] = Some((rank0 + 1) as u8);
+    }
+    Some((
+        scores.into_iter().collect::<Option<Vec<_>>>()?,
+        ranks.into_iter().collect::<Option<Vec<_>>>()?,
+    ))
 }
 
 /// Parse `data.scores` into a `Vec<i32>` of native length (3 for sanma, 4 for
@@ -1585,6 +1664,76 @@ mod tests {
             other => panic!("expected StartGame, got {other:?}"),
         }
         assert_eq!(bridge.num_players, 4);
+    }
+
+    #[test]
+    fn auth_game_carries_private_rank_length_and_reconnect_metadata() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        let game_uuid = "230723-test-game-uuid";
+        bridge.dispatch(&req(
+            METHOD_AUTH_GAME,
+            json!({ "account_id": 100, "game_uuid": game_uuid }),
+        ));
+        let events = bridge.dispatch(&resp(
+            METHOD_AUTH_GAME,
+            json!({
+                "game_config": {
+                    "category": 2,
+                    "meta": { "mode_id": 12 },
+                    "mode": { "mode": 2 }
+                },
+                "players": [
+                    { "account_id": 100, "nickname": "me", "level": { "id": 10401 } }
+                ],
+                "seat_list": [100u64, 1u64, 2u64, 3u64]
+            }),
+        ));
+        match &events[0] {
+            MjaiEvent::StartGame { majsoul_meta, .. } => {
+                let meta = majsoul_meta.expect("Mahjong Soul metadata");
+                assert_eq!(meta.game_id, Some(stable_game_id(game_uuid)));
+                assert_eq!(meta.match_mode, Some(2));
+                assert_eq!(meta.rank_id, Some(10401));
+            }
+            other => panic!("expected StartGame, got {other:?}"),
+        }
+        assert!(serde_json::to_value(&events[0])
+            .unwrap()
+            .get("majsoul_meta")
+            .is_none());
+    }
+
+    #[test]
+    fn auth_game_uses_level3_for_three_player_rank() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.dispatch(&req(METHOD_AUTH_GAME, json!({ "account_id": 100 })));
+        let events = bridge.dispatch(&resp(
+            METHOD_AUTH_GAME,
+            json!({
+                "game_config": { "mode": { "mode": 2 } },
+                "players": [{
+                    "account_id": 100,
+                    "nickname": "me",
+                    "level": { "id": 10402 },
+                    "level3": { "id": 20503 }
+                }],
+                "seat_list": [1u64, 100u64, 2u64]
+            }),
+        ));
+        match &events[0] {
+            MjaiEvent::StartGame {
+                num_players,
+                majsoul_meta,
+                ..
+            } => {
+                assert_eq!(*num_players, 3);
+                assert_eq!(
+                    majsoul_meta.expect("Mahjong Soul metadata").rank_id,
+                    Some(20503)
+                );
+            }
+            other => panic!("expected StartGame, got {other:?}"),
+        }
     }
 
     #[test]
@@ -3429,8 +3578,7 @@ mod tests {
     }
 
     /// `NotifyGameEndResult` (top-level Notify, NOT ActionPrototype) →
-    /// `[EndGame]`. Final standings live in the flow log; mjai's
-    /// `end_game` carries no payload.
+    /// `[EndGame]`. Standings remain private metadata; mjai JSON stays empty.
     #[test]
     fn notify_game_end_result_emits_end_game() {
         let mut bridge = MajsoulBridge::new(None, None);
@@ -3451,7 +3599,31 @@ mod tests {
         };
         let events = bridge.dispatch(&msg);
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], MjaiEvent::EndGame));
+        assert!(matches!(
+            &events[0],
+            MjaiEvent::EndGame {
+                reason: crate::schema::GameEndReason::Confirmed,
+                final_scores: Some(scores),
+                final_ranks: Some(ranks),
+            } if scores == &[20500, 43800, 11000, 24700]
+                && ranks == &[3, 1, 4, 2]
+        ));
+        assert_eq!(
+            serde_json::to_string(&events[0]).unwrap(),
+            r#"{"type":"end_game"}"#
+        );
+    }
+
+    #[test]
+    fn notify_game_terminate_emits_non_finalising_end_game() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        let events = bridge.dispatch(&ParsedMessage {
+            msg_type: MessageType::Notify,
+            msg_id: None,
+            method_name: Arc::from(METHOD_NOTIFY_GAME_TERMINATE),
+            payload: json!({ "reason": "client left game" }),
+        });
+        assert_eq!(events, vec![MjaiEvent::terminated_game()]);
     }
 
     /// State must reset on a new kyoku — a stray `deferred_dora` from the

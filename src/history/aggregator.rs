@@ -19,7 +19,9 @@
 use chrono::{DateTime, Utc};
 use tracing::warn;
 
-use crate::schema::{GameRecord, GameStats, HistoryEventLog, KyokuMode, MjaiEvent, Platform};
+use crate::schema::{
+    GameEndReason, GameRecord, GameStats, HistoryEventLog, KyokuMode, MjaiEvent, Platform,
+};
 
 /// 4p starting score / kyotaku-normalisation target / sanma equivalents.
 const STARTING_SCORE_4P: i32 = 25_000;
@@ -50,13 +52,14 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
     } = input;
 
     // ----- Bootstrap: pull num_players + names + our_seat from start_game -----
-    let (num_players, names, our_seat) = events.iter().find_map(|ev| match ev {
+    let (num_players, names, our_seat, majsoul_meta) = events.iter().find_map(|ev| match ev {
         MjaiEvent::StartGame {
             names,
             id,
             num_players,
+            majsoul_meta,
             ..
-        } => Some((*num_players, names.clone(), *id)),
+        } => Some((*num_players, names.clone(), *id, *majsoul_meta)),
         _ => None,
     })?;
 
@@ -74,7 +77,10 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
     let mut cur_scores = vec![0i32; n];
     let mut stats = GameStats::default();
 
-    let mut kyoku_mode = KyokuMode::EastOnly;
+    let mut kyoku_mode = match majsoul_meta.and_then(|meta| meta.match_mode) {
+        Some(2) => KyokuMode::EastSouth,
+        _ => KyokuMode::EastOnly,
+    };
 
     // Per-kyoku transient state. Only meaningful when our_seat is Some.
     let mut riichi_declared = false;
@@ -277,6 +283,26 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
         }
     }
 
+    // Prefer the platform's final-result payload when present. Incremental
+    // deltas still feed detailed statistics, while the authoritative result
+    // prevents score/rank drift after reconnects and platform adjustments.
+    let authoritative = events.iter().rev().find_map(|ev| match ev {
+        MjaiEvent::EndGame {
+            reason: GameEndReason::Confirmed,
+            final_scores,
+            final_ranks,
+        } => Some((final_scores.as_ref(), final_ranks.as_ref())),
+        _ => None,
+    });
+    let authoritative_scores = authoritative
+        .and_then(|(scores, _)| scores)
+        .filter(|scores| scores.len() == n)
+        .cloned();
+    let authoritative_ranks = authoritative
+        .and_then(|(_, ranks)| ranks)
+        .filter(|ranks| valid_rank_permutation(ranks, n))
+        .cloned();
+
     // ----- Final score normalisation (Mortal trick) -----
     let total = if num_players == 3 {
         TOTAL_SCORE_3P
@@ -288,19 +314,24 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
     } else {
         STARTING_SCORE_4P
     };
-    let sum: i32 = cur_scores.iter().sum();
-    if sum < total {
-        // Top up rank-1 (highest-score, then lowest-seat tiebreak).
-        let top_seat = (0..n)
-            .max_by(|&a, &b| {
-                cur_scores[a].cmp(&cur_scores[b]).then_with(|| b.cmp(&a)) // lower seat wins tie
-            })
-            .unwrap_or(0);
-        cur_scores[top_seat] += total - sum;
+    if let Some(scores) = authoritative_scores {
+        cur_scores = scores;
+    } else {
+        let sum: i32 = cur_scores.iter().sum();
+        if sum < total {
+            // Top up rank-1 (highest-score, then lowest-seat tiebreak).
+            let top_seat = (0..n)
+                .max_by(|&a, &b| {
+                    cur_scores[a].cmp(&cur_scores[b]).then_with(|| b.cmp(&a)) // lower seat wins tie
+                })
+                .unwrap_or(0);
+            cur_scores[top_seat] += total - sum;
+        }
     }
 
-    let final_ranks = ranks_from_scores(&cur_scores);
+    let final_ranks = authoritative_ranks.unwrap_or_else(|| ranks_from_scores(&cur_scores));
     let our_rank = our_seat.map(|seat| final_ranks[seat as usize]);
+    let majsoul_rank_id = majsoul_meta.and_then(|meta| meta.rank_id);
     let our_delta = our_seat.map(|seat| cur_scores[seat as usize] - starting);
 
     Some(GameRecord {
@@ -315,6 +346,7 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
         final_scores: cur_scores,
         final_ranks,
         our_rank,
+        majsoul_rank_id,
         our_delta,
         stats,
         log_path: format!("games/{id}.mjai.jsonl"),
@@ -325,6 +357,21 @@ fn add_deltas(scores: &mut [i32], deltas: &[i32]) {
     for (s, &d) in scores.iter_mut().zip(deltas.iter()) {
         *s += d;
     }
+}
+
+fn valid_rank_permutation(ranks: &[u8], n: usize) -> bool {
+    if ranks.len() != n {
+        return false;
+    }
+    let mut seen = vec![false; n];
+    for &rank in ranks {
+        let index = usize::from(rank).wrapping_sub(1);
+        if index >= n || seen[index] {
+            return false;
+        }
+        seen[index] = true;
+    }
+    true
 }
 
 fn pad_or_truncate(mut v: Vec<String>, n: usize) -> Vec<String> {
@@ -359,6 +406,7 @@ fn ranks_from_scores(scores: &[i32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::MajsoulGameMeta;
 
     fn ts() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-05-01T10:00:00Z")
@@ -373,6 +421,7 @@ mod tests {
             aka_flag: Some(true),
             id: Some(seat),
             num_players: 4,
+            majsoul_meta: None,
         }
     }
 
@@ -407,7 +456,7 @@ mod tests {
                 ura_markers: None,
             },
             MjaiEvent::EndKyoku,
-            MjaiEvent::EndGame,
+            MjaiEvent::end_game(),
         ];
         let rec = aggregate(AggregateInput {
             events: &events,
@@ -456,7 +505,7 @@ mod tests {
                 ura_markers: None,
             },
             MjaiEvent::EndKyoku,
-            MjaiEvent::EndGame,
+            MjaiEvent::end_game(),
         ];
         let rec = aggregate(AggregateInput {
             events: &events,
@@ -481,7 +530,7 @@ mod tests {
             start_game_4p(0),
             start_kyoku("E", 0, vec![25000, 25000, 25000, 25000]),
             start_kyoku("S", 0, vec![25000, 25000, 25000, 25000]),
-            MjaiEvent::EndGame,
+            MjaiEvent::end_game(),
         ];
         let rec = aggregate(AggregateInput {
             events: &events,
@@ -495,8 +544,39 @@ mod tests {
     }
 
     #[test]
+    fn planned_hanchan_stays_hanchan_when_bankruptcy_ends_it_in_east() {
+        let mut start = start_game_4p(1);
+        if let MjaiEvent::StartGame { majsoul_meta, .. } = &mut start {
+            *majsoul_meta = Some(MajsoulGameMeta {
+                game_id: Some(7),
+                match_mode: Some(2),
+                rank_id: Some(10401),
+            });
+        }
+        let events = vec![
+            start,
+            start_kyoku("E", 0, vec![51500, 22500, -2500, 28500]),
+            MjaiEvent::confirmed_game(
+                Some(vec![51500, 22500, -2500, 28500]),
+                Some(vec![1, 3, 4, 2]),
+            ),
+        ];
+        let rec = aggregate(AggregateInput {
+            events: &events,
+            platform: Platform::Majsoul,
+            started_at: ts(),
+            ended_at: ts(),
+            id: "BANKRUPT-HANCHAN".into(),
+        })
+        .unwrap();
+
+        assert_eq!(rec.kyoku_mode, KyokuMode::EastSouth);
+        assert_eq!(rec.majsoul_rank_id, Some(10401));
+    }
+
+    #[test]
     fn missing_start_game_returns_none() {
-        let events = vec![MjaiEvent::EndGame];
+        let events = vec![MjaiEvent::end_game()];
         assert!(aggregate(AggregateInput {
             events: &events,
             platform: Platform::Majsoul,
@@ -517,6 +597,7 @@ mod tests {
                 aka_flag: Some(true),
                 id: None,
                 num_players: 4,
+                majsoul_meta: None,
             },
             start_kyoku("E", 0, vec![25000, 25000, 25000, 25000]),
             MjaiEvent::Hora {
@@ -525,7 +606,7 @@ mod tests {
                 deltas: Some(vec![8000, -8000, 0, 0]),
                 ura_markers: None,
             },
-            MjaiEvent::EndGame,
+            MjaiEvent::end_game(),
         ];
         let rec = aggregate(AggregateInput {
             events: &events,
@@ -551,6 +632,7 @@ mod tests {
                 aka_flag: Some(true),
                 id: Some(0),
                 num_players: 3,
+                majsoul_meta: None,
             },
             MjaiEvent::StartKyoku {
                 bakaze: "E".into(),
@@ -569,7 +651,7 @@ mod tests {
                 deltas: Some(vec![5000, -5000, 0]),
                 ura_markers: None,
             },
-            MjaiEvent::EndGame,
+            MjaiEvent::end_game(),
         ];
         let rec = aggregate(AggregateInput {
             events: &events,
@@ -600,7 +682,7 @@ mod tests {
             MjaiEvent::Ryukyoku {
                 deltas: Some(vec![1500, -1500, 0, 0]),
             },
-            MjaiEvent::EndGame,
+            MjaiEvent::end_game(),
         ];
         let rec = aggregate(AggregateInput {
             events: &events,
@@ -613,5 +695,38 @@ mod tests {
         // Pre-norm: [25500, 23500, 25000, 25000] = 99000. Top up rank-1 (seat 0): +1000.
         assert_eq!(rec.final_scores[0], 26500);
         assert_eq!(rec.final_scores.iter().sum::<i32>(), 100000);
+    }
+
+    #[test]
+    fn confirmed_platform_standings_override_derived_result() {
+        let events = vec![
+            start_game_4p(0),
+            start_kyoku("E", 0, vec![25000, 25000, 25000, 25000]),
+            MjaiEvent::Hora {
+                actor: 0,
+                target: 1,
+                deltas: Some(vec![8000, -8000, 0, 0]),
+                ura_markers: None,
+            },
+            MjaiEvent::EndKyoku,
+            MjaiEvent::confirmed_game(
+                Some(vec![12000, 41000, 27000, 20000]),
+                Some(vec![4, 1, 2, 3]),
+            ),
+        ];
+        let rec = aggregate(AggregateInput {
+            events: &events,
+            platform: Platform::Majsoul,
+            started_at: ts(),
+            ended_at: ts(),
+            id: "AUTH".into(),
+        })
+        .unwrap();
+
+        assert_eq!(rec.final_scores, vec![12000, 41000, 27000, 20000]);
+        assert_eq!(rec.final_ranks, vec![4, 1, 2, 3]);
+        assert_eq!(rec.our_rank, Some(4));
+        assert_eq!(rec.our_delta, Some(-13000));
+        assert_eq!(rec.stats.agari, 1);
     }
 }

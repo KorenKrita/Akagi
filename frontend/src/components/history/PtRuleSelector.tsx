@@ -86,7 +86,7 @@ export function PtRuleSelector() {
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label={t('history.rule.dan')}>
+                <Field label={t('history.rule.dan_fallback')}>
                   <Select
                     value={rule.dan}
                     onValueChange={(v) =>

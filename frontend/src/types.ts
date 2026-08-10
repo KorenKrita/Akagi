@@ -510,6 +510,7 @@ export type GameRecord = {
   final_scores: number[]
   final_ranks: number[]
   our_rank: number | null
+  majsoul_rank_id?: number | null
   /** `final_score - starting_score` (4p:25000, 3p:35000). */
   our_delta: number | null
   stats: GameStats

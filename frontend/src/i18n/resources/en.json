@@ -35,6 +35,7 @@
       "custom": "Custom",
       "lobby": "Lobby",
       "dan": "Rank",
+      "dan_fallback": "Rank (legacy records)",
       "uma_4p": "Uma (4p)",
       "uma_3p": "Uma (3p)",
       "dan_bonus_4p": "Bonus (4p)",

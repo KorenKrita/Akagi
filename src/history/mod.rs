@@ -4,19 +4,19 @@
 //! `MjaiBus` and finalises each `EndGame`-terminated stream by:
 //!
 //! 1. running [`aggregator::aggregate`] over the buffered events to produce
-//!    a `crate::schema::GameRecord` (final scores via the Mortal-style
-//!    100k normalisation, ranks via stable score-desc/seat-asc tiebreak,
+//!    a `crate::schema::GameRecord` (authoritative platform standings when
+//!    available, otherwise Mortal-style score normalisation and ranking,
 //!    plus per-game stat counters mirroring `libriichi/src/stat.rs`),
 //! 2. writing the full event stream as `games/<id>.mjai.jsonl`,
 //! 3. appending the record JSON line to `index.jsonl`,
 //! 4. fan-out via `HistoryBus` so the IPC forwarder can emit
 //!    `history-recorded` to the frontend.
 //!
-//! Mid-game disconnects are handled by *not* finalising — a buffer that
-//! never sees `EndGame` is dropped on the next `StartGame` or on
-//! shutdown. The Majsoul bridge only emits `EndGame` upon receiving the
-//! server's `NotifyGameEndResult`, so disconnect-survivable behaviour is
-//! "correct by construction".
+//! A Mahjong Soul reconnect carries a stable private table id: the recorder
+//! keeps completed rounds and replaces the server-restored copy of the current
+//! round. Only `NotifyGameEndResult` finalises a record; an explicit
+//! `NotifyGameTerminate`, a different next game, or shutdown drops an
+//! incomplete buffer.
 //!
 //! See `src/history/README.md` for module-extension guidance.
 

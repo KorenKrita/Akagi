@@ -55,6 +55,32 @@ const STARTING_SCORE_3P = 35_000
 const UMA_4P: [number, number, number, number] = [15, 5, -5, -15]
 const UMA_3P: [number, number, number] = [15, 0, -15]
 
+/** Convert a Mahjong Soul 4p/3p level id (10xxx/20xxx) to its PT tier. */
+export function majsoulDanFromRankId(
+  rankId: number | null | undefined,
+): MajsoulDan | null {
+  if (rankId == null || rankId <= 0) return null
+  const major = Math.floor(rankId / 100) % 100
+  const level = Math.min(3, Math.max(1, rankId % 100))
+  switch (major) {
+    case 1:
+      return `shoshin_${level}` as MajsoulDan
+    case 2:
+      return `jakushi_${level}` as MajsoulDan
+    case 3:
+      return `jakketsu_${level}` as MajsoulDan
+    case 4:
+      return `jakugou_${level}` as MajsoulDan
+    case 5:
+      return `jakusei_${level}` as MajsoulDan
+    case 6:
+    case 7:
+      return 'konten'
+    default:
+      return null
+  }
+}
+
 /**
  * PT delta for one game under the chosen rule. Returns 0 when the
  * record can't be scored (observer mode, missing rank, mode mismatch
@@ -89,6 +115,9 @@ function majsoulPt(
   const seat = record.our_seat
   const score = seat == null ? start : record.final_scores[seat]
   const baseTerm = (score - start) / 1000
+  // A rank can enter more than one room, so retain the selected lobby while
+  // using each new record's actual rank. Legacy records use both fallbacks.
+  const dan = majsoulDanFromRankId(record.majsoul_rank_id) ?? rule.dan
 
   if (np === 3) {
     const uma = UMA_3P[rank - 1] ?? 0
@@ -97,9 +126,9 @@ function majsoulPt(
       danBonus = MAJSOUL_LOBBY_3P[rule.lobby][modeIdx]
     } else if (rank === 3) {
       // Last place: dan penalty (already negative).
-      danBonus = MAJSOUL_DAN_PENALTY_3P[rule.dan][modeIdx]
+      danBonus = MAJSOUL_DAN_PENALTY_3P[dan][modeIdx]
     }
-    return baseTerm + uma + danBonus
+    return Math.ceil(baseTerm + uma + danBonus)
   }
 
   const uma = UMA_4P[rank - 1] ?? 0
@@ -108,9 +137,9 @@ function majsoulPt(
     const row = MAJSOUL_LOBBY_4P[rule.lobby][rank - 1]
     danBonus = row[modeIdx]
   } else if (rank === 4) {
-    danBonus = MAJSOUL_DAN_PENALTY_4P[rule.dan][modeIdx]
+    danBonus = MAJSOUL_DAN_PENALTY_4P[dan][modeIdx]
   }
-  return baseTerm + uma + danBonus
+  return Math.ceil(baseTerm + uma + danBonus)
 }
 
 function tenhouPt(
