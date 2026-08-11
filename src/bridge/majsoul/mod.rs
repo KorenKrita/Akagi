@@ -681,29 +681,52 @@ impl MajsoulBridge {
     }
 
     /// Compare `data.doras` against `self.doras`. If the server array has
-    /// grown, map *every* newly appended entry to mjai, push them onto
-    /// `self.doras`, and return them in reveal order. Returns an empty
-    /// vec when nothing is new.
+    /// grown, return every newly appended entry (mjai-mapped, in reveal
+    /// order) and sync `self.doras` to the full server array. Returns an
+    /// empty vec when nothing is new.
     ///
     /// Syncing the full tail (not just the last entry) matters: the local
     /// list must never fall behind the server's, otherwise a later payload
     /// whose array hasn't grown would still compare longer and re-emit a
     /// stale marker (the double-`9m` in issue #244).
+    ///
+    /// The already-seen prefix is also validated. Indicators flip in dead
+    /// wall slot order, so the server array should only ever *extend*
+    /// what we've reported; a rewritten prefix means that assumption
+    /// broke, and since mjai cannot retract an emitted marker the best we
+    /// can do is warn and adopt the server's tail going forward.
     fn consume_new_doras(&mut self, data: &JsonValue) -> Result<Vec<String>> {
         let arr = match data.get("doras").and_then(JsonValue::as_array) {
             Some(a) => a,
             None => return Ok(Vec::new()),
         };
-        if arr.len() <= self.doras.len() {
+        if arr.is_empty() {
             return Ok(Vec::new());
         }
-        let mut new_markers = Vec::with_capacity(arr.len() - self.doras.len());
-        for entry in &arr[self.doras.len()..] {
-            let raw = entry.as_str().context("doras entry not a string")?;
-            let mjai = ms_to_mjai(raw)?.to_string();
-            new_markers.push(mjai);
+        let mapped = arr
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_str()
+                    .context("doras entry not a string")
+                    .and_then(|raw| ms_to_mjai(raw).map(|t| t.to_string()))
+            })
+            .collect::<Result<Vec<String>>>()?;
+
+        let prefix_len = self.doras.len().min(mapped.len());
+        if self.doras[..prefix_len] != mapped[..prefix_len] {
+            warn!(
+                target: "akagi::bridge::majsoul",
+                "server dora array {mapped:?} does not extend the markers reported so far {local:?}; \
+                 adopting the server tail (already-emitted markers cannot be retracted)",
+                local = self.doras
+            );
         }
-        self.doras.extend(new_markers.iter().cloned());
+        if mapped.len() <= self.doras.len() {
+            return Ok(Vec::new());
+        }
+        let new_markers = mapped[self.doras.len()..].to_vec();
+        self.doras = mapped;
         Ok(new_markers)
     }
 
@@ -3097,7 +3120,9 @@ mod tests {
     /// kans — kakan hatsu, ankan 1p, kakan North. Real wire shape: kan
     /// reveals ride the declarer's ActionDiscardTile, ankan's rides the
     /// rinshan ActionDealTile. The old code dropped the kakan reveals and
-    /// re-emitted a stale marker (`9m` twice, `5m`/`5p` never).
+    /// re-emitted a stale marker (`9m` twice, `5m`/`5p` never). The full
+    /// event-kind sequence is pinned so ordering regressions relative to
+    /// tsumo/dahai are caught here too.
     #[test]
     fn issue_244_multiple_kans_emit_correct_dora_sequence() {
         let mut bridge = MajsoulBridge::new(None, None);
@@ -3106,9 +3131,14 @@ mod tests {
         let mut emitted: Vec<String> = Vec::new();
         let mut collect = |evs: Vec<MjaiEvent>| {
             for e in evs {
-                if let MjaiEvent::Dora { dora_marker } = e {
-                    emitted.push(dora_marker);
-                }
+                emitted.push(match &e {
+                    MjaiEvent::Dora { dora_marker } => format!("dora:{dora_marker}"),
+                    MjaiEvent::Tsumo { .. } => "tsumo".into(),
+                    MjaiEvent::Dahai { .. } => "dahai".into(),
+                    MjaiEvent::Ankan { .. } => "ankan".into(),
+                    MjaiEvent::Kakan { .. } => "kakan".into(),
+                    other => format!("{other:?}"),
+                });
             }
         };
 
@@ -3158,8 +3188,15 @@ mod tests {
 
         assert_eq!(
             emitted,
-            vec!["5m".to_string(), "9m".to_string(), "5p".to_string()],
-            "mjai dora events must match the game's revealed markers"
+            vec![
+                // kakan hatsu: reveal flips before the declarer's dahai
+                "kakan", "tsumo", "dora:5m", "dahai", //
+                // ankan 1p: reveal flips before the rinshan tsumo
+                "ankan", "dora:9m", "tsumo", "dahai", //
+                // kakan North: unchanged deal array must not re-emit 9m
+                "kakan", "tsumo", "dora:5p", "dahai",
+            ],
+            "mjai event sequence must match the game's reveals and spec ordering"
         );
         assert_eq!(
             bridge.doras,
@@ -3169,6 +3206,63 @@ mod tests {
                 "9m".to_string(),
                 "5p".to_string()
             ]
+        );
+    }
+
+    /// Consecutive kans by one declarer with no discard in between:
+    /// kakan (reveal still pending) → rinshan → ankan → rinshan. Both
+    /// flips arrive together on the ankan's rinshan deal in slot order —
+    /// the pending kakan marker first, then the ankan's, both before the
+    /// tsumo. The following discard's unchanged array adds nothing.
+    #[test]
+    fn consecutive_kans_flush_both_markers_at_ankan_rinshan() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.seat = Some(0);
+        bridge.doras = vec!["E".to_string()];
+
+        bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 1, "type": 2, "tiles": "5m" }),
+        ));
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 1, "tile": "" }),
+        ));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MjaiEvent::Tsumo { .. }));
+
+        bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 1, "type": 3, "tiles": "9s" }),
+        ));
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 1, "tile": "", "doras": ["1z", "4z", "5z"] }),
+        ));
+        assert_eq!(events.len(), 3);
+        match (&events[0], &events[1]) {
+            (
+                MjaiEvent::Dora { dora_marker: first },
+                MjaiEvent::Dora {
+                    dora_marker: second,
+                },
+            ) => {
+                assert_eq!(first, "N");
+                assert_eq!(second, "P");
+            }
+            other => panic!("expected two Dora events first, got {other:?}"),
+        }
+        assert!(matches!(events[2], MjaiEvent::Tsumo { .. }));
+
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DISCARD_TILE,
+            json!({ "seat": 1, "tile": "1m", "moqie": true, "doras": ["1z", "4z", "5z"] }),
+        ));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MjaiEvent::Dahai { .. }));
+        assert_eq!(
+            bridge.doras,
+            vec!["E".to_string(), "N".to_string(), "P".to_string()]
         );
     }
 
