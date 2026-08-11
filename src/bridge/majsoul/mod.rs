@@ -85,16 +85,24 @@ const UNKNOWN_TILE: &str = "?";
 /// Dora-flip scheduling for kan declarations. Mjai distinguishes ankan
 /// (即乗り — dora flips *before* the rinshan tsumo) from kakan/daiminkan
 /// (後乗り — dora flips *after* the rinshan tsumo, just before the next
-/// dahai). Both Akagi-Python and AkagiNG conflate the two and emit dora
-/// at the wrong moment for kakan/daiminkan; this state machine fixes that.
+/// dahai).
+///
+/// On the wire the live server matches this split: an ankan's new marker
+/// arrives with the rinshan `ActionDealTile.doras`, while a kakan /
+/// daiminkan marker is withheld until the kan declarer commits a tile —
+/// it rides the grown `doras` array of that `ActionDiscardTile` (or
+/// `ActionBaBei` in 3p). This state only schedules markers that arrive
+/// *early* (i.e. already present on the rinshan deal, which older
+/// captures suggested for open kans): `PendingAfterRinshan` holds them
+/// back so they still flip just before the commit event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DoraTiming {
     /// Ankan just declared. The next `ActionDealTile` carries the new dora
     /// marker — emit `dora` *before* the rinshan `tsumo`.
     PendingBeforeRinshan,
     /// Kakan or daiminkan just declared. The next `ActionDealTile` still
-    /// emits `tsumo` first; the new dora marker is held back and flipped
-    /// just before the next `dahai`.
+    /// emits `tsumo` first; any marker it already carries is held back and
+    /// flipped just before the next `dahai`.
     PendingAfterRinshan,
 }
 
@@ -106,15 +114,18 @@ pub struct MajsoulBridge {
     account_id: Option<u64>,
     game_id: Option<u64>,
     seat: Option<Actor>,
-    /// Mjai-mapped dora indicators seen so far this kyoku. Used to detect
-    /// new dora markers in subsequent `ActionDealTile.doras`.
+    /// Mjai-mapped dora indicators seen so far this kyoku. Compared
+    /// against the `doras` array that any action payload may carry
+    /// (`ActionDealTile`, `ActionDiscardTile`, `ActionAnGangAddGang`,
+    /// `ActionBaBei`) to detect newly revealed markers.
     doras: Vec<String>,
     /// Pending kan-dora timing, set by meld actions and consumed by
     /// `build_tsumo` / `build_dahai`.
     dora_timing: Option<DoraTiming>,
-    /// Mjai-mapped dora marker held for emission immediately before the
-    /// next `dahai` (kakan / daiminkan flow).
-    deferred_dora: Option<String>,
+    /// Mjai-mapped dora markers held for emission immediately before the
+    /// next commit event — `dahai`, or `kita` in 3p (kakan / daiminkan
+    /// flow).
+    deferred_doras: Vec<String>,
     /// Seat of the actor whose most recent action *revealed* a tile that
     /// another seat could ron — i.e. the legitimate `target` for a hora.
     /// Updated by:
@@ -171,7 +182,7 @@ impl MajsoulBridge {
             seat: None,
             doras: Vec::new(),
             dora_timing: None,
-            deferred_dora: None,
+            deferred_doras: Vec::new(),
             last_revealed_tile_actor: None,
             pending_reach_accepted: None,
             num_players: 4,
@@ -550,9 +561,12 @@ impl MajsoulBridge {
     /// other players' draws (we don't see what they got), so an empty /
     /// missing tile becomes `"?"`. Our own draws carry the real tile.
     ///
-    /// When this deal is the rinshan after a kan, the new dora marker
-    /// arrives in `data.doras`. Timing depends on the kan type set by the
-    /// preceding meld action (see `DoraTiming`).
+    /// When this deal is the rinshan after an ankan, the new dora marker
+    /// arrives in `data.doras` and flips before the tsumo (即乗り). For
+    /// kakan/daiminkan the live server withholds the marker until the kan
+    /// declarer's next discard (`build_dahai` picks it up there); if it
+    /// nevertheless shows up on the rinshan deal, it is deferred to the
+    /// commit event per 後乗り (see `DoraTiming`).
     fn build_tsumo(&mut self, data: &JsonValue) -> Result<Vec<MjaiEvent>> {
         let self_seat = self.seat.context("seat unresolved at ActionDealTile")?;
         let actor = data.get("seat").and_then(JsonValue::as_u64).unwrap_or(0) as Actor;
@@ -563,49 +577,42 @@ impl MajsoulBridge {
             UNKNOWN_TILE.into()
         };
 
-        let new_marker = self.consume_new_dora(data)?;
+        let mut new_markers = self.consume_new_doras(data)?;
         let timing = self.dora_timing.take();
-        let mut events = Vec::with_capacity(2);
+        let mut events = Vec::with_capacity(new_markers.len() + 1);
 
-        match (new_marker, timing) {
-            (Some(marker), Some(DoraTiming::PendingBeforeRinshan)) => {
+        match timing {
+            Some(DoraTiming::PendingAfterRinshan) => {
+                // Kakan/daiminkan: 後乗り — rinshan tsumo first. Markers
+                // usually arrive with the upcoming discard instead, but if
+                // this deal already carries them, hold them for the commit.
+                self.deferred_doras.append(&mut new_markers);
+                events.push(MjaiEvent::Tsumo { actor, pai });
+            }
+            Some(DoraTiming::PendingBeforeRinshan) => {
                 // Ankan: 即乗り — flip dora, then rinshan tsumo.
-                events.push(MjaiEvent::Dora {
-                    dora_marker: marker,
-                });
+                if new_markers.is_empty() {
+                    warn!(
+                        target: "akagi::bridge::majsoul",
+                        "rinshan deal after ankan missing new dora marker"
+                    );
+                }
+                for dora_marker in new_markers {
+                    events.push(MjaiEvent::Dora { dora_marker });
+                }
                 events.push(MjaiEvent::Tsumo { actor, pai });
             }
-            (Some(marker), Some(DoraTiming::PendingAfterRinshan)) => {
-                // Kakan/daiminkan: 後乗り — rinshan tsumo first, dora
-                // deferred until the next dahai.
-                events.push(MjaiEvent::Tsumo { actor, pai });
-                self.deferred_dora = Some(marker);
-            }
-            (Some(marker), None) => {
+            None => {
                 // Unexpected dora bump outside a kan flow. Fall back to
                 // emitting it before tsumo (Akagi-style) and warn so the
                 // protocol drift is visible in logs.
-                warn!(
-                    target: "akagi::bridge::majsoul",
-                    "new dora marker {marker} without preceding kan; emitting before tsumo"
-                );
-                events.push(MjaiEvent::Dora {
-                    dora_marker: marker,
-                });
-                events.push(MjaiEvent::Tsumo { actor, pai });
-            }
-            (None, Some(DoraTiming::PendingBeforeRinshan))
-            | (None, Some(DoraTiming::PendingAfterRinshan)) => {
-                // Kan declared but rinshan deal carried no new dora — the
-                // wire format always includes it for kans, so this is
-                // unusual. Emit tsumo and move on.
-                warn!(
-                    target: "akagi::bridge::majsoul",
-                    "rinshan deal after kan missing new dora marker"
-                );
-                events.push(MjaiEvent::Tsumo { actor, pai });
-            }
-            (None, None) => {
+                for dora_marker in new_markers {
+                    warn!(
+                        target: "akagi::bridge::majsoul",
+                        "new dora marker {dora_marker} without preceding kan; emitting before tsumo"
+                    );
+                    events.push(MjaiEvent::Dora { dora_marker });
+                }
                 events.push(MjaiEvent::Tsumo { actor, pai });
             }
         }
@@ -616,8 +623,11 @@ impl MajsoulBridge {
     /// directly to `tsumogiri`. `seat` defaults to 0 — Majsoul omits it
     /// for the dealer's first discard.
     ///
-    /// If a dora marker is queued for 後乗り (open-kan flow), it is
-    /// flushed *before* the dahai event.
+    /// Kan dora (後乗り): after a kakan/daiminkan the live server reveals
+    /// the new marker by growing this message's `doras` array — the
+    /// rinshan deal does *not* carry it. Any markers found here (plus any
+    /// deferred from the rinshan deal) are emitted *before* the dahai
+    /// event, matching the mjai state machine (tsumo → dora → dahai).
     ///
     /// Riichi: when `is_liqi` (or `is_wliqi`, double riichi) is set, a
     /// `reach` event precedes the `dahai` and `pending_reach_accepted` is
@@ -648,11 +658,12 @@ impl MajsoulBridge {
                 .and_then(JsonValue::as_bool)
                 .unwrap_or(false);
 
-        let mut events = Vec::with_capacity(3);
-        if let Some(marker) = self.deferred_dora.take() {
-            events.push(MjaiEvent::Dora {
-                dora_marker: marker,
-            });
+        let mut dora_markers = std::mem::take(&mut self.deferred_doras);
+        dora_markers.extend(self.consume_new_doras(data)?);
+
+        let mut events = Vec::with_capacity(dora_markers.len() + 2);
+        for dora_marker in dora_markers {
+            events.push(MjaiEvent::Dora { dora_marker });
         }
         if is_riichi {
             events.push(MjaiEvent::Reach { actor, pai: None });
@@ -669,24 +680,54 @@ impl MajsoulBridge {
         Ok(events)
     }
 
-    /// Compare `data.doras` against `self.doras`. If a new marker has
-    /// appeared (length grew), map the last entry to mjai, push it onto
-    /// `self.doras`, and return it. Returns `None` when nothing is new.
-    fn consume_new_dora(&mut self, data: &JsonValue) -> Result<Option<String>> {
+    /// Compare `data.doras` against `self.doras`. If the server array has
+    /// grown, return every newly appended entry (mjai-mapped, in reveal
+    /// order) and sync `self.doras` to the full server array. Returns an
+    /// empty vec when nothing is new.
+    ///
+    /// Syncing the full tail (not just the last entry) matters: the local
+    /// list must never fall behind the server's, otherwise a later payload
+    /// whose array hasn't grown would still compare longer and re-emit a
+    /// stale marker (the double-`9m` in issue #244).
+    ///
+    /// The already-seen prefix is also validated. Indicators flip in dead
+    /// wall slot order, so the server array should only ever *extend*
+    /// what we've reported; a rewritten prefix means that assumption
+    /// broke, and since mjai cannot retract an emitted marker the best we
+    /// can do is warn and adopt the server's tail going forward.
+    fn consume_new_doras(&mut self, data: &JsonValue) -> Result<Vec<String>> {
         let arr = match data.get("doras").and_then(JsonValue::as_array) {
             Some(a) => a,
-            None => return Ok(None),
+            None => return Ok(Vec::new()),
         };
-        if arr.len() <= self.doras.len() {
-            return Ok(None);
+        if arr.is_empty() {
+            return Ok(Vec::new());
         }
-        let last = arr
-            .last()
-            .and_then(JsonValue::as_str)
-            .context("doras[last] not a string")?;
-        let mjai = ms_to_mjai(last)?.to_string();
-        self.doras.push(mjai.clone());
-        Ok(Some(mjai))
+        let mapped = arr
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_str()
+                    .context("doras entry not a string")
+                    .and_then(|raw| ms_to_mjai(raw).map(|t| t.to_string()))
+            })
+            .collect::<Result<Vec<String>>>()?;
+
+        let prefix_len = self.doras.len().min(mapped.len());
+        if self.doras[..prefix_len] != mapped[..prefix_len] {
+            warn!(
+                target: "akagi::bridge::majsoul",
+                "server dora array {mapped:?} does not extend the markers reported so far {local:?}; \
+                 adopting the server tail (already-emitted markers cannot be retracted)",
+                local = self.doras
+            );
+        }
+        if mapped.len() <= self.doras.len() {
+            return Ok(Vec::new());
+        }
+        let new_markers = mapped[self.doras.len()..].to_vec();
+        self.doras = mapped;
+        Ok(new_markers)
     }
 
     /// `ActionChiPengGang` → `chi` / `pon` / `daiminkan`. `froms[i]`
@@ -808,6 +849,12 @@ impl MajsoulBridge {
     /// `tiles` field is a single tile string (not a list) — for ankan it
     /// names the four-of-a-kind, for kakan it names the new tile being
     /// added on top of an existing pon.
+    ///
+    /// The payload has a `doras` field; live servers deliver kan reveals
+    /// on later messages instead, but it is consumed here defensively so
+    /// a marker arriving this early is neither lost nor double-emitted:
+    /// for ankan it flips right after the `ankan` event (即乗り), for
+    /// kakan it is deferred to the commit event (後乗り).
     fn build_an_gang_add_gang(&mut self, data: &JsonValue) -> Result<Vec<MjaiEvent>> {
         let actor = data
             .get("seat")
@@ -823,25 +870,35 @@ impl MajsoulBridge {
             .context("ActionAnGangAddGang.tiles not a string")?;
         let pai = ms_to_mjai(tile_raw)?.to_string();
 
-        let event = match kind {
+        let mut new_markers = self.consume_new_doras(data)?;
+        let mut events = Vec::with_capacity(new_markers.len() + 1);
+        match kind {
             AN_GANG_ADD_GANG_AN => {
                 let consumed = ankan_consumed(&pai);
-                // 即乗り: dora flips before the rinshan tsumo.
-                self.dora_timing = Some(DoraTiming::PendingBeforeRinshan);
-                MjaiEvent::Ankan { actor, consumed }
+                events.push(MjaiEvent::Ankan { actor, consumed });
+                if new_markers.is_empty() {
+                    // 即乗り: the reveal rides the upcoming rinshan deal.
+                    self.dora_timing = Some(DoraTiming::PendingBeforeRinshan);
+                } else {
+                    // Reveal already delivered with the kan itself.
+                    for dora_marker in new_markers {
+                        events.push(MjaiEvent::Dora { dora_marker });
+                    }
+                }
             }
             AN_GANG_ADD_GANG_ADD => {
                 let consumed = kakan_consumed(&pai);
                 // 後乗り: dora flips after rinshan tsumo, before dahai.
+                self.deferred_doras.append(&mut new_markers);
                 self.dora_timing = Some(DoraTiming::PendingAfterRinshan);
-                MjaiEvent::Kakan {
+                events.push(MjaiEvent::Kakan {
                     actor,
                     pai,
                     consumed,
-                }
+                });
             }
             other => bail!("unknown ActionAnGangAddGang.type: {other}"),
-        };
+        }
         // Both kan types reveal a tile that another seat may rob:
         //   - kakan → 搶槓 (chankan).
         //   - ankan → 国士無双搶暗槓 (only kokushi can rob; the server
@@ -849,7 +906,7 @@ impl MajsoulBridge {
         //     unconditional tracking is safe).
         // If a ron follows, `build_hule` uses this seat as the `target`.
         self.last_revealed_tile_actor = Some(actor);
-        Ok(vec![event])
+        Ok(events)
     }
 
     /// `ActionNoTile` (荒牌流局, exhaustive draw) → `[ryukyoku{deltas},
@@ -973,7 +1030,7 @@ impl MajsoulBridge {
     /// The seat must already be resolved via the prior `authGame` exchange;
     /// otherwise we have no way to know which tehai slot to fill in.
     ///
-    /// Resets per-kyoku dora-tracking state so a stale `deferred_dora` from
+    /// Resets per-kyoku dora-tracking state so stale `deferred_doras` from
     /// a previous kyoku can't bleed into this one.
     fn build_start_kyoku(&mut self, data: &JsonValue) -> Result<Vec<MjaiEvent>> {
         let seat = self.seat.context("seat unresolved at ActionNewRound")?;
@@ -1067,7 +1124,7 @@ impl MajsoulBridge {
         // Fresh kyoku — reset dora + riichi + discard bookkeeping.
         self.doras = vec![dora_marker.clone()];
         self.dora_timing = None;
-        self.deferred_dora = None;
+        self.deferred_doras.clear();
         self.last_revealed_tile_actor = None;
         self.pending_reach_accepted = None;
 
@@ -1100,8 +1157,12 @@ impl MajsoulBridge {
     /// Notes:
     /// - No `tile` field — kita is always the North tile, so we hardcode
     ///   `pai = "N"` per the mjai 3p extension.
-    /// - `doras: []` — kita does NOT flip a new dora indicator (Tenhou
-    ///   rule, confirmed live). Skip dora bookkeeping entirely.
+    /// - `doras: []` — kita itself does NOT flip a new dora indicator
+    ///   (Tenhou rule, confirmed live). The array is still checked: after
+    ///   a kakan/daiminkan the declarer may pull North instead of
+    ///   discarding, and that babei is then the commit event carrying the
+    ///   kan's 後乗り reveal — emitted before the `kita` event, together
+    ///   with any marker deferred from the rinshan deal.
     /// - `last_revealed_tile_actor` is updated so a follow-up ron-on-kita
     ///   (chankan-style) gets the correct `target` in `build_hule`.
     ///
@@ -1119,11 +1180,19 @@ impl MajsoulBridge {
                 self.num_players
             );
         }
+        let mut dora_markers = std::mem::take(&mut self.deferred_doras);
+        dora_markers.extend(self.consume_new_doras(data)?);
+
+        let mut events = Vec::with_capacity(dora_markers.len() + 1);
+        for dora_marker in dora_markers {
+            events.push(MjaiEvent::Dora { dora_marker });
+        }
         self.last_revealed_tile_actor = Some(actor);
-        Ok(vec![MjaiEvent::Kita {
+        events.push(MjaiEvent::Kita {
             actor,
             pai: Some("N".to_string()),
-        }])
+        });
+        Ok(events)
     }
 
     fn handle_auth_game_response(&mut self, payload: &JsonValue) -> Vec<MjaiEvent> {
@@ -2772,7 +2841,7 @@ mod tests {
         ));
         assert_eq!(bridge.doras, vec!["E".to_string()]);
         assert!(bridge.dora_timing.is_none());
-        assert!(bridge.deferred_dora.is_none());
+        assert!(bridge.deferred_doras.is_empty());
     }
 
     /// Riichi declaration tile passes through normally, then a kita
@@ -2913,12 +2982,13 @@ mod tests {
             other => panic!("expected Tsumo second, got {other:?}"),
         }
         assert!(bridge.dora_timing.is_none());
-        assert!(bridge.deferred_dora.is_none());
+        assert!(bridge.deferred_doras.is_empty());
     }
 
-    /// Daiminkan flow: daiminkan → ActionDealTile must emit only Tsumo
-    /// (dora deferred). Then ActionDiscardTile must prepend the dora
-    /// before dahai (後乗り).
+    /// Daiminkan flow as the live server sends it: the rinshan
+    /// ActionDealTile does NOT carry the new marker; the grown `doras`
+    /// array rides the declarer's next ActionDiscardTile. The dora must
+    /// still flip before the dahai event (後乗り).
     #[test]
     fn daiminkan_then_rinshan_then_discard_emits_dora_before_dahai() {
         let mut bridge = MajsoulBridge::new(None, None);
@@ -2935,10 +3005,10 @@ mod tests {
             }),
         ));
 
-        // Rinshan: tsumo only, dora deferred.
+        // Rinshan: tsumo only — the server hasn't revealed the marker yet.
         let events = bridge.dispatch(&action_msg(
             ACTION_DEAL_TILE,
-            json!({ "seat": 2, "tile": "9p", "doras": ["1z", "3z"] }),
+            json!({ "seat": 2, "tile": "9p", "doras": ["1z"] }),
         ));
         assert_eq!(events.len(), 1);
         match &events[0] {
@@ -2948,13 +3018,13 @@ mod tests {
             }
             other => panic!("expected single Tsumo, got {other:?}"),
         }
-        assert_eq!(bridge.deferred_dora, Some("W".to_string()));
+        assert!(bridge.deferred_doras.is_empty());
         assert!(bridge.dora_timing.is_none());
 
-        // Next discard: dora flushed first, then dahai.
+        // The discard carries the reveal: dora first, then dahai.
         let events = bridge.dispatch(&action_msg(
             ACTION_DISCARD_TILE,
-            json!({ "seat": 2, "tile": "9p", "moqie": true }),
+            json!({ "seat": 2, "tile": "9p", "moqie": true, "doras": ["1z", "3z"] }),
         ));
         assert_eq!(events.len(), 2);
         match &events[0] {
@@ -2973,12 +3043,49 @@ mod tests {
             }
             other => panic!("expected Dahai second, got {other:?}"),
         }
-        assert!(bridge.deferred_dora.is_none());
+        assert!(bridge.deferred_doras.is_empty());
+        assert_eq!(bridge.doras, vec!["E".to_string(), "W".to_string()]);
     }
 
-    /// Kakan follows the same 後乗り timing as daiminkan.
+    /// Kakan follows the same 後乗り timing as daiminkan (reveal rides
+    /// the declarer's discard, flips before the dahai event).
     #[test]
     fn kakan_then_rinshan_then_discard_emits_dora_before_dahai() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.seat = Some(0);
+        bridge.doras = vec!["E".to_string()];
+
+        bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 0, "type": 2, "tiles": "5m" }),
+        ));
+
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 0, "tile": "1p" }),
+        ));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MjaiEvent::Tsumo { .. }));
+        assert!(bridge.deferred_doras.is_empty());
+
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DISCARD_TILE,
+            json!({ "seat": 0, "tile": "1p", "moqie": true, "doras": ["1z", "4z"] }),
+        ));
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            MjaiEvent::Dora { dora_marker } => assert_eq!(dora_marker, "N"),
+            other => panic!("expected Dora first, got {other:?}"),
+        }
+        assert!(matches!(events[1], MjaiEvent::Dahai { .. }));
+    }
+
+    /// Defensive: if a kakan's marker nevertheless arrives already on the
+    /// rinshan deal (older captures suggested this shape), it must be
+    /// deferred to the dahai — and the discard's own unchanged `doras`
+    /// array must not double-emit it.
+    #[test]
+    fn kakan_dora_on_rinshan_deal_is_deferred_until_dahai() {
         let mut bridge = MajsoulBridge::new(None, None);
         bridge.seat = Some(0);
         bridge.doras = vec!["E".to_string()];
@@ -2994,11 +3101,11 @@ mod tests {
         ));
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], MjaiEvent::Tsumo { .. }));
-        assert_eq!(bridge.deferred_dora, Some("N".to_string()));
+        assert_eq!(bridge.deferred_doras, vec!["N".to_string()]);
 
         let events = bridge.dispatch(&action_msg(
             ACTION_DISCARD_TILE,
-            json!({ "seat": 0, "tile": "1p", "moqie": true }),
+            json!({ "seat": 0, "tile": "1p", "moqie": true, "doras": ["1z", "4z"] }),
         ));
         assert_eq!(events.len(), 2);
         match &events[0] {
@@ -3006,6 +3113,256 @@ mod tests {
             other => panic!("expected Dora first, got {other:?}"),
         }
         assert!(matches!(events[1], MjaiEvent::Dahai { .. }));
+        assert!(bridge.deferred_doras.is_empty());
+    }
+
+    /// Regression for issue #244 (reported via #243): East 1 with three
+    /// kans — kakan hatsu, ankan 1p, kakan North. Real wire shape: kan
+    /// reveals ride the declarer's ActionDiscardTile, ankan's rides the
+    /// rinshan ActionDealTile. The old code dropped the kakan reveals and
+    /// re-emitted a stale marker (`9m` twice, `5m`/`5p` never). The full
+    /// event-kind sequence is pinned so ordering regressions relative to
+    /// tsumo/dahai are caught here too.
+    #[test]
+    fn issue_244_multiple_kans_emit_correct_dora_sequence() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.seat = Some(3);
+        bridge.doras = vec!["8p".to_string()];
+        let mut emitted: Vec<String> = Vec::new();
+        let mut collect = |evs: Vec<MjaiEvent>| {
+            for e in evs {
+                emitted.push(match &e {
+                    MjaiEvent::Dora { dora_marker } => format!("dora:{dora_marker}"),
+                    MjaiEvent::Tsumo { .. } => "tsumo".into(),
+                    MjaiEvent::Dahai { .. } => "dahai".into(),
+                    MjaiEvent::Ankan { .. } => "ankan".into(),
+                    MjaiEvent::Kakan { .. } => "kakan".into(),
+                    other => format!("{other:?}"),
+                });
+            }
+        };
+
+        // Kakan hatsu by seat 2; reveal (5m) rides the discard.
+        collect(bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 2, "type": 2, "tiles": "6z" }),
+        )));
+        collect(bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 2, "tile": "" }),
+        )));
+        collect(bridge.dispatch(&action_msg(
+            ACTION_DISCARD_TILE,
+            json!({ "seat": 2, "tile": "1z", "moqie": true, "doras": ["8p", "5m"] }),
+        )));
+
+        // Ankan 1p by seat 0; reveal (9m) rides the rinshan deal.
+        collect(bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 0, "type": 3, "tiles": "1p" }),
+        )));
+        collect(bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 0, "tile": "", "doras": ["8p", "5m", "9m"] }),
+        )));
+        collect(bridge.dispatch(&action_msg(
+            ACTION_DISCARD_TILE,
+            json!({ "seat": 0, "tile": "2z", "moqie": true }),
+        )));
+
+        // Kakan North by seat 3; rinshan deal repeats the unchanged
+        // 3-entry array (this used to re-emit a stale 9m), reveal (5p)
+        // rides the discard.
+        collect(bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 3, "type": 2, "tiles": "4z" }),
+        )));
+        collect(bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 3, "tile": "5p", "doras": ["8p", "5m", "9m"] }),
+        )));
+        collect(bridge.dispatch(&action_msg(
+            ACTION_DISCARD_TILE,
+            json!({ "seat": 3, "tile": "5p", "moqie": true, "doras": ["8p", "5m", "9m", "5p"] }),
+        )));
+
+        assert_eq!(
+            emitted,
+            vec![
+                // kakan hatsu: reveal flips before the declarer's dahai
+                "kakan", "tsumo", "dora:5m", "dahai", //
+                // ankan 1p: reveal flips before the rinshan tsumo
+                "ankan", "dora:9m", "tsumo", "dahai", //
+                // kakan North: unchanged deal array must not re-emit 9m
+                "kakan", "tsumo", "dora:5p", "dahai",
+            ],
+            "mjai event sequence must match the game's reveals and spec ordering"
+        );
+        assert_eq!(
+            bridge.doras,
+            vec![
+                "8p".to_string(),
+                "5m".to_string(),
+                "9m".to_string(),
+                "5p".to_string()
+            ]
+        );
+    }
+
+    /// Consecutive kans by one declarer with no discard in between:
+    /// kakan (reveal still pending) → rinshan → ankan → rinshan. Both
+    /// flips arrive together on the ankan's rinshan deal in slot order —
+    /// the pending kakan marker first, then the ankan's, both before the
+    /// tsumo. The following discard's unchanged array adds nothing.
+    #[test]
+    fn consecutive_kans_flush_both_markers_at_ankan_rinshan() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.seat = Some(0);
+        bridge.doras = vec!["E".to_string()];
+
+        bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 1, "type": 2, "tiles": "5m" }),
+        ));
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 1, "tile": "" }),
+        ));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MjaiEvent::Tsumo { .. }));
+
+        bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 1, "type": 3, "tiles": "9s" }),
+        ));
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 1, "tile": "", "doras": ["1z", "4z", "5z"] }),
+        ));
+        assert_eq!(events.len(), 3);
+        match (&events[0], &events[1]) {
+            (
+                MjaiEvent::Dora { dora_marker: first },
+                MjaiEvent::Dora {
+                    dora_marker: second,
+                },
+            ) => {
+                assert_eq!(first, "N");
+                assert_eq!(second, "P");
+            }
+            other => panic!("expected two Dora events first, got {other:?}"),
+        }
+        assert!(matches!(events[2], MjaiEvent::Tsumo { .. }));
+
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DISCARD_TILE,
+            json!({ "seat": 1, "tile": "1m", "moqie": true, "doras": ["1z", "4z", "5z"] }),
+        ));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MjaiEvent::Dahai { .. }));
+        assert_eq!(
+            bridge.doras,
+            vec!["E".to_string(), "N".to_string(), "P".to_string()]
+        );
+    }
+
+    /// If the local list somehow falls several markers behind, every
+    /// missing entry is emitted in order and the list fully resyncs.
+    #[test]
+    fn consume_new_doras_emits_all_missing_markers() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.seat = Some(0);
+        bridge.doras = vec!["E".to_string()];
+
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 0, "tile": "1p", "doras": ["1z", "2z", "3z"] }),
+        ));
+        // No kan pending → warn-and-emit-before-tsumo path.
+        assert_eq!(events.len(), 3);
+        match (&events[0], &events[1]) {
+            (
+                MjaiEvent::Dora { dora_marker: first },
+                MjaiEvent::Dora {
+                    dora_marker: second,
+                },
+            ) => {
+                assert_eq!(first, "S");
+                assert_eq!(second, "W");
+            }
+            other => panic!("expected two Dora events first, got {other:?}"),
+        }
+        assert!(matches!(events[2], MjaiEvent::Tsumo { .. }));
+        assert_eq!(
+            bridge.doras,
+            vec!["E".to_string(), "S".to_string(), "W".to_string()]
+        );
+    }
+
+    /// Defensive: an ankan whose ActionAnGangAddGang already carries the
+    /// grown `doras` array flips right after the ankan event, and the
+    /// rinshan deal repeating the same array must not double-emit.
+    #[test]
+    fn ankan_dora_on_kan_message_emits_once() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.seat = Some(1);
+        bridge.doras = vec!["E".to_string()];
+
+        let events = bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 1, "type": 3, "tiles": "1z", "doras": ["1z", "2z"] }),
+        ));
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], MjaiEvent::Ankan { .. }));
+        match &events[1] {
+            MjaiEvent::Dora { dora_marker } => assert_eq!(dora_marker, "S"),
+            other => panic!("expected Dora after Ankan, got {other:?}"),
+        }
+        assert!(bridge.dora_timing.is_none());
+
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 1, "tile": "5p", "doras": ["1z", "2z"] }),
+        ));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MjaiEvent::Tsumo { .. }));
+    }
+
+    /// 3p: after a kakan the declarer may pull North instead of
+    /// discarding — the babei is then the commit event carrying the kan's
+    /// reveal, which must flip before the kita event.
+    #[test]
+    fn kakan_then_babei_emits_dora_before_kita() {
+        let mut bridge = MajsoulBridge::new(None, None);
+        bridge.seat = Some(0);
+        bridge.num_players = 3;
+        bridge.doras = vec!["E".to_string()];
+
+        bridge.dispatch(&action_msg(
+            ACTION_AN_GANG_ADD_GANG,
+            json!({ "seat": 1, "type": 2, "tiles": "5m" }),
+        ));
+        let events = bridge.dispatch(&action_msg(
+            ACTION_DEAL_TILE,
+            json!({ "seat": 1, "tile": "" }),
+        ));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MjaiEvent::Tsumo { .. }));
+
+        let events = bridge.dispatch(&action_msg(
+            ACTION_BA_BEI,
+            json!({ "seat": 1, "moqie": false, "doras": ["1z", "4z"], "tingpais": [], "zhenting": false, "tile_state": 0 }),
+        ));
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            MjaiEvent::Dora { dora_marker } => assert_eq!(dora_marker, "N"),
+            other => panic!("expected Dora first, got {other:?}"),
+        }
+        match &events[1] {
+            MjaiEvent::Kita { actor, .. } => assert_eq!(*actor, 1),
+            other => panic!("expected Kita second, got {other:?}"),
+        }
+        assert!(bridge.deferred_doras.is_empty());
     }
 
     /// Riichi declaration: dahai with `is_liqi=true` produces
@@ -3796,14 +4153,14 @@ mod tests {
         assert_eq!(events, vec![MjaiEvent::terminated_game()]);
     }
 
-    /// State must reset on a new kyoku — a stray `deferred_dora` from the
+    /// State must reset on a new kyoku — stray `deferred_doras` from the
     /// previous round can't leak into the next.
     #[test]
     fn start_kyoku_resets_dora_state() {
         let mut bridge = MajsoulBridge::new(None, None);
         bridge.seat = Some(0);
         bridge.dora_timing = Some(DoraTiming::PendingBeforeRinshan);
-        bridge.deferred_dora = Some("S".into());
+        bridge.deferred_doras = vec!["S".into()];
 
         bridge.dispatch(&new_round_msg(json!({
             "doras": ["1m"],
@@ -3814,7 +4171,7 @@ mod tests {
             ],
         })));
         assert!(bridge.dora_timing.is_none());
-        assert!(bridge.deferred_dora.is_none());
+        assert!(bridge.deferred_doras.is_empty());
         assert_eq!(bridge.doras, vec!["1m".to_string()]);
     }
 
