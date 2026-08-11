@@ -371,7 +371,6 @@
       "auto_join_stop_after_minutes": "运行分钟数达到后停止",
       "auto_join_zero_unlimited": "填写 0 表示不限制。",
       "mode": "发送模式",
-      "mode_packet_with_click_fallback": "封包，失败时点击兜底",
       "mode_packet": "仅封包",
       "mode_click": "仅点击",
       "title": "自动打牌",

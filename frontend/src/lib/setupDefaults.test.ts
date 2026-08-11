@@ -49,13 +49,16 @@ function makeConfig(over: {
     autoplay: {
       enabled: false,
       majsoul: {
-        mode: 'packet_with_click_fallback',
+        mode: 'packet',
         pre_click_delay_min_ms: 0,
         pre_click_delay_max_ms: 0,
+        packet_delay_min_ms: 0,
+        packet_delay_max_ms: 0,
         inter_click_delay_ms: 0,
         hover_delay_ms: 0,
         click_hold_ms: 0,
         dealer_first_discard_extra_delay_ms: 0,
+        packet_dealer_first_discard_extra_delay_ms: 0,
         auto_join_game: false,
         auto_join_level: 2,
         auto_join_mode: '3e',

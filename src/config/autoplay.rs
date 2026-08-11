@@ -161,7 +161,7 @@ impl Default for DelayModelConfig {
 #[serde(rename_all = "snake_case")]
 pub enum MajsoulAutoplayMode {
     #[default]
-    PacketWithClickFallback,
+    #[serde(alias = "packet_with_click_fallback")]
     Packet,
     Click,
 }
@@ -177,6 +177,10 @@ pub struct MajsoulAutoplayConfig {
     pub pre_click_delay_min_ms: u32,
     /// Upper bound of the random pre-click delay (ms).
     pub pre_click_delay_max_ms: u32,
+    /// Lower bound of the packet-mode delay before sending an action (ms).
+    pub packet_delay_min_ms: u32,
+    /// Upper bound of the packet-mode delay before sending an action (ms).
+    pub packet_delay_max_ms: u32,
     /// Inter-click delay between staged clicks within one action (e.g.
     /// reach button → riichi tile, or chi button → candidate select).
     pub inter_click_delay_ms: u32,
@@ -197,6 +201,8 @@ pub struct MajsoulAutoplayConfig {
     /// opt out (e.g. on a fast box where the animation finishes inside
     /// the regular pre-click delay anyway).
     pub dealer_first_discard_extra_delay_ms: u32,
+    /// Packet-mode-only delay for the dealer's first discard animation.
+    pub packet_dealer_first_discard_extra_delay_ms: u32,
     /// Return to the lobby after a match and queue the configured ranked game.
     pub auto_join_game: bool,
     /// Ranked room: 0 bronze, 1 silver, 2 gold, 3 jade, 4 throne.
@@ -215,10 +221,13 @@ impl Default for MajsoulAutoplayConfig {
             mode: MajsoulAutoplayMode::default(),
             pre_click_delay_min_ms: 1000,
             pre_click_delay_max_ms: 3000,
+            packet_delay_min_ms: 1000,
+            packet_delay_max_ms: 3000,
             inter_click_delay_ms: 300,
             hover_delay_ms: 200,
             click_hold_ms: 100,
             dealer_first_discard_extra_delay_ms: 2000,
+            packet_dealer_first_discard_extra_delay_ms: 2000,
             auto_join_game: false,
             auto_join_level: 2,
             auto_join_mode: "3e".to_string(),
@@ -256,5 +265,12 @@ mod tests {
         assert_eq!(cfg.delay.mode, default.mode);
         assert_eq!(cfg.delay.min_button_delay_ms, default.min_button_delay_ms);
         assert!(!cfg.delay.lognormal.is_empty());
+    }
+
+    #[test]
+    fn old_fallback_mode_migrates_to_packet() {
+        let cfg: AutoplayConfig =
+            toml::from_str("[majsoul]\nmode = \"packet_with_click_fallback\"\n").unwrap();
+        assert!(matches!(cfg.majsoul.mode, MajsoulAutoplayMode::Packet));
     }
 }

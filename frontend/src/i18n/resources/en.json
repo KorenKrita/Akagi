@@ -371,7 +371,6 @@
       "auto_join_stop_after_minutes": "Stop after minutes",
       "auto_join_zero_unlimited": "0 means unlimited.",
       "mode": "Dispatch mode",
-      "mode_packet_with_click_fallback": "Packet, then click fallback",
       "mode_packet": "Packets only",
       "mode_click": "Clicks only",
       "title": "Autoplay",

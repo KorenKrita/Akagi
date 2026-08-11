@@ -371,7 +371,6 @@
       "auto_join_stop_after_minutes": "時間（分）で自動停止",
       "auto_join_zero_unlimited": "0 は無制限です。",
       "mode": "送信モード",
-      "mode_packet_with_click_fallback": "パケット、失敗時クリック",
       "mode_packet": "パケットのみ",
       "mode_click": "クリックのみ",
       "title": "自動操作",
