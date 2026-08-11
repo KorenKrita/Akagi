@@ -92,13 +92,30 @@ machine fixes that:
 | **kakan**    | `kakan → tsumo (rinshan) → dora → dahai`      | `PendingAfterRinshan`  |
 | **daiminkan**| `daiminkan → tsumo (rinshan) → dora → dahai`  | `PendingAfterRinshan`  |
 
-The new dora marker arrives in `ActionDealTile.doras` (the rinshan deal).
-`build_tsumo` consumes it when `PendingBeforeRinshan` is set (emit
-`dora` before `tsumo`); when `PendingAfterRinshan` is set, the marker is
-held in `deferred_dora` and flushed at the next `ActionDiscardTile`,
-just before the `dahai` event. `start_kyoku` resets all three fields
-(`doras`, `dora_timing`, `deferred_dora`) so stale state from the
-previous kyoku can't bleed in.
+On the wire the live server matches this split (confirmed against a
+captured game with three kans in one kyoku, issue #244):
+
+- **ankan** — the new marker rides the rinshan `ActionDealTile.doras`.
+- **kakan / daiminkan** — the rinshan deal does *not* carry it; the
+  grown `doras` array rides the declarer's commit event, i.e. the next
+  `ActionDiscardTile` (or `ActionBaBei` when a 3p declarer pulls North
+  instead of discarding).
+
+Every payload that carries a `doras` array (`ActionDealTile`,
+`ActionDiscardTile`, `ActionAnGangAddGang`, `ActionBaBei`) is diffed
+against the local `doras` list by `consume_new_doras`, which emits
+*all* newly appended markers and syncs the local list to the full
+server array. The full sync is what prevents the list from falling
+behind — a stale shorter list would make a later *unchanged* array
+look like a new reveal and re-emit an old marker (the duplicated-dora
+half of issue #244; the other half was `build_dahai` not reading
+`doras` at all, which dropped every kakan/daiminkan reveal).
+
+Markers that arrive *early* for an open kan (already on the rinshan
+deal) are held in `deferred_doras` and flushed just before the `dahai`
+(or `kita`) event. `start_kyoku` resets all three fields (`doras`,
+`dora_timing`, `deferred_doras`) so stale state from the previous kyoku
+can't bleed in.
 
 ## Riichi (ActionDiscardTile.is_liqi / .is_wliqi)
 
@@ -245,8 +262,12 @@ The bridge emits:
 Notes:
 
 - Majsoul's payload omits the tile field — kita is always the North wind.
-- `doras: []` in the captured payload — kita does **not** flip a new dora
-  marker (Tenhou rule, confirmed live). `consume_new_dora` skipped.
+- `doras: []` in the captured payload — kita itself does **not** flip a
+  new dora marker (Tenhou rule, confirmed live). The array is still
+  diffed via `consume_new_doras`: after a kakan/daiminkan the declarer
+  may pull North instead of discarding, making the babei the commit
+  event that carries the kan's 後乗り reveal (emitted before `kita`,
+  together with any `deferred_doras`).
 - `last_revealed_tile_actor` updated to the kita declarer so a follow-up
   ron-on-kita (chankan-style 搶北) targets correctly in `build_hule`.
 - `pending_reach_accepted` drains normally — kita is a non-Hule action.
