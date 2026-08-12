@@ -7,8 +7,8 @@ type ConfigStore = {
   setConfig: (c: AppConfig) => void
   setLogDir: (p: string) => void
   /** Patch just the overlay section, leaving the rest of the config alone.
-   *  Driven by the backend's `overlay-config` event, so the Game page's toggle
-   *  still reflects reality after the overlay is closed from its own × button. */
+   *  Driven by the backend's `overlay-config` event so the Game page toggle
+   *  follows persisted overlay setting changes. */
   setOverlay: (o: OverlayConfig) => void
 }
 
