@@ -1,20 +1,26 @@
-//! Pure version-check logic. No IO except `fetch_latest_release` (which
-//! is itself a thin wrapper around `reqwest`); everything else is
-//! deterministic and unit-testable.
+//! Pure version-check logic. No IO except the release-metadata fetch
+//! (a thin wrapper around `reqwest`, with mirror fallback); everything
+//! else is deterministic and unit-testable.
 
-use crate::github::{build_client, fetch_latest_release, Asset, ReleaseJson};
+use crate::config::NetworkConfig;
+use crate::github::mirror::Source;
+use crate::github::{
+    build_client, fetch_latest_release_mirrored, find_sig_asset, Asset, ReleaseJson,
+};
 use anyhow::{Context, Result};
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Per-app version metadata sent to the frontend. The shape mirrors what
 /// the `<UpdateDialog />` needs to render: human-readable strings plus
 /// the bytes we need to actually start a download (`asset_url`, plus the
 /// optional `asset_digest_sha256` for integrity verification).
 ///
-/// Implements `Deserialize` because `apply_update` takes the cached
-/// `UpdateInfo` straight back from the frontend rather than re-fetching.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Serialize-only by design: the frontend never hands this back.
+/// `apply_update` reads the copy stashed in `AppState::pending_update`,
+/// because `asset_url` / `sig_url` / `meta_source` are security policy
+/// inputs and a compromised webview must not get to assert them.
+#[derive(Debug, Clone, Serialize)]
 pub struct UpdateInfo {
     /// Version we're running right now (`env!("CARGO_PKG_VERSION")`).
     pub current: String,
@@ -25,7 +31,10 @@ pub struct UpdateInfo {
     /// Markdown release notes from `release.body`. Empty string if the
     /// release omits a body.
     pub body: String,
-    /// `release.html_url` so the UI can deep-link to the release page.
+    /// Canonical upstream releases page. Deliberately NOT taken from the
+    /// release metadata: this URL is the "update manually instead" escape
+    /// hatch shown when signature verification refuses a mirror-tainted
+    /// download, so a mirror must not get to choose where it points.
     pub html_url: String,
     /// Filename of the matched asset for this platform.
     pub asset_name: String,
@@ -36,6 +45,14 @@ pub struct UpdateInfo {
     /// Hex-encoded SHA-256 from the asset's `digest` field, if present.
     /// `None` for old releases that pre-date the GitHub `digest` field.
     pub asset_digest_sha256: Option<String>,
+    /// `browser_download_url` of the `<asset_name>.minisig` companion
+    /// asset, when the release ships one. CI signs every release newer
+    /// than v3.5.0; `None` marks an older, unsigned release.
+    pub sig_url: Option<String>,
+    /// Where the release *metadata* came from. Mirror-sourced metadata
+    /// (including its digest field) is untrusted, so `apply_update`
+    /// insists on a valid signature in that case.
+    pub meta_source: Source,
 }
 
 /// Map `(env::consts::OS, env::consts::ARCH)` to the `<os>-<arch>` slug
@@ -100,18 +117,18 @@ pub fn parse_sha256_digest(raw: &str) -> Option<String> {
     Some(hex.to_ascii_lowercase())
 }
 
-/// Top-level orchestration: hit the latest-release endpoint, find an
-/// asset that matches our platform, and compare versions. Returns
-/// `Ok(None)` (not an error) for the common "we're already up to date"
-/// path and for unsupported platforms.
-pub async fn check_for_update(repo: &str) -> Result<Option<UpdateInfo>> {
+/// Top-level orchestration: hit the latest-release endpoint (direct or
+/// via mirrors per `net`), find an asset that matches our platform, and
+/// compare versions. Returns `Ok(None)` (not an error) for the common
+/// "we're already up to date" path and for unsupported platforms.
+pub async fn check_for_update(repo: &str, net: &NetworkConfig) -> Result<Option<UpdateInfo>> {
     let Some(triple) = triple_for_current_platform() else {
         return Ok(None);
     };
 
     let client = build_client()?;
-    let release = fetch_latest_release(&client, repo).await?;
-    build_update_info(env!("CARGO_PKG_VERSION"), triple, &release)
+    let (release, source) = fetch_latest_release_mirrored(&client, repo, net).await?;
+    build_update_info(env!("CARGO_PKG_VERSION"), triple, repo, &release, source)
 }
 
 /// Pure half of `check_for_update`. Split out so tests can drive it
@@ -119,7 +136,9 @@ pub async fn check_for_update(repo: &str) -> Result<Option<UpdateInfo>> {
 pub fn build_update_info(
     current: &str,
     triple: &str,
+    repo: &str,
     release: &ReleaseJson,
+    meta_source: Source,
 ) -> Result<Option<UpdateInfo>> {
     let tag = release
         .tag_name
@@ -134,17 +153,21 @@ pub fn build_update_info(
 
     let latest_version = tag.trim_start_matches('v').to_owned();
     let digest = asset.digest.as_deref().and_then(parse_sha256_digest);
+    let sig_url =
+        find_sig_asset(&release.assets, &asset.name).map(|s| s.browser_download_url.clone());
 
     Ok(Some(UpdateInfo {
         current: current.to_owned(),
         latest_tag: tag,
         latest_version,
         body: release.body.clone().unwrap_or_default(),
-        html_url: release.html_url.clone().unwrap_or_default(),
+        html_url: format!("https://github.com/{repo}/releases/latest"),
         asset_name: asset.name.clone(),
         asset_url: asset.browser_download_url.clone(),
         asset_size: asset.size.unwrap_or(0),
         asset_digest_sha256: digest,
+        sig_url,
+        meta_source,
     }))
 }
 
@@ -277,7 +300,6 @@ mod tests {
             tag_name: Some(tag.to_owned()),
             name: None,
             body: Some("notes".into()),
-            html_url: Some("https://example.com/release".into()),
             assets,
         }
     }
@@ -288,7 +310,14 @@ mod tests {
             "v3.0.11",
             vec![asset("akagi-3.0.11-linux-x64.zip", None, Some(1))],
         );
-        let info = build_update_info("3.0.11", "linux-x64", &release).unwrap();
+        let info = build_update_info(
+            "3.0.11",
+            "linux-x64",
+            "owner/repo",
+            &release,
+            Source::Direct,
+        )
+        .unwrap();
         assert!(info.is_none());
     }
 
@@ -305,15 +334,58 @@ mod tests {
                 asset("akagi-3.0.12-windows-x64.zip", None, None),
             ],
         );
-        let info = build_update_info("3.0.11", "linux-x64", &release)
-            .unwrap()
-            .expect("should detect newer version");
+        let info = build_update_info(
+            "3.0.11",
+            "linux-x64",
+            "owner/repo",
+            &release,
+            Source::Direct,
+        )
+        .unwrap()
+        .expect("should detect newer version");
         assert_eq!(info.current, "3.0.11");
         assert_eq!(info.latest_tag, "v3.0.12");
         assert_eq!(info.latest_version, "3.0.12");
         assert_eq!(info.asset_name, "akagi-3.0.12-linux-x64.zip");
         assert_eq!(info.asset_size, 12345);
         assert!(info.asset_digest_sha256.is_some());
+        assert_eq!(info.sig_url, None, "release ships no .minisig");
+        assert_eq!(info.meta_source, Source::Direct);
+        // Canonical, not release-supplied: this is the "update manually"
+        // escape hatch, and mirror-forged metadata must not choose it.
+        assert_eq!(
+            info.html_url,
+            "https://github.com/owner/repo/releases/latest"
+        );
+    }
+
+    /// A release that ships `<asset>.zip.minisig` companions surfaces the
+    /// matching signature URL for the picked platform asset.
+    #[test]
+    fn build_update_info_picks_up_sig_asset() {
+        let release = release_with(
+            "v3.0.12",
+            vec![
+                asset("akagi-3.0.12-linux-x64.zip", None, Some(1)),
+                asset("akagi-3.0.12-linux-x64.zip.minisig", None, None),
+                asset("akagi-3.0.12-windows-x64.zip", None, None),
+                asset("akagi-3.0.12-windows-x64.zip.minisig", None, None),
+            ],
+        );
+        let info = build_update_info(
+            "3.0.11",
+            "linux-x64",
+            "owner/repo",
+            &release,
+            Source::Mirror,
+        )
+        .unwrap()
+        .expect("should detect newer version");
+        assert_eq!(
+            info.sig_url.as_deref(),
+            Some("https://example.com/akagi-3.0.12-linux-x64.zip.minisig")
+        );
+        assert_eq!(info.meta_source, Source::Mirror);
     }
 
     #[test]
@@ -322,7 +394,14 @@ mod tests {
             "v3.0.12",
             vec![asset("akagi-3.0.12-windows-x64.zip", None, None)],
         );
-        let info = build_update_info("3.0.11", "linux-x64", &release).unwrap();
+        let info = build_update_info(
+            "3.0.11",
+            "linux-x64",
+            "owner/repo",
+            &release,
+            Source::Direct,
+        )
+        .unwrap();
         assert!(info.is_none());
     }
 
@@ -332,9 +411,15 @@ mod tests {
             tag_name: None,
             name: None,
             body: None,
-            html_url: None,
             assets: vec![],
         };
-        assert!(build_update_info("3.0.11", "linux-x64", &release).is_err());
+        assert!(build_update_info(
+            "3.0.11",
+            "linux-x64",
+            "owner/repo",
+            &release,
+            Source::Direct
+        )
+        .is_err());
     }
 }

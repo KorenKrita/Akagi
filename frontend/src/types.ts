@@ -172,6 +172,18 @@ export type OverlayConfig = {
   always_on_top: boolean
 }
 
+/** How GitHub-hosted downloads are routed. Mirrors
+ *  `crate::config::GithubMirrorMode` (serde snake_case). */
+export type GithubMirrorMode = 'auto' | 'direct' | 'mirror'
+
+/** `[network]` section. Mirrors `crate::config::NetworkConfig`. */
+export type NetworkConfig = {
+  github_mirror_mode: GithubMirrorMode
+  /** gh-proxy-style accelerator prefix (e.g. `https://gh-proxy.com`);
+   *  tried before the built-in mirror list. Empty = unset. */
+  github_custom_mirror: string
+}
+
 /** Bounds enforced by `crate::config::overlay` — mirrored so the UI can't
  *  offer a value the backend would silently clamp. */
 export const OVERLAY_TOP_N_MIN = 1
@@ -195,6 +207,7 @@ export type AppConfig = {
   capture: CaptureConfig
   autoplay: AutoplayConfig
   overlay: OverlayConfig
+  network: NetworkConfig
 }
 
 // ---------- Built-in bot cloud inference (native API) ----------

@@ -59,6 +59,16 @@ export function UpdateDialog() {
           action: { label: t('updates.dialog.open_release'), onClick: fallback },
         })
         break
+      case 'signature_missing':
+        toast.error(t('updates.dialog.error_signature_missing'), {
+          action: { label: t('updates.dialog.open_release'), onClick: fallback },
+        })
+        break
+      case 'signature_invalid':
+        toast.error(t('updates.dialog.error_signature_invalid'), {
+          action: { label: t('updates.dialog.open_release'), onClick: fallback },
+        })
+        break
       default:
         toast.error(t('updates.dialog.error_generic', { message: err.message }))
     }

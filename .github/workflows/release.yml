@@ -173,17 +173,89 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Sign every zip with the project minisign key. The in-app updater
+  # requires these signatures whenever the download went through an
+  # accelerator mirror (see src/github/signing.rs), and the trusted
+  # comment (= asset filename) stops a mirror from answering with a
+  # validly-signed *older* release. Missing secret is a warning, not a
+  # failure, so releases stay publishable during key setup — but they
+  # ship unsigned and mirror-based updates will refuse them.
+  #
+  # A separate job (not a step of `release`) so a plain
+  # workflow_dispatch — which skips `release` — still exercises the
+  # signing path end-to-end without publishing anything.
+  sign:
+    name: Sign artifacts
+    needs: build
+    # `always()` because the implicit success() condition requires every
+    # *transitive* ancestor to have succeeded — and on workflow_dispatch
+    # the guard job is skipped, which would silently skip this job too
+    # (same reason `build` carries it).
+    if: ${{ always() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      # Needed for minisign.pub, which the fresh signatures are verified
+      # against before anything ships.
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Sign and verify (minisign)
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MINISIGN_SECRET_KEY:-}" ]]; then
+            # A tagged release must never silently ship unsigned: the
+            # in-app updater refuses unsigned assets over mirrors, so the
+            # breakage would surface only for the users this feature
+            # exists for, one release too late. Manual dispatch keeps
+            # the soft path for pre-secret experimentation.
+            if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+              echo "::error::MINISIGN_SECRET_KEY secret is not set — refusing to publish an unsigned tagged release"
+              exit 1
+            fi
+            echo "::warning::MINISIGN_SECRET_KEY secret is not set — assets will be UNSIGNED"
+            exit 0
+          fi
+          cargo install rsign2 --locked
+          keyfile="$(mktemp)"
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$keyfile"
+          for f in artifacts/*.zip; do
+            name="$(basename "$f")"
+            rsign sign -W -s "$keyfile" -x "$f.minisig" -t "$name" "$f"
+          done
+          rm -f "$keyfile"
+          # Verify against the tracked public key — catches a mismatched
+          # or rotated secret before anything ships.
+          for f in artifacts/*.zip; do
+            rsign verify -p minisign.pub -x "$f.minisig" "$f"
+          done
+      - name: Upload signatures
+        uses: actions/upload-artifact@v4
+        with:
+          name: signatures
+          path: artifacts/*.minisig
+          # Empty when the secret is missing (unsigned publish is allowed).
+          if-no-files-found: warn
+          retention-days: 14
+
   release:
     name: Publish GitHub release
-    needs: build
+    needs: sign
     # Only publish on tag push, or when manually dispatched with the
     # publish_release input checked. Plain workflow_dispatch (no tag, no
-    # input) just leaves artifacts on the run page.
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release) }}
+    # input) just leaves artifacts + signatures on the run page.
+    # `always() && sign == success` for the same skipped-guard reason as
+    # `sign` — and a failed sign job must block publishing.
+    if: ${{ always() && needs.sign.result == 'success' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      # Pulls the platform zips and the `signatures` artifact into one
+      # flat directory.
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
