@@ -222,11 +222,16 @@ export type RedeemResponse = {
   extended: boolean
 }
 
-/** `GET /healthz` — liveness + per-model queue depth. */
+/**
+ * `GET /healthz` — liveness + aggregate load. Nothing about the model
+ * registry is exposed here (models come from the authenticated `/v3/models`);
+ * `status` is `"degraded"` when any model worker is down.
+ */
 export type ApiHealth = {
   status: string
-  models: string[]
-  queue_depth: Record<string, number>
+  /** Total pending + in-flight inference rows. */
+  queue_depth: number
+  workers_alive: boolean
 }
 
 // ---------- Self-serve key purchase (PayPal) ----------
@@ -243,6 +248,18 @@ export type CreatedOrder = {
 export type CreatedSubscription = {
   subscription_id: string
   approve_url: string
+  claim_secret: string
+}
+
+/**
+ * `POST /creem/create-checkout` — a pending Creem checkout. One create
+ * endpoint serves both one-time and subscription products; the poll
+ * (`POST /creem/result`) reuses the `OrderResult` shape for both kinds
+ * (a subscription resolves to `key` with `days: 0`).
+ */
+export type CreatedCheckout = {
+  checkout_id: string
+  checkout_url: string
   claim_secret: string
 }
 
