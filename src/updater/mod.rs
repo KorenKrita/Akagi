@@ -5,9 +5,12 @@
 //! - [`check`] holds pure version-comparison helpers (`is_newer`,
 //!   `pick_release_asset`, `triple_for_current_platform`,
 //!   `build_update_info`) plus the single async entry point
-//!   `check_for_update` that calls into the GitHub API.
-//! - [`apply`] streams the matching release zip, verifies SHA-256
-//!   against `asset_digest_sha256` (when GitHub provides it), extracts
+//!   `check_for_update` that calls into the GitHub API (directly or via
+//!   accelerator mirrors, per the `[network]` config).
+//! - [`apply`] streams the matching release zip (with mirror fallback),
+//!   verifies SHA-256 against `asset_digest_sha256` (when GitHub
+//!   provides it) plus the release's minisign signature (mandatory
+//!   whenever a mirror was involved — see `github::signing`), extracts
 //!   the platform binary, and swaps it via `self_replace::self_replace`
 //!   before triggering `AppHandle::restart`.
 //! - [`error`] surfaces typed errors so the frontend can fall back to

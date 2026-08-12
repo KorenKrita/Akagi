@@ -62,6 +62,8 @@ import type {
   DelayMode,
   DelayModelConfig,
   DetectedBrowser,
+  GithubMirrorMode,
+  NetworkConfig,
   OverlayConfig,
   PlatformKind,
 } from '@/types'
@@ -279,6 +281,8 @@ export function Settings() {
 
       <AutoplayCard draft={draft} setDraft={setDraft} />
 
+      <NetworkCard draft={draft} setDraft={setDraft} />
+
       <UpdatesCard />
 
       <Dialog
@@ -308,6 +312,70 @@ export function Settings() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+/** GitHub download routing — accelerator-mirror fallback for regions where
+ *  GitHub is blocked. Used by the in-app updater and the bot installer;
+ *  Chrome-for-Testing downloads fall back to a mirror automatically and
+ *  need no setting here. */
+function NetworkCard({
+  draft,
+  setDraft,
+}: {
+  draft: AppConfig
+  setDraft: (c: AppConfig) => void
+}) {
+  const { t } = useTranslation()
+  const n = draft.network
+  const patch = (p: Partial<NetworkConfig>) =>
+    setDraft({ ...draft, network: { ...n, ...p } })
+  const custom = n.github_custom_mirror.trim()
+  const customInvalid = custom !== '' && !/^https?:\/\/\S+$/.test(custom)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('settings.network_title')}</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <Field
+          label={t('settings.github_mirror_label')}
+          hint={t('settings.github_mirror_hint')}
+        >
+          <Select
+            value={n.github_mirror_mode}
+            onValueChange={(v) => patch({ github_mirror_mode: v as GithubMirrorMode })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">{t('settings.github_mirror_auto')}</SelectItem>
+              <SelectItem value="direct">{t('settings.github_mirror_direct')}</SelectItem>
+              <SelectItem value="mirror">{t('settings.github_mirror_mirror')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field
+          label={t('settings.custom_mirror_label')}
+          hint={t('settings.custom_mirror_hint')}
+        >
+          <Input
+            value={n.github_custom_mirror}
+            onChange={(e) => patch({ github_custom_mirror: e.target.value })}
+            placeholder="https://gh-proxy.com"
+            className="font-mono"
+            disabled={n.github_mirror_mode === 'direct'}
+          />
+          {customInvalid && (
+            <span className="text-xs text-red-400">
+              {t('settings.custom_mirror_invalid')}
+            </span>
+          )}
+        </Field>
+      </CardContent>
+    </Card>
   )
 }
 

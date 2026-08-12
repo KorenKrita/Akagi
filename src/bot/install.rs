@@ -29,13 +29,17 @@
 use crate::bot::manifest::Manifest;
 use crate::bot::registry::BotEntry;
 use crate::bot::runtime::PythonRuntime;
+use crate::config::NetworkConfig;
 use crate::event_bus::NotifyBus;
-use crate::github::{build_client, extract_zip_safe, fetch_latest_release, Asset};
+use crate::github::mirror::{self, Source};
+use crate::github::{
+    build_client, download_with_fallback, extract_zip_safe, fetch_latest_release_mirrored,
+    fetch_text_with_fallback, find_sig_asset, signing, Asset,
+};
 use crate::schema::Notification;
 use anyhow::{bail, Context, Result};
 use globset::Glob;
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
 
 const DOWNLOADS_DIR: &str = ".downloads";
 
@@ -76,6 +80,7 @@ pub async fn install_from_github_release(
     dest_root: &Path,
     notify: &NotifyBus,
     runtime: Option<&PythonRuntime>,
+    net: &NetworkConfig,
 ) -> Result<BotEntry> {
     let mut spec = spec;
     spec.repo = normalize_repo(&spec.repo);
@@ -99,7 +104,7 @@ pub async fn install_from_github_release(
     );
 
     let client = build_client()?;
-    let release = fetch_latest_release(&client, &spec.repo).await?;
+    let (release, meta_source) = fetch_latest_release_mirrored(&client, &spec.repo, net).await?;
 
     let asset = pick_asset(&release.assets, spec.asset_glob.as_deref())?;
 
@@ -119,9 +124,74 @@ pub async fn install_from_github_release(
         .await
         .with_context(|| format!("mkdir {}", downloads_dir.display()))?;
 
-    let tempfile_path = download_asset(&client, &asset.browser_download_url, &downloads_dir)
+    let tempfile_path = downloads_dir.join(format!(
+        "akagi-bot-{}.zip",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let zip_candidates = mirror::candidates(net, &asset.browser_download_url);
+    let (zip_source, zip_digest) = download_with_fallback(&client, &zip_candidates, &tempfile_path)
         .await
         .with_context(|| format!("download {}", asset.browser_download_url))?;
+
+    // When the metadata came straight from GitHub its digest field is
+    // trustworthy — check the downloaded bytes against it regardless of
+    // which route they took.
+    if meta_source == Source::Direct {
+        if let Some(expected) = asset
+            .digest
+            .as_deref()
+            .and_then(crate::updater::check::parse_sha256_digest)
+        {
+            if !zip_digest.eq_ignore_ascii_case(&expected) {
+                let _ = tokio::fs::remove_file(&tempfile_path).await;
+                bail!(
+                    "downloaded {} does not match the release's SHA-256 digest",
+                    asset.name
+                );
+            }
+        }
+    }
+
+    // Integrity: bot releases signed with the Akagi release key carry a
+    // `<asset>.minisig` companion — verify it whenever present (a failed
+    // verification aborts, wherever the bytes came from). Unsigned
+    // releases stay installable — bots are third-party by design and the
+    // user explicitly picked the repo — but when the bytes travelled
+    // through an accelerator mirror the user gets a warning that nothing
+    // could be verified. Note the limit of this design: a mirror that
+    // forges the *metadata* can simply omit the signature asset, so for
+    // third-party bots the signature only hardens the direct-metadata +
+    // mirrored-download case.
+    match find_sig_asset(&release.assets, &asset.name) {
+        Some(sig_asset) => {
+            let sig_candidates = mirror::candidates(net, &sig_asset.browser_download_url);
+            let (sig_text, _) = fetch_text_with_fallback(&client, &sig_candidates)
+                .await
+                .with_context(|| format!("download signature {}", sig_asset.name))?;
+            if let Err(e) = signing::verify_release_asset(&tempfile_path, &sig_text, &asset.name) {
+                let _ = tokio::fs::remove_file(&tempfile_path).await;
+                return Err(e)
+                    .with_context(|| format!("signature verification failed for {}", asset.name));
+            }
+        }
+        None if meta_source == Source::Mirror || zip_source == Source::Mirror => {
+            let _ = notify.send(
+                Notification::warn(format!("{target_name} could not be verified"))
+                    .body(format!(
+                        "{} was fetched through a third-party mirror and the release \
+                         has no signature, so the download was installed without \
+                         verification. Remove the bot if you don't trust the mirror \
+                         and the repository ({}).",
+                        asset.name, spec.repo,
+                    ))
+                    .id(format!("{notify_id}-mirror")),
+            );
+        }
+        None => {}
+    }
 
     let tag = release.tag_name.as_deref().unwrap_or("latest").to_owned();
     // Hand off to the shared tail. The download tempfile is deleted after
@@ -451,39 +521,6 @@ pub fn pick_asset<'a>(assets: &'a [Asset], glob: Option<&str>) -> Result<&'a Ass
                 )
             })
     }
-}
-
-async fn download_asset(
-    client: &reqwest::Client,
-    url: &str,
-    downloads_dir: &Path,
-) -> Result<PathBuf> {
-    let path = downloads_dir.join(format!(
-        "akagi-bot-{}.zip",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .context("send download request")?
-        .error_for_status()
-        .context("download endpoint returned error")?;
-
-    let mut file = tokio::fs::File::create(&path)
-        .await
-        .with_context(|| format!("create {}", path.display()))?;
-    while let Some(chunk) = response.chunk().await.context("read body chunk")? {
-        file.write_all(&chunk)
-            .await
-            .with_context(|| format!("write {}", path.display()))?;
-    }
-    file.flush().await.ok();
-    Ok(path)
 }
 
 /// If `dir` contains exactly one entry and that entry is a directory,

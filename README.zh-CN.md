@@ -88,6 +88,7 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 - [Bots](#bots)
 - [对局历史](#对局历史)
 - [日志与诊断](#日志与诊断)
+- [下载镜像](#下载镜像)
 - [疑难排查](#疑难排查)
 - [Roadmap](#roadmap)
 
@@ -319,6 +320,36 @@ session；点击行可看到原始结构化字段与源位置。
 
 ---
 
+## 下载镜像
+
+Akagi 运行期间会下载三类内容：应用更新与 bot 安装来自
+**GitHub Releases**，Chrome for Testing 来自 **Google CDN**。
+在这些站点被屏蔽或不稳定的地区（如中国大陆），可以在
+设置 → **下载** 中控制 GitHub 下载的线路：
+
+- **自动**（默认）— 先短超时直连 GitHub，失败后依次尝试公共
+  gh-proxy 式加速镜像。
+- **仅直连** — 从不使用镜像。
+- **镜像优先** — 已知 GitHub 不可达时跳过直连等待。
+- **自定义镜像前缀** — 公共加速站时常失效；填一个你所在地区
+  可用的（如 `https://gh-proxy.com`），它会优先于内置列表使用。
+
+Chrome for Testing 无需设置：Google 端点不可达时会自动改用
+[npmmirror](https://registry.npmmirror.com) 镜像下载。
+
+镜像属于第三方，因此完整性靠签名而不是传输渠道保证：每个
+release zip 都用 [minisign](https://jedisct1.github.io/minisign/)
+签名，经镜像下载后应用会校验签名，校验失败（或旧的未签名版本
+需要经过镜像）时会拒绝安装。手动校验方式：
+
+```sh
+minisign -Vm akagi-<version>-<platform>.zip -p minisign.pub
+```
+
+其中 [`minisign.pub`](./minisign.pub) 位于仓库根目录。
+
+---
+
 ## 疑难排查
 
 > [!TIP]
@@ -343,6 +374,9 @@ session；点击行可看到原始结构化字段与源位置。
   看到的最后一帧；附在 bug 报告里。
 - **三麻挑了错的 bot。** 检查设置 → Bot 中的
   `bot.active_3p` — 它与 `bot.active_4p` 互相独立。
+- **更新 / bot 安装 / Chrome 下载超时（中国大陆等）。**
+  参见[下载镜像](#下载镜像) — 把设置 → 下载调成「镜像优先」，
+  或在「自定义镜像前缀」里填一个你确认可用的加速站。
 - **去哪求助？** 聊天请到
   [Discord](https://discord.gg/Z2wjXUK8bN)，
   追踪型的 bug 与功能建议请到
@@ -600,6 +634,15 @@ portable zip:
 
 每个 zip 都将 `python-build-standalone` 3.12 + `uv` 一并放在
 binary 旁边,bot 不需要额外安装系统 Python 即可运行。
+
+发布 job 会用 [minisign](https://jedisct1.github.io/minisign/) 给
+release zip 签名（生成 `<asset>.zip.minisig`，trusted comment 为
+文件名）。公钥保存在仓库根目录的
+[`minisign.pub`](./minisign.pub) 并内嵌于应用；凡是经过下载镜像的
+更新都必须通过签名校验。签名需要仓库 secret
+`MINISIGN_SECRET_KEY`（两行的 minisign 私钥文件，需以免密码方式
+生成，如 `rsign generate -W`）；secret 缺失时 workflow 会告警并
+发布未签名产物。
 
 Tag 必须位于 `v3` 分支。
 
