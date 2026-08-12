@@ -2048,6 +2048,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 3,
+                majsoul_meta: None,
             },
             MjaiEvent::StartKyoku {
                 bakaze: "E".into(),
@@ -2092,6 +2093,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 3,
+                majsoul_meta: None,
             },
             MjaiEvent::StartKyoku {
                 bakaze: "E".into(),
