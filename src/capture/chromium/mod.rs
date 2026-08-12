@@ -120,6 +120,7 @@ impl CaptureBackend for ChromiumBackend {
             ctx.session.clone(),
             ctx.platform,
             ctx.autoplay.as_ref().map(|a| a.time_budget.clone()),
+            ctx.autoplay.as_ref().map(|a| a.input_watch.clone()),
         ));
 
         let cdp_run = cdp::run(

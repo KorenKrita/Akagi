@@ -21,4 +21,4 @@ pub use ipc::{
     LogEntry, LogSessionInfo, Notification, NotifyLevel, ReadInspectorRequest,
     ReadInspectorResponse, ReadLogRequest, ReadLogResponse, Snapshot,
 };
-pub use mjai::MjaiEvent;
+pub use mjai::{GameEndReason, MajsoulGameMeta, MjaiEvent};

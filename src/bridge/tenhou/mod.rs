@@ -228,6 +228,7 @@ impl TenhouBridge {
                 aka_flag: None,
                 id: Some(self.state.seat as Actor),
                 num_players: self.state.num_players,
+                majsoul_meta: None,
             });
         }
         events.push(MjaiEvent::StartKyoku {
@@ -510,7 +511,7 @@ impl TenhouBridge {
         }];
         events.push(MjaiEvent::EndKyoku);
         if msg.get("owari").is_some() {
-            events.push(MjaiEvent::EndGame);
+            events.push(MjaiEvent::end_game());
         }
         self.write_mjai(&events);
         events
@@ -536,7 +537,7 @@ impl TenhouBridge {
             MjaiEvent::EndKyoku,
         ];
         if msg.get("owari").is_some() {
-            events.push(MjaiEvent::EndGame);
+            events.push(MjaiEvent::end_game());
         }
         self.write_mjai(&events);
         events
@@ -1059,7 +1060,7 @@ mod tests {
             r#"{"tag":"AGARI","who":"0","fromWho":"0","sc":"250,40,250,-10,250,-10,250,-20","owari":"290,30,240,-10,240,-10,230,-20"}"#,
         );
         assert_eq!(events.len(), 3);
-        assert!(matches!(events[2], MjaiEvent::EndGame));
+        assert!(matches!(events[2], MjaiEvent::EndGame { .. }));
     }
 
     /// Regression: Tenhou's WebSocket JSON spells the discarder seat `fromWho`

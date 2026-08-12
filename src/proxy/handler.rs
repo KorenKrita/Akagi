@@ -324,6 +324,7 @@ impl ProxyHandler {
                     flow_log,
                     Some(self.session.clone()),
                     self.autoplay.as_ref().map(|ctx| ctx.time_budget.clone()),
+                    self.autoplay.as_ref().map(|ctx| ctx.input_watch.clone()),
                 )))
             })
             .clone()

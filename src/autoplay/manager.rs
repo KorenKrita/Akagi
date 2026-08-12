@@ -23,7 +23,7 @@ use crate::bot::BotResponse;
 use crate::bridge::majsoul::tile::mjai_to_ms;
 use crate::bridge::BuildHints;
 use crate::config::{AppConfig, MajsoulAutoplayMode};
-use crate::event_bus::{BotResponseBus, MjaiBus};
+use crate::event_bus::{BotResponseBus, MjaiBus, NotifyBus};
 use crate::game_state::snapshot::Phase;
 use crate::game_state::tracker::GameTracker;
 use crate::schema::MjaiEvent;
@@ -594,7 +594,7 @@ impl AutoplayManager {
                 self.ctx
                     .auto_join_set_phase(crate::autoplay::context::AutoJoinPhase::InGame);
             }
-            MjaiEvent::EndGame => {
+            MjaiEvent::EndGame { .. } => {
                 self.state = ManagerState::default();
                 if let Some(task) = self.rematch_task.take() {
                     task.abort();
@@ -978,6 +978,7 @@ pub async fn run_autoplay_manager(
     tracker: Arc<Mutex<GameTracker>>,
     mjai_bus: MjaiBus,
     response_bus: BotResponseBus,
+    _notify: NotifyBus,
     config_dir: std::path::PathBuf,
 ) -> anyhow::Result<()> {
     AutoplayManager::new(cfg, ctx, tracker, mjai_bus, config_dir)
@@ -1038,6 +1039,7 @@ mod tests {
             aka_flag: None,
             id: Some(1),
             num_players: 4,
+            majsoul_meta: None,
         });
         assert_eq!(
             m.state.cached_our_seat,
@@ -1069,6 +1071,7 @@ mod tests {
             aka_flag: None,
             id: Some(2),
             num_players: 4,
+            majsoul_meta: None,
         });
         assert_eq!(m.state.cached_our_seat, Some(2));
 
@@ -1109,6 +1112,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
+            majsoul_meta: None,
         });
         assert_eq!(m.state.cached_our_seat, Some(0));
 
@@ -1119,6 +1123,7 @@ mod tests {
             aka_flag: None,
             id: None,
             num_players: 4,
+            majsoul_meta: None,
         });
         assert!(
             m.state.cached_our_seat.is_none(),

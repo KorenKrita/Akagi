@@ -447,6 +447,21 @@ impl NativeBot {
                         Some(pair) => pair,
                         None => local_reply(local, self.seat),
                     },
+                    None if null_is_ranked_pass(
+                        local,
+                        self.seat,
+                        &self.stream,
+                        &resp.candidates,
+                    ) =>
+                    {
+                        // A pass needs no tile payload. Some compatible servers
+                        // rank `none` but omit the redundant exact reaction;
+                        // retain their probabilities instead of replacing the
+                        // result with the local model's card.
+                        let pass = MjaiEvent::None;
+                        let meta = build_show_meta_mjai(&pass, &resp.candidates, &title);
+                        (pass, meta)
+                    }
                     None => {
                         // Server sees no legal action though the local gate found
                         // one — a stream mismatch. Play the local move rather than
@@ -604,6 +619,24 @@ impl BotRunner for NativeBot {
             }
         }
 
+        // These events close or postpone a decision; they do not open one.
+        // BotManager normally buffers them, but guard direct BotRunner users as
+        // well because riichienv may retain the preceding legal-action set.
+        let waits_for_rinshan = matches!(
+            events.last(),
+            Some(
+                MjaiEvent::Daiminkan { actor, .. }
+                    | MjaiEvent::Ankan { actor, .. }
+                    | MjaiEvent::Kakan { actor, .. }
+            ) if *actor == self.seat
+        );
+        if matches!(events.last(), Some(MjaiEvent::ReachAccepted { .. })) || waits_for_rinshan {
+            return Ok(BotResponse {
+                action: MjaiEvent::None,
+                meta: None,
+            });
+        }
+
         // Local gate: nothing to decide ⇒ reply `none`, spend no API call, and
         // leave whatever card is on screen alone.
         let local = match self.engine.decide()? {
@@ -669,6 +702,30 @@ impl BotRunner for NativeBot {
 /// promise.
 fn is_decision_point(candidates: &[(BotAction, f32)]) -> bool {
     !matches!(candidates, [] | [(BotAction::Pass, _)])
+}
+
+/// Whether a null reaction still identifies an unambiguous cloud pass.
+/// Restrict recovery to response windows so an own-turn null can never suppress
+/// a required discard.
+fn null_is_ranked_pass(
+    local: &Decision,
+    seat: u8,
+    stream: &[MjaiEvent],
+    candidates: &[Candidate],
+) -> bool {
+    let response_event = matches!(
+        stream.last(),
+        Some(MjaiEvent::Dahai { actor, .. } | MjaiEvent::Kakan { actor, .. })
+            if *actor != seat
+    );
+    response_event
+        && local
+            .candidates
+            .iter()
+            .any(|(action, _)| matches!(action, BotAction::Pass))
+        && candidates
+            .first()
+            .is_some_and(|candidate| candidate.action == "none")
 }
 
 /// Build the reply pair (mjai action + HUD card) from the local model's
@@ -1202,6 +1259,7 @@ mod tests {
             aka_flag: None,
             id: Some(seat),
             num_players: 4,
+            majsoul_meta: None,
         }
     }
 
@@ -1428,6 +1486,126 @@ mod tests {
         );
         assert_eq!(served.join().unwrap().len(), 1, "the API was consulted");
         // A reachable server, even with a null reaction, is healthy.
+        assert!(bot.breaker.allows());
+    }
+
+    /// A pass needs no exact tile payload. Compatible servers may rank
+    /// `none` normally while omitting only the redundant reaction object.
+    #[tokio::test]
+    async fn null_reaction_with_ranked_none_recovers_the_cloud_pass() {
+        let (base, served) = mock_http(vec![(
+            "200 OK",
+            r#"{
+                "reaction":null,
+                "candidates":[
+                    {"action":"none","prob":0.73},
+                    {"action":"pon","prob":0.27}
+                ],
+                "model":"4p-cloud"
+            }"#
+            .into(),
+        )]);
+        let mut bot = bot_with(cfg_api(&base), crate::event_bus::notify_bus()).await;
+        let mut events = vec![
+            start_game_4p(0),
+            start_kyoku_4p_hidden([
+                "9s", "9s", "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p",
+            ]),
+        ];
+        events.extend(seat1_discards("9s"));
+
+        let resp = bot.react(&events).await.unwrap();
+        assert_eq!(resp.action, MjaiEvent::None);
+        let show = &resp.meta.as_ref().expect("cloud pass card")["show"];
+        assert_eq!(show["title"], "Akagi · 4p-cloud");
+        assert_eq!(show["items"][0]["label"], "Pass");
+        assert_eq!(show["items"][0]["value"], "73%");
+        assert_eq!(show["items"][1]["label"], "Pon");
+        assert_eq!(served.join().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reach_accepted_does_not_repeat_the_previous_call_window() {
+        let (base, served) = mock_http(vec![(
+            "200 OK",
+            r#"{
+                "reaction":{"type":"none"},
+                "candidates":[
+                    {"action":"none","prob":0.72},
+                    {"action":"pon","prob":0.28}
+                ],
+                "model":"4p-cloud"
+            }"#
+            .into(),
+        )]);
+        let mut bot = bot_with(cfg_api(&base), crate::event_bus::notify_bus()).await;
+        let first = bot
+            .react(&[
+                start_game_4p(0),
+                start_kyoku_4p_hidden([
+                    "9s", "9s", "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p",
+                ]),
+                MjaiEvent::Tsumo {
+                    actor: 1,
+                    pai: "9s".into(),
+                },
+                MjaiEvent::Reach {
+                    actor: 1,
+                    pai: None,
+                },
+                MjaiEvent::Dahai {
+                    actor: 1,
+                    pai: "9s".into(),
+                    tsumogiri: true,
+                },
+            ])
+            .await
+            .unwrap();
+        assert_eq!(first.action, MjaiEvent::None);
+        assert!(first.meta.is_some());
+
+        let duplicate = bot
+            .react(&[MjaiEvent::ReachAccepted { actor: 1 }])
+            .await
+            .unwrap();
+        assert_eq!(duplicate.action, MjaiEvent::None);
+        assert!(duplicate.meta.is_none());
+        assert!(bot.breaker.allows());
+        assert_eq!(served.join().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn own_daiminkan_waits_for_rinshan_before_cloud_inference() {
+        let mut bot = bot_with(
+            cfg_api(UNREACHABLE_BASE_URL),
+            crate::event_bus::notify_bus(),
+        )
+        .await;
+        let events = [
+            start_game_4p(0),
+            start_kyoku_4p_hidden([
+                "5m", "5m", "5m", "1m", "2m", "3m", "4p", "5p", "6p", "7s", "8s", "9s", "E",
+            ]),
+            MjaiEvent::Tsumo {
+                actor: 1,
+                pai: "5m".into(),
+            },
+            MjaiEvent::Dahai {
+                actor: 1,
+                pai: "5m".into(),
+                tsumogiri: true,
+            },
+            MjaiEvent::Daiminkan {
+                actor: 0,
+                target: 1,
+                pai: "5m".into(),
+                consumed: ["5m".into(), "5m".into(), "5m".into()],
+            },
+        ];
+
+        let resp = bot.react(&events).await.unwrap();
+        assert_eq!(resp.action, MjaiEvent::None);
+        assert!(resp.meta.is_none());
         assert!(bot.breaker.allows());
     }
 
@@ -1830,6 +2008,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 3,
+            majsoul_meta: None,
         };
         let v = to_api_event(&sg, 0, 3);
         assert_eq!(v["names"].as_array().unwrap().len(), 4);
@@ -1869,6 +2048,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 3,
+                majsoul_meta: None,
             },
             MjaiEvent::StartKyoku {
                 bakaze: "E".into(),
@@ -1913,6 +2093,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 3,
+                majsoul_meta: None,
             },
             MjaiEvent::StartKyoku {
                 bakaze: "E".into(),

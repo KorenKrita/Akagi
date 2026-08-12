@@ -194,6 +194,32 @@ pub struct MajsoulAutoplayConfig {
     /// mouseReleased. Non-zero so the engine doesn't collapse the pair
     /// into a single frame.
     pub click_hold_ms: u32,
+    /// How long to wait for the client's own uplink command
+    /// (`inputOperation` / `inputChiPengGang`) after a click sequence
+    /// before treating the click as swallowed and pressing again, ms.
+    /// `0` disables verification entirely.
+    ///
+    /// Checked by polling, so a click that worked costs nothing — only a
+    /// genuinely lost one waits this out. Raising it is safer than
+    /// lowering it: a retry that fires while the first press was merely
+    /// slow presses a second time.
+    pub verify_input_ms: u32,
+    /// How many times a click sequence may be repeated when no input
+    /// command follows it. `0` disables retrying (verification then only
+    /// logs). Each retry re-checks that the decision window is still the
+    /// one the plan was made for.
+    pub click_retries: u32,
+    /// Reload the game page after this many decisions in a row where the
+    /// client accepted no input at all. `0` disables it.
+    ///
+    /// The client can end up in a state where presses on the action
+    /// buttons stop registering and stay that way for the rest of the
+    /// game — once it starts it does not recover on its own, and every
+    /// remaining decision runs to timeout. A reload reconnects into the
+    /// hand through the bridge's `GameRestore` path, so the cost is a
+    /// reconnect rather than the game. Deliberately not 1: a single lost
+    /// press is common enough and costs only that decision.
+    pub reload_after_failures: u32,
     /// Extra delay tacked onto the dealer's first discard. Mahjong Soul
     /// plays a hand-sort animation when the dealer receives all 14 tiles
     /// at once; clicks issued during the animation are dropped. ~2s
@@ -226,6 +252,9 @@ impl Default for MajsoulAutoplayConfig {
             inter_click_delay_ms: 300,
             hover_delay_ms: 200,
             click_hold_ms: 100,
+            verify_input_ms: 300,
+            click_retries: 2,
+            reload_after_failures: 3,
             dealer_first_discard_extra_delay_ms: 2000,
             packet_dealer_first_discard_extra_delay_ms: 2000,
             auto_join_game: false,

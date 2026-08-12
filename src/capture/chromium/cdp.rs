@@ -372,7 +372,7 @@ async fn attach_page(
                                 crate::schema::MjaiEvent::Hora { .. }
                                     | crate::schema::MjaiEvent::Ryukyoku { .. }
                                     | crate::schema::MjaiEvent::EndKyoku
-                                    | crate::schema::MjaiEvent::EndGame
+                                    | crate::schema::MjaiEvent::EndGame { .. }
                             )
                         })
                     {

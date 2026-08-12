@@ -780,6 +780,9 @@ export function AutoplayCard({
       inter_click_delay_ms: 300,
       hover_delay_ms: 150,
       click_hold_ms: 50,
+      verify_input_ms: 300,
+      click_retries: 2,
+      reload_after_failures: 3,
       dealer_first_discard_extra_delay_ms: 2000,
       packet_dealer_first_discard_extra_delay_ms: 2000,
       auto_join_game: false,
@@ -925,6 +928,9 @@ export function AutoplayCard({
             <TimeSlider label={t('settings.autoplay.inter_click_delay')} value={ap.majsoul.inter_click_delay_ms} max={2_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ inter_click_delay_ms: value })} />
             <TimeSlider label={t('settings.autoplay.hover_delay')} hint={t('settings.autoplay.hover_delay_hint')} value={ap.majsoul.hover_delay_ms} max={1_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ hover_delay_ms: value })} />
             <TimeSlider label={t('settings.autoplay.click_hold')} value={ap.majsoul.click_hold_ms} max={1_000} step={10} unit="ms" onChange={(value) => setMajsoulField({ click_hold_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.verify_input')} hint={t('settings.autoplay.verify_input_hint')} value={ap.majsoul.verify_input_ms} max={2_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ verify_input_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.click_retries')} hint={t('settings.autoplay.click_retries_hint')} value={ap.majsoul.click_retries} max={10} step={1} unit="" onChange={(value) => setMajsoulField({ click_retries: value })} />
+            <TimeSlider label={t('settings.autoplay.reload_after_failures')} hint={t('settings.autoplay.reload_after_failures_hint')} value={ap.majsoul.reload_after_failures} max={10} step={1} unit="" onChange={(value) => setMajsoulField({ reload_after_failures: value })} />
             <TimeSlider label={t('settings.autoplay.dealer_first_discard_extra_delay')} hint={t('settings.autoplay.dealer_first_discard_extra_delay_hint')} value={ap.majsoul.dealer_first_discard_extra_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setMajsoulField({ dealer_first_discard_extra_delay_ms: value })} />
           </>
         )}

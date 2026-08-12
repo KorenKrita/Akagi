@@ -24,6 +24,7 @@ fn start_game(seat: u8) -> MjaiEvent {
         aka_flag: None,
         id: Some(seat),
         num_players: 4,
+        majsoul_meta: None,
     }
 }
 

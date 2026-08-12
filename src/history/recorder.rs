@@ -19,7 +19,7 @@ use ulid::Ulid;
 use crate::event_bus::HistoryBus;
 use crate::history::aggregator::{aggregate, AggregateInput};
 use crate::history::store::HistoryStore;
-use crate::schema::{HistoryEvent, MjaiEvent, Platform};
+use crate::schema::{GameEndReason, HistoryEvent, MjaiEvent, Platform};
 
 /// Shared cell holding the platform tag every newly-finalised `GameRecord`
 /// is stamped with. `update_config` writes here when the user switches
@@ -82,6 +82,12 @@ struct RecorderState {
     /// True once the buffer has overflown; subsequent events are
     /// ignored until the next `start_game`.
     overflown: bool,
+    /// Stable Mahjong Soul table identity. `None` for other platforms and old
+    /// payloads, which retain the existing reset-on-StartGame behavior.
+    game_id: Option<u64>,
+    /// A duplicate StartGame from reconnect was consumed; the next restored
+    /// StartKyoku replaces the previous copy of that round.
+    awaiting_restore_start: bool,
 }
 
 impl RecorderState {
@@ -92,6 +98,8 @@ impl RecorderState {
             started_at: None,
             has_start: false,
             overflown: false,
+            game_id: None,
+            awaiting_restore_start: false,
         }
     }
 
@@ -100,24 +108,67 @@ impl RecorderState {
         self.started_at = None;
         self.has_start = false;
         self.overflown = false;
+        self.game_id = None;
+        self.awaiting_restore_start = false;
     }
 
     fn handle(&mut self, ev: MjaiEvent, store: &HistoryStore, bus: &HistoryBus) {
         match &ev {
-            MjaiEvent::StartGame { .. } => {
+            MjaiEvent::StartGame { majsoul_meta, .. } => {
+                let incoming_game_id = majsoul_meta.and_then(|meta| meta.game_id);
+                let reconnecting_same_game = incoming_game_id.is_some()
+                    && incoming_game_id == self.game_id
+                    && self.buf.is_some()
+                    && !self.overflown;
+                if reconnecting_same_game {
+                    self.awaiting_restore_start = true;
+                    info!(
+                        target: "akagi::history",
+                        "same Mahjong Soul table reconnected; retaining completed rounds"
+                    );
+                    return;
+                }
                 self.buf = Some(Vec::with_capacity(1024));
                 self.started_at = Some(Utc::now());
                 self.has_start = true;
                 self.overflown = false;
+                self.game_id = incoming_game_id;
+                self.awaiting_restore_start = false;
                 self.push(ev);
             }
-            MjaiEvent::EndGame => {
+            MjaiEvent::EndGame { reason, .. } => match reason {
+                GameEndReason::Confirmed => {
+                    self.push(ev);
+                    self.finalise(store, bus);
+                    self.reset();
+                }
+                GameEndReason::Terminated => self.reset(),
+            },
+            MjaiEvent::StartKyoku { .. } if self.awaiting_restore_start => {
+                self.reconcile_restored_round(&ev);
+                self.awaiting_restore_start = false;
                 self.push(ev);
-                self.finalise(store, bus);
-                self.reset();
             }
             _ => self.push(ev),
         }
+    }
+
+    fn reconcile_restored_round(&mut self, incoming: &MjaiEvent) {
+        let Some(buf) = &mut self.buf else { return };
+        let incoming_key = round_key(incoming);
+        let last_start = buf
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, event)| round_key(event).map(|key| (index, key)));
+        let truncate_at = match (last_start, incoming_key) {
+            (Some((index, old_key)), Some(new_key)) if old_key == new_key => index,
+            _ => buf
+                .iter()
+                .rposition(|event| matches!(event, MjaiEvent::EndKyoku))
+                .map_or(1, |index| index + 1),
+        };
+        buf.truncate(truncate_at.min(buf.len()));
     }
 
     fn push(&mut self, ev: MjaiEvent) {
@@ -189,6 +240,19 @@ impl RecorderState {
     }
 }
 
+fn round_key(event: &MjaiEvent) -> Option<(&str, u8, u8, u8)> {
+    match event {
+        MjaiEvent::StartKyoku {
+            bakaze,
+            kyoku,
+            honba,
+            oya,
+            ..
+        } => Some((bakaze.as_str(), *kyoku, *honba, *oya)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,7 +268,19 @@ mod tests {
             aka_flag: Some(true),
             id: Some(0),
             num_players: 4,
+            majsoul_meta: None,
         }
+    }
+
+    fn start_game_with_id(game_id: u64) -> MjaiEvent {
+        let mut event = start_game();
+        if let MjaiEvent::StartGame { majsoul_meta, .. } = &mut event {
+            *majsoul_meta = Some(crate::schema::MajsoulGameMeta {
+                game_id: Some(game_id),
+                match_mode: Some(2),
+            });
+        }
+        event
     }
 
     fn start_kyoku() -> MjaiEvent {
@@ -216,6 +292,20 @@ mod tests {
             kyotaku: 0,
             oya: 0,
             scores: vec![25000, 25000, 25000, 25000],
+            tehais: vec![vec![]; 4],
+            num_players: 4,
+        }
+    }
+
+    fn start_kyoku_at(kyoku: u8, scores: Vec<i32>) -> MjaiEvent {
+        MjaiEvent::StartKyoku {
+            bakaze: "E".into(),
+            dora_marker: "1m".into(),
+            kyoku,
+            honba: 0,
+            kyotaku: 0,
+            oya: (kyoku - 1) % 4,
+            scores,
             tehais: vec![vec![]; 4],
             num_players: 4,
         }
@@ -250,7 +340,7 @@ mod tests {
         })
         .unwrap();
         tx.send(MjaiEvent::EndKyoku).unwrap();
-        tx.send(MjaiEvent::EndGame).unwrap();
+        tx.send(MjaiEvent::end_game()).unwrap();
 
         // Give the loop a tick to drain.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -333,7 +423,7 @@ mod tests {
             ura_markers: None,
         })
         .unwrap();
-        tx.send(MjaiEvent::EndGame).unwrap();
+        tx.send(MjaiEvent::end_game()).unwrap();
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         drop(tx);
@@ -341,5 +431,94 @@ mod tests {
 
         let records = store.list(&HistoryFilter::default(), 100, 0).unwrap();
         assert_eq!(records.len(), 1, "only the cleanly-ended second game");
+    }
+
+    #[test]
+    fn same_game_reconnect_replaces_only_the_restored_round() {
+        let tmp = TempDir::new().unwrap();
+        let store = HistoryStore::new(tmp.path().to_path_buf()).unwrap();
+        let (history_tx, _history_rx): (HistoryBus, _) = broadcast::channel(8);
+        let mut state = RecorderState::new(shared_platform(Platform::Majsoul));
+
+        state.handle(start_game_with_id(7), &store, &history_tx);
+        state.handle(start_kyoku_at(1, vec![25000; 4]), &store, &history_tx);
+        state.handle(
+            MjaiEvent::Hora {
+                actor: 0,
+                target: 1,
+                deltas: Some(vec![8000, -8000, 0, 0]),
+                ura_markers: None,
+            },
+            &store,
+            &history_tx,
+        );
+        state.handle(MjaiEvent::EndKyoku, &store, &history_tx);
+        state.handle(
+            start_kyoku_at(2, vec![33000, 17000, 25000, 25000]),
+            &store,
+            &history_tx,
+        );
+        state.handle(
+            MjaiEvent::Dahai {
+                actor: 0,
+                pai: "9m".into(),
+                tsumogiri: true,
+            },
+            &store,
+            &history_tx,
+        );
+
+        // Re-authentication repeats StartGame and GameRestore repeats the
+        // current round from StartKyoku.
+        state.handle(start_game_with_id(7), &store, &history_tx);
+        state.handle(
+            start_kyoku_at(2, vec![33000, 17000, 25000, 25000]),
+            &store,
+            &history_tx,
+        );
+        state.handle(
+            MjaiEvent::Ryukyoku {
+                deltas: Some(vec![0, 0, 0, 0]),
+            },
+            &store,
+            &history_tx,
+        );
+        state.handle(MjaiEvent::EndKyoku, &store, &history_tx);
+        state.handle(
+            MjaiEvent::confirmed_game(
+                Some(vec![12000, 41000, 27000, 20000]),
+                Some(vec![4, 1, 2, 3]),
+            ),
+            &store,
+            &history_tx,
+        );
+
+        let records = store.list(&HistoryFilter::default(), 100, 0).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].stats.round, 2, "restored round counted once");
+        assert_eq!(records[0].final_scores, vec![12000, 41000, 27000, 20000]);
+        let events = store.get_events(&records[0].id).unwrap().unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, MjaiEvent::StartKyoku { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn explicit_termination_drops_unfinished_game() {
+        let tmp = TempDir::new().unwrap();
+        let store = HistoryStore::new(tmp.path().to_path_buf()).unwrap();
+        let (history_tx, _history_rx): (HistoryBus, _) = broadcast::channel(8);
+        let mut state = RecorderState::new(shared_platform(Platform::Majsoul));
+        state.handle(start_game_with_id(7), &store, &history_tx);
+        state.handle(start_kyoku(), &store, &history_tx);
+        state.handle(MjaiEvent::terminated_game(), &store, &history_tx);
+        assert!(store
+            .list(&HistoryFilter::default(), 100, 0)
+            .unwrap()
+            .is_empty());
     }
 }
