@@ -47,6 +47,8 @@ pub struct AutoplayContext {
     /// the manager's delay model. Uses a `std::sync::RwLock` (not tokio)
     /// because the writer is the bridge's synchronous `parse()` path.
     pub time_budget: crate::autoplay::budget::SharedTimeBudget,
+    /// Counter of accepted Mahjong Soul uplink input commands.
+    pub input_watch: crate::autoplay::verify::SharedInputWatch,
     auto_join: StdMutex<AutoJoinRuntime>,
 }
 

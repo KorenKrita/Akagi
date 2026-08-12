@@ -41,6 +41,17 @@ struct CompactNoSpans {
     timer: ChronoLocal,
 }
 
+fn quiet_protocol_noise(filter: EnvFilter) -> EnvFilter {
+    // chromiumoxide 0.9 warns for harmless CDP event variants that it does not
+    // model. Akagi's own CDP loop reports terminal failures, so retain errors
+    // from the dependency instead of writing hundreds of identical warnings.
+    filter.add_directive(
+        "chromiumoxide::handler=error"
+            .parse()
+            .expect("static tracing directive"),
+    )
+}
+
 impl<S, N> FormatEvent<S, N> for CompactNoSpans
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -118,9 +129,11 @@ impl Session {
         let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
 
         // Console (stderr): env-controlled level, ANSI on.
-        let env_filter = EnvFilter::try_from_default_env()
-            .or_else(|_| EnvFilter::try_new(default_level))
-            .unwrap_or_else(|_| EnvFilter::new("info"));
+        let env_filter = quiet_protocol_noise(
+            EnvFilter::try_from_default_env()
+                .or_else(|_| EnvFilter::try_new(default_level))
+                .unwrap_or_else(|_| EnvFilter::new("info")),
+        );
         layers.push(
             fmt::layer()
                 .with_timer(ChronoLocal::new(timer_fmt.clone()))
@@ -141,7 +154,9 @@ impl Session {
             .with_context(|| format!("Failed to open {}", all_path.display()))?;
         let (all_writer, all_guard) = tracing_appender::non_blocking(all_file);
         guards.push(all_guard);
-        let all_filter = EnvFilter::try_new(all_level).unwrap_or_else(|_| EnvFilter::new("info"));
+        let all_filter = quiet_protocol_noise(
+            EnvFilter::try_new(all_level).unwrap_or_else(|_| EnvFilter::new("info")),
+        );
         layers.push(
             fmt::layer()
                 .event_format(CompactNoSpans {
@@ -162,7 +177,9 @@ impl Session {
         let jsonl_path = dir.join("all.jsonl");
         let (stream_layer, stream_handle) = LogStreamLayer::open(&jsonl_path, 1024)
             .with_context(|| format!("Failed to open {}", jsonl_path.display()))?;
-        let jsonl_filter = EnvFilter::try_new(all_level).unwrap_or_else(|_| EnvFilter::new("info"));
+        let jsonl_filter = quiet_protocol_noise(
+            EnvFilter::try_new(all_level).unwrap_or_else(|_| EnvFilter::new("info")),
+        );
         layers.push(stream_layer.with_filter(jsonl_filter).boxed());
 
         // Inspector pipeline timeline. Separate file from `all.jsonl`
@@ -287,5 +304,62 @@ impl Session {
         let logger = Arc::new(BinaryLogger::new(&self.dir, name)?);
         w.insert(name.to_string(), logger.clone());
         Ok(logger)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        io::{self, Write},
+        sync::{Arc, Mutex},
+    };
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+    struct SharedWriterGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedWriterGuard {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("log buffer poisoned").write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for SharedWriter {
+        type Writer = SharedWriterGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            SharedWriterGuard(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn chromium_handler_warning_is_filtered_but_errors_and_app_warnings_remain() {
+        let output = SharedWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            fmt::layer()
+                .without_time()
+                .with_ansi(false)
+                .with_writer(output.clone())
+                .with_filter(quiet_protocol_noise(EnvFilter::new("trace"))),
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(target: "chromiumoxide::handler", "protocol noise");
+            tracing::error!(target: "chromiumoxide::handler", "terminal chromium failure");
+            tracing::warn!(target: "akagi::logger_test", "actionable app warning");
+        });
+
+        let rendered = String::from_utf8(output.0.lock().expect("log buffer poisoned").to_vec())
+            .expect("tracing output should be utf-8");
+        assert!(!rendered.contains("protocol noise"), "{rendered}");
+        assert!(rendered.contains("terminal chromium failure"), "{rendered}");
+        assert!(rendered.contains("actionable app warning"), "{rendered}");
     }
 }

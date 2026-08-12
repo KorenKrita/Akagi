@@ -337,12 +337,13 @@ for line in sys.stdin:
                 aka_flag: None,
                 id: Some(0),
                 num_players: 4,
+                majsoul_meta: None,
             }])
             .await
             .unwrap();
         assert!(matches!(resp.action, MjaiEvent::None));
 
-        let _ = bot.react(&[MjaiEvent::EndGame]).await.unwrap();
+        let _ = bot.react(&[MjaiEvent::end_game()]).await.unwrap();
     }
 
     #[test]
@@ -425,6 +426,7 @@ for line in sys.stdin:
                 aka_flag: None,
                 id: Some(0),
                 num_players: 4,
+                majsoul_meta: None,
             }])
             .await
             .unwrap();
@@ -439,6 +441,6 @@ for line in sys.stdin:
         assert_eq!(n.title, "Bot says hi");
         assert_eq!(n.body.as_deref(), Some("from stderr"));
 
-        let _ = bot.react(&[MjaiEvent::EndGame]).await.unwrap();
+        let _ = bot.react(&[MjaiEvent::end_game()]).await.unwrap();
     }
 }

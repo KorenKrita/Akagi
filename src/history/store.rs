@@ -262,8 +262,9 @@ mod tests {
                 aka_flag: Some(true),
                 id: Some(0),
                 num_players: 4,
+                majsoul_meta: None,
             },
-            MjaiEvent::EndGame,
+            MjaiEvent::end_game(),
         ]
     }
 

@@ -108,6 +108,13 @@ export type MajsoulAutoplayConfig = {
   inter_click_delay_ms: number
   hover_delay_ms: number
   click_hold_ms: number
+  /** Wait this long for the client's own input command after a click
+   *  before pressing again; 0 disables verification. */
+  verify_input_ms: number
+  /** Retries when no input command follows a click sequence; 0 = log only. */
+  click_retries: number
+  /** Reload the game page after this many dead decisions in a row; 0 = off. */
+  reload_after_failures: number
   dealer_first_discard_extra_delay_ms: number
   packet_dealer_first_discard_extra_delay_ms: number
   auto_join_game: boolean

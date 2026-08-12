@@ -684,9 +684,16 @@ fn legal_op_set(
 }
 
 /// Pull all consume-tile combinations for one action type out of the
-/// legal-action list, normalised to mjai tile strings.
+/// legal-action list, normalised to mjai tile strings and reduced to
+/// what Majsoul actually renders. The engine enumerates one action per
+/// physical tile copy — a hand holding two identical 6s yields two
+/// `[4s, 6s]` chi entries — while the on-screen candidate row is
+/// deduplicated by tile kind. The row is laid out left-to-right in
+/// ascending tile order with a red five directly left of its normal
+/// five, so after sorting and deduping, an index into the returned
+/// list is the on-screen slot index.
 fn collect_candidate_consumes(legal: &[Action], at: ActionType) -> Vec<Vec<String>> {
-    legal
+    let mut candidates: Vec<Vec<String>> = legal
         .iter()
         .filter(|a| a.action_type == at)
         .map(|a| {
@@ -694,7 +701,23 @@ fn collect_candidate_consumes(legal: &[Action], at: ActionType) -> Vec<Vec<Strin
             tiles.sort_by(|a, b| compare_pai(a, b));
             tiles
         })
-        .collect::<Vec<_>>()
+        .collect();
+    candidates.sort_by(|a, b| compare_consumed(a, b));
+    candidates.dedup();
+    candidates
+}
+
+/// Lexicographic order over consumed-tile lists in canonical mjai tile
+/// order (`compare_pai`: red five sorts before its normal five), ties
+/// broken by length. Matches Majsoul's left-to-right candidate order.
+fn compare_consumed(a: &[String], b: &[String]) -> std::cmp::Ordering {
+    for (x, y) in a.iter().zip(b.iter()) {
+        let ord = compare_pai(x, y);
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    a.len().cmp(&b.len())
 }
 
 /// Equality on consumed-tile lists. Both sides expected pre-sorted with
@@ -751,6 +774,7 @@ mod tests {
     use crate::autoplay::context::CanvasRect;
     use crate::config::MajsoulAutoplayConfig;
     use crate::game_state::snapshot::{GameStateSnapshot, Phase, PlayerSnapshot};
+    use coords::CANDIDATES;
 
     fn cfg() -> MajsoulAutoplayConfig {
         MajsoulAutoplayConfig {
@@ -760,6 +784,9 @@ mod tests {
             inter_click_delay_ms: 0,
             hover_delay_ms: 0,
             click_hold_ms: 0,
+            verify_input_ms: 0,
+            click_retries: 0,
+            reload_after_failures: 0,
             dealer_first_discard_extra_delay_ms: 0,
             ..Default::default()
         }
@@ -1913,5 +1940,159 @@ mod tests {
         };
         // Centre of the canvas at (8.0, 4.5) norm.
         assert_eq!(rect.pixel(8.0, 4.5), (800.0, 450.0));
+    }
+
+    // ----- Chi/pon candidate-slot regressions ---------------------------
+    //
+    // The engine enumerates one chi/pon action per physical tile copy,
+    // but Majsoul renders a deduplicated, sorted candidate row. The
+    // planner must map the bot's consume list onto the rendered row, not
+    // the raw engine list (issues #138 / #235 / #239).
+
+    /// Tile ids: suit base (m=0, p=36, s=72) + (rank-1)*4 + copy; copy 0
+    /// of a five is the red five.
+    fn chi_action(tile: u8, c1: u8, c2: u8) -> Action {
+        Action::new(ActionType::Chi, Some(tile), vec![c1, c2], Some(0))
+    }
+
+    fn candidate_clicks(legal: &[Action], consumed: [&str; 2], pai: &str) -> Vec<(f64, f64)> {
+        let snap = snapshot_with_hand(0, vec!["1m"]);
+        let act = MjaiEvent::Chi {
+            actor: 0,
+            target: 3,
+            pai: pai.into(),
+            consumed: [consumed[0].to_string(), consumed[1].to_string()],
+        };
+        let cfg_ref = cfg();
+        let ctx = ctx_for(
+            &act,
+            &snap,
+            legal,
+            Some(pai),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        result
+            .steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Click { x_norm, y_norm } => Some((*x_norm, *y_norm)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn chi_candidate_dedups_duplicate_copies_issue_138() {
+        // Hand 3s 4s 6s 6s 7s, opponent discards 5s. The engine lists 5
+        // combinations (two 6s copies duplicate [4s,6s] and [6s,7s]);
+        // Majsoul renders 3 boxes. Choosing [3s,4s] must click the
+        // leftmost of a 3-slot row, not slot 1 of a phantom 5-slot row
+        // (which lands left of the whole row and hangs autoplay).
+        let legal = [
+            chi_action(89, 80, 84), // [3s,4s]
+            chi_action(89, 84, 92), // [4s,6s] (first 6s)
+            chi_action(89, 84, 93), // [4s,6s] (second 6s)
+            chi_action(89, 92, 96), // [6s,7s] (first 6s)
+            chi_action(89, 93, 96), // [6s,7s] (second 6s)
+        ];
+        let clicks = candidate_clicks(&legal, ["3s", "4s"], "5s");
+        assert_eq!(clicks.len(), 2, "button click + candidate click");
+        assert_eq!(clicks[1], CANDIDATES[3], "idx 0 of 3 → slot 3");
+    }
+
+    #[test]
+    fn chi_candidate_slot_matches_screen_row_issue_235() {
+        // Hand 2s 3s 4s 5s 6s 6s, opponent discards 0s. Engine lists
+        // [3s,4s], [4s,6s], [4s,6s]; the screen shows two boxes. The
+        // bot's [4s,6s] is the right box of a 2-slot row.
+        let legal = [
+            chi_action(88, 80, 84), // [3s,4s]
+            chi_action(88, 84, 92), // [4s,6s] (first 6s)
+            chi_action(88, 84, 93), // [4s,6s] (second 6s)
+        ];
+        let clicks = candidate_clicks(&legal, ["4s", "6s"], "5sr");
+        assert_eq!(clicks.len(), 2);
+        assert_eq!(clicks[1], CANDIDATES[6], "idx 1 of 2 → slot 6");
+    }
+
+    #[test]
+    fn chi_single_kind_after_dedup_skips_candidate_click() {
+        // Hand 4s 6s 6s, opponent discards 5s. The engine lists [4s,6s]
+        // twice (two 6s copies) but only one distinct combination
+        // exists, so Majsoul auto-confirms without showing a candidate
+        // row — the plan must stop at the button click instead of
+        // clicking a phantom two-slot row.
+        let legal = [
+            chi_action(89, 84, 92), // [4s,6s] (first 6s)
+            chi_action(89, 84, 93), // [4s,6s] (second 6s)
+        ];
+        let clicks = candidate_clicks(&legal, ["4s", "6s"], "5s");
+        assert_eq!(clicks.len(), 1, "button click only, no candidate row");
+    }
+
+    #[test]
+    fn chi_red_five_variants_stay_distinct_and_sort_left() {
+        // Hand 2s 3s 5s 0s 6s, opponent discards 4s. All five rendered
+        // combinations are distinct kinds — dedup must not collapse the
+        // red-five variants — and each red variant sits directly left
+        // of its normal counterpart:
+        //   [2s,3s] [3s,5sr] [3s,5s] [5sr,6s] [5s,6s]
+        let legal = [
+            chi_action(85, 76, 80), // [2s,3s]
+            chi_action(85, 80, 88), // [3s,5sr]
+            chi_action(85, 80, 89), // [3s,5s]
+            chi_action(85, 88, 92), // [5sr,6s]
+            chi_action(85, 89, 92), // [5s,6s]
+        ];
+        let with_normal = candidate_clicks(&legal, ["3s", "5s"], "4s");
+        assert_eq!(with_normal[1], CANDIDATES[5], "idx 2 of 5 → slot 5");
+        let with_red = candidate_clicks(&legal, ["3s", "5sr"], "4s");
+        assert_eq!(with_red[1], CANDIDATES[3], "idx 1 of 5 → slot 3");
+    }
+
+    #[test]
+    fn pon_candidate_dedups_red_five_pairs() {
+        // Hand 5p 5p 0p, opponent discards 5p. The engine enumerates 3
+        // pairs from the three copies; Majsoul shows two boxes with the
+        // red pair on the left. Keeping the red five ([5p,5p]) is the
+        // right box.
+        let legal = [
+            Action::new(ActionType::Pon, Some(55), vec![53, 54], Some(0)), // [5p,5p]
+            Action::new(ActionType::Pon, Some(55), vec![53, 52], Some(0)), // [5pr,5p]
+            Action::new(ActionType::Pon, Some(55), vec![54, 52], Some(0)), // [5pr,5p]
+        ];
+        let snap = snapshot_with_hand(0, vec!["1m"]);
+        let act = MjaiEvent::Pon {
+            actor: 0,
+            target: 3,
+            pai: "5p".into(),
+            consumed: ["5p".into(), "5p".into()],
+        };
+        let cfg_ref = cfg();
+        let ctx = ctx_for(
+            &act,
+            &snap,
+            &legal,
+            Some("5p"),
+            None,
+            false,
+            ReachState::Idle,
+            &cfg_ref,
+        );
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        let clicks: Vec<(f64, f64)> = result
+            .steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Click { x_norm, y_norm } => Some((*x_norm, *y_norm)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(clicks.len(), 2);
+        assert_eq!(clicks[1], CANDIDATES[6], "idx 1 of 2 → slot 6");
     }
 }

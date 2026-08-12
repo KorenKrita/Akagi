@@ -25,18 +25,20 @@ time — lexicographically sortable by start time, doubles as the filename stem.
                        HistoryBus  ──▶  ipc forwarder  ──▶  "history-recorded" Tauri event
 ```
 
-A `RecorderState` machine buffers events between `StartGame` and `EndGame`. Any
-buffer that doesn't see an `EndGame` is dropped — disconnect-incomplete games
-are deliberately **not** persisted (matches the user-facing contract that the
-History tab shows only complete games).
+A `RecorderState` machine buffers events between `StartGame` and a confirmed
+`EndGame`. On a Mahjong Soul reconnect to the same table it retains completed
+rounds and replaces the server-restored copy of the current round. A different
+next game, explicit server termination, or shutdown drops the incomplete
+buffer, so the History tab still contains only complete games.
 
 ## Modules
 
 - **`aggregator.rs`** — Pure function `aggregate(events, ...) -> Option<GameRecord>`.
-  Ports the `Stat::from_game` aggregator from Mortal's `libriichi`. Score derivation:
-  walk `Reach`/`ReachAccepted`/`Hora`/`Ryukyoku` deltas, then normalise totals
-  to 100k (4p) / 105k (3p) by topping up the rank-1 seat. Stat counts mirror
-  `Stat`'s field set, scoped to one game.
+  Ports the `Stat::from_game` aggregator from Mortal's `libriichi`. It walks
+  `Reach`/`ReachAccepted`/`Hora`/`Ryukyoku` deltas for statistics, prefers a
+  platform's authoritative final standings when supplied, and otherwise
+  normalises totals to 100k (4p) / 105k (3p). Stat counts mirror `Stat`'s field
+  set, scoped to one game.
 - **`store.rs`** — `HistoryStore` (JSONL append-only index + per-game event
   files). Single mutex serialises writes; reads are lock-free (re-open).
 - **`recorder.rs`** — `drive_loop(store, history_bus, platform, mjai_rx)`. The

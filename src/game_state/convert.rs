@@ -85,6 +85,7 @@ mod tests {
             aka_flag: None,
             id: Some(2),
             num_players: 4,
+            majsoul_meta: None,
         };
         let out = to_riichienv(&ev).unwrap().unwrap();
         match out {
@@ -103,6 +104,7 @@ mod tests {
             aka_flag: None,
             id: None,
             num_players: 4,
+            majsoul_meta: None,
         };
         let out = to_riichienv(&ev).unwrap().unwrap();
         assert!(matches!(out, RiEvent::StartGame { id: None, .. }));
@@ -178,7 +180,7 @@ mod tests {
 
     #[test]
     fn end_game_works() {
-        let out = to_riichienv(&AkagiEvent::EndGame).unwrap().unwrap();
+        let out = to_riichienv(&AkagiEvent::end_game()).unwrap().unwrap();
         assert!(matches!(out, RiEvent::EndGame));
     }
 
