@@ -207,6 +207,12 @@ pub struct MajsoulBridge {
     num_players: u8,
     next_msg_id: u16,
     last_self_tsumo: Option<String>,
+    /// Per-seat discard counts, used to report the current 巡目.
+    discard_counts: [u32; 4],
+    current_jun: u32,
+    current_honba: u8,
+    current_bakaze: char,
+    current_kyoku: u8,
     /// Shared slot for the server's per-decision-window time budget
     /// (`operation.time_fixed` / `time_add`, both ms). `None` when the
     /// autoplay context isn't wired (MITM path, tests).
@@ -244,6 +250,11 @@ impl MajsoulBridge {
             num_players: 4,
             next_msg_id: 1,
             last_self_tsumo: None,
+            discard_counts: [0; 4],
+            current_jun: 0,
+            current_honba: 0,
+            current_bakaze: '?',
+            current_kyoku: 0,
             time_budget: None,
             replaying: false,
             restore_budget: None,
@@ -629,6 +640,7 @@ impl MajsoulBridge {
         if self.seat.is_none() {
             return;
         }
+        self.update_round_context(action_name, data);
         let budget = self.extract_budget(action_name, data);
         if self.replaying {
             self.restore_budget = budget;
@@ -637,10 +649,46 @@ impl MajsoulBridge {
         }
     }
 
+    fn update_round_context(&mut self, action_name: &str, data: &JsonValue) {
+        if action_name == ACTION_NEW_ROUND {
+            self.discard_counts = [0; 4];
+            self.current_jun = 1;
+            self.current_honba = data.get("ben").and_then(JsonValue::as_u64).unwrap_or(0) as u8;
+            self.current_bakaze = match data.get("chang").and_then(JsonValue::as_u64).unwrap_or(0) {
+                0 => 'E',
+                1 => 'S',
+                2 => 'W',
+                3 => 'N',
+                _ => '?',
+            };
+            self.current_kyoku = data
+                .get("ju")
+                .and_then(JsonValue::as_u64)
+                .unwrap_or(0)
+                .try_into()
+                .unwrap_or(u8::MAX);
+            self.current_kyoku = self.current_kyoku.saturating_add(1);
+            return;
+        }
+
+        let actor = data.get("seat").and_then(JsonValue::as_u64).unwrap_or(0) as usize;
+        let Some(discards) = self.discard_counts.get_mut(actor) else {
+            return;
+        };
+        if action_name == ACTION_DISCARD_TILE {
+            *discards = discards.saturating_add(1);
+        }
+        self.current_jun = discards.saturating_add(u32::from(action_name != ACTION_DISCARD_TILE));
+    }
+
     fn store_budget(&self, budget: Option<TimeBudget>) {
         if let Some(slot) = &self.time_budget {
             if let Ok(mut guard) = slot.write() {
                 *guard = budget;
+                drop(guard);
+                if let Some(budget) = budget {
+                    crate::autoplay::budget::warn_if_still_open(slot.clone(), budget);
+                }
             }
         }
     }
@@ -679,6 +727,10 @@ impl MajsoulBridge {
             add_ms: u32::try_from(add_ms).unwrap_or(u32::MAX),
             opened_at: Instant::now(),
             source,
+            jun: self.current_jun,
+            honba: self.current_honba,
+            bakaze: self.current_bakaze,
+            kyoku: self.current_kyoku,
         })
     }
 
@@ -4820,6 +4872,27 @@ mod tests {
         assert!(b.elapsed_ms() < 1000, "opened_at must be fresh");
     }
 
+    #[test]
+    fn budget_records_jun_and_honba() {
+        let (mut bridge, slot) = budget_bridge(2);
+        bridge.update_time_budget(ACTION_NEW_ROUND, &json!({ "chang": 1, "ju": 0, "ben": 3 }));
+
+        let discard = |seat| {
+            json!({
+                "seat": seat,
+                "operation": { "seat": 2, "time_fixed": 5000, "time_add": 0 },
+            })
+        };
+        bridge.update_time_budget(ACTION_DISCARD_TILE, &discard(0));
+        let first = slot.read().unwrap().expect("first window");
+        assert_eq!((first.jun, first.honba), (1, 3));
+        assert_eq!((first.bakaze, first.kyoku), ('S', 1));
+
+        bridge.update_time_budget(ACTION_DISCARD_TILE, &discard(0));
+        let second = slot.read().unwrap().expect("second window");
+        assert_eq!((second.jun, second.honba), (2, 3));
+    }
+
     /// An action with no operation list closes the window: the slot is
     /// cleared, not left holding the previous window's budget.
     #[test]
@@ -4883,6 +4956,10 @@ mod tests {
             add_ms: 1,
             opened_at: Instant::now(),
             source: BudgetSource::DiscardTile,
+            jun: 1,
+            honba: 0,
+            bakaze: 'E',
+            kyoku: 1,
         });
 
         let payload: JsonValue = serde_json::from_str(SYNC_GAME_SAMPLE).unwrap();
