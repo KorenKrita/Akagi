@@ -1,6 +1,9 @@
+import i18n from 'i18next'
 import { invoke } from '@/lib/tauri'
+import { toast } from '@/components/ui/sonner'
+import { NATIVE_3P, NATIVE_4P } from '@/lib/nativeBots'
 import { useConfigStore } from '@/stores/configStore'
-import type { KeyStatus, NativeApiConfig } from '@/types'
+import type { AppConfig, KeyStatus, NativeApiConfig } from '@/types'
 
 /**
  * Result of {@link checkApiBeforeSave}. `ok` gates whether the caller may
@@ -38,17 +41,41 @@ export async function checkApiBeforeSave(api: NativeApiConfig): Promise<ApiSaveC
 }
 
 /**
+ * Fold an edited `bot.api` into a config — and, when the API is **enabled**,
+ * make the built-in native bots the active ones for both modes. MJOT cloud
+ * inference only ever applies to the built-in bot: with an author bot active,
+ * an enabled API is dead config the user thinks is working. `switched` tells
+ * the caller whether the active-bot selection actually changed, so it can say
+ * so (the user may have picked another bot deliberately).
+ */
+export function withNativeBotForApi(
+  cfg: AppConfig,
+  api: NativeApiConfig,
+): { next: AppConfig; switched: boolean } {
+  const bot = { ...cfg.bot, api }
+  const switched = api.enabled && (bot.active_4p !== NATIVE_4P || bot.active_3p !== NATIVE_3P)
+  if (switched) {
+    bot.active_4p = NATIVE_4P
+    bot.active_3p = NATIVE_3P
+  }
+  return { next: { ...cfg, bot }, switched }
+}
+
+/**
  * Persist a `bot.api` change immediately, layered on the *stored* (on-disk)
- * config so only `bot.api` differs from disk. That keeps `update_config` from
- * restarting capture (it only restarts on capture/proxy/platform changes) and
- * touches nothing else. Used for the one case that must not wait for an
- * explicit Save: a redeemed single-use code whose key the server shows once.
+ * config so nothing capture-relevant differs from disk — that keeps
+ * `update_config` from restarting capture (it only restarts on
+ * capture/proxy/platform changes). Used for the one case that must not wait
+ * for an explicit Save: a redeemed single-use code whose key the server shows
+ * once. An enabled API also selects the built-in bots (see
+ * [`withNativeBotForApi`]); active-bot changes don't restart anything either.
  */
 export async function persistApiConfig(api: NativeApiConfig): Promise<void> {
   const store = useConfigStore.getState()
   const cfg = store.config
   if (!cfg) return
-  const next = { ...cfg, bot: { ...cfg.bot, api } }
+  const { next, switched } = withNativeBotForApi(cfg, api)
   await invoke('update_config', { newConfig: next })
   store.setConfig(next)
+  if (switched) toast.info(i18n.t('bots.api.native_selected'))
 }

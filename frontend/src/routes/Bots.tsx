@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useBlocker } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive, Download, Cloud } from 'lucide-react'
+import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -39,18 +39,16 @@ import { useBotStore } from '@/stores/botStore'
 import { useConfigStore } from '@/stores/configStore'
 import type { AppConfig, BotInfo, BotSettings, NativeApiConfig } from '@/types'
 import { ManifestField } from '@/components/ManifestField'
+import { MjotLogo } from '@/components/MjotBrand'
 import { NativeApiFields } from '@/components/NativeApiFields'
-import { checkApiBeforeSave, persistApiConfig } from '@/lib/nativeApi'
+import { checkApiBeforeSave, persistApiConfig, withNativeBotForApi } from '@/lib/nativeApi'
+import { NATIVE_3P, NATIVE_4P, isNativeBot } from '@/lib/nativeBots'
 import { proxyConfigValid } from '@/lib/proxy'
 import { mergeExternal } from '@/lib/merge'
 
-// Reserved names of the built-in, pure-Rust bots (see `src/bot/native.rs`).
-// They have no directory, no manifest, and nothing to install/configure/delete.
-const NATIVE_4P = 'akagi-native'
-const NATIVE_3P = 'akagi-native3p'
-function isNativeBot(name: string): boolean {
-  return name === NATIVE_4P || name === NATIVE_3P
-}
+// The built-in bots have no directory, no manifest, and nothing to
+// install/configure/delete; names and the `isNativeBot` predicate come from
+// the shared `@/lib/nativeBots`.
 function nativeModes(name: string): string[] {
   return name === NATIVE_3P ? ['3p'] : ['4p']
 }
@@ -100,6 +98,36 @@ export function Bots() {
     }
     try {
       await invoke('set_active_bot', { mode, name })
+      // Mirror of "enabling MJOT selects the built-in bots": deactivating the
+      // LAST built-in slot would leave the API enabled with nothing routing
+      // through it — dead config that reads as working. Turn it off and say
+      // so. One native slot remaining keeps the API on: it still serves that
+      // mode.
+      if (config?.bot.api.enabled) {
+        const next4p = mode === '4p' ? name : config.bot.active_4p
+        const next3p = mode === '3p' ? name : config.bot.active_3p
+        if (!isNativeBot(next4p) && !isNativeBot(next3p)) {
+          // Separate catch: the activation above already succeeded, so a
+          // failure HERE must not be reported as "activate failed" — the API
+          // just stayed enabled; the user can turn it off on the MJOT card.
+          try {
+            await persistApiConfig({ ...config.bot.api, enabled: false })
+            toast.info(t('bots.api.disabled_no_native'))
+          } catch (e) {
+            toast.error(t('bots.api.save_failed'), { description: String(e) })
+          }
+        } else if (name !== '' && !isNativeBot(name)) {
+          // Only this mode left the built-in bot; the other still uses it, so
+          // the API stays on — but say which mode MJOT no longer covers, or
+          // the user will assume both modes are served.
+          toast.info(
+            t('bots.api.mode_not_native', {
+              mode: mode === '4p' ? '4P' : '3P',
+              other: mode === '4p' ? '3P' : '4P',
+            }),
+          )
+        }
+      }
     } catch (e) {
       // set_active_bot rejects (e.g. env not installed) without emitting a
       // notify toast, so surface it here — otherwise the optimistic flip just
@@ -155,6 +183,11 @@ export function Bots() {
           <InstallFromZipDialog onInstalled={refresh} />
         </div>
       </header>
+
+      {/* MJOT (cloud inference) leads the page: it is the built-in bot's main
+          upgrade knob, while the table below is the power-user path for
+          author bots. */}
+      <NativeApiSettings />
 
       <Table>
         <TableHeader>
@@ -259,8 +292,6 @@ export function Bots() {
           })}
         </TableBody>
       </Table>
-
-      <NativeApiSettings />
 
       {editing && (
         <BotSettingsDrawer
@@ -669,10 +700,14 @@ function NativeApiSettings() {
         })
         return false
       }
-      const next = { ...config, bot: { ...config.bot, api: draft } }
+      // Saving with the API enabled also selects the built-in bots — MJOT
+      // only applies to them, so leaving an author bot active would persist
+      // an enabled API that nothing uses.
+      const { next, switched } = withNativeBotForApi(config, draft)
       await invoke('update_config', { newConfig: next })
       setConfig(next)
       toast.success(t('bots.api.saved'))
+      if (switched) toast.info(t('bots.api.native_selected'))
       return true
     } catch (e) {
       toast.error(t('bots.api.save_failed'), { description: String(e) })
@@ -698,8 +733,11 @@ function NativeApiSettings() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Cloud className="h-5 w-5" />
+        <CardTitle className="flex items-center gap-2.5">
+          {/* The lockup's wordmark reads "MJOT", so the visible title text
+              stays the descriptive half only. */}
+          <MjotLogo className="h-6 w-auto" label="MJOT" />
+          <span className="text-muted-foreground">·</span>
           {t('bots.api.title')}
         </CardTitle>
       </CardHeader>

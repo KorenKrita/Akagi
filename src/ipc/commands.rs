@@ -1418,7 +1418,7 @@ pub async fn native_api_models(
         .map_err(|e| format!("{e:#}"))
 }
 
-/// Liveness + per-model queue depth (`GET /healthz`, no auth).
+/// Liveness + aggregate load (`GET /healthz`, no auth).
 #[tauri::command]
 pub async fn native_api_health(
     base_url: String,
@@ -1497,6 +1497,50 @@ pub async fn native_api_subscription_result(
         &base_url,
         proxy.as_deref().unwrap_or(""),
         &subscription_id,
+        &claim,
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// Start a Creem checkout (`POST /creem/create-checkout`, no auth). One
+/// endpoint for both one-time and subscription products. Not idempotent —
+/// each call opens a fresh checkout.
+///
+/// `redeem` mirrors `native_api_create_order`: one-time products only,
+/// `true` has the poll return the API key directly instead of a redeem code.
+#[tauri::command]
+pub async fn native_api_create_checkout(
+    base_url: String,
+    proxy: Option<String>,
+    product: String,
+    redeem: bool,
+) -> CmdResult<crate::bot::purchase::CreatedCheckout> {
+    crate::bot::purchase::create_checkout(
+        &base_url,
+        proxy.as_deref().unwrap_or(""),
+        &product,
+        redeem,
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// Poll a Creem checkout (`POST /creem/result`, no auth). Idempotent; same
+/// payload shape as the PayPal order poll — on `ready` a one-time purchase
+/// carries the code or key per its `redeem` flag, a subscription carries the
+/// key with `days: 0`.
+#[tauri::command]
+pub async fn native_api_checkout_result(
+    base_url: String,
+    proxy: Option<String>,
+    checkout_id: String,
+    claim: String,
+) -> CmdResult<crate::bot::purchase::OrderResult> {
+    crate::bot::purchase::checkout_result(
+        &base_url,
+        proxy.as_deref().unwrap_or(""),
+        &checkout_id,
         &claim,
     )
     .await
@@ -1584,6 +1628,8 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::native_api_order_result,
             $crate::ipc::commands::native_api_create_subscription,
             $crate::ipc::commands::native_api_subscription_result,
+            $crate::ipc::commands::native_api_create_checkout,
+            $crate::ipc::commands::native_api_checkout_result,
         ]
     };
 }
