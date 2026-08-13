@@ -131,11 +131,24 @@ fn take_indices(pool: &mut Vec<u32>, labels: &[String]) -> Option<Vec<u32>> {
     labels.iter().map(|l| take_one(pool, l)).collect()
 }
 
-/// Resolve a single mjai tile string against a hand — the same lookup the
-/// encoder uses, exposed for the autoplay planner, which has to turn the tile
-/// the bot named into the physical copy before it can find its display slot.
-pub fn tile_index_public(hand: &[u32], label: &str) -> Option<u32> {
-    tile_index(hand, label)
+/// Resolve the physical copy a discard should throw.
+///
+/// Tenhou derives the tedashi/tsumogiri display from the index alone —
+/// throwing the just-drawn copy *is* the tsumogiri — so which copy goes
+/// matters even between functionally identical tiles: a tsumogiri must name
+/// the drawn copy (the tail of `hand`), not whichever identical copy
+/// [`take_one`]'s ranking would reach first. When the named tile is not the
+/// drawn one, or nothing was drawn, the ordinary red-aware lookup applies.
+///
+/// Shared by [`encode`] and the autoplay planner so the frame the encoder
+/// would build and the index the planner hands the client can never name
+/// different copies.
+pub fn dahai_index(view: HandView, pai: &str, tsumogiri: bool) -> Option<u32> {
+    let drawn = view.is_tsumo.then(|| view.hand.last().copied()).flatten();
+    match drawn {
+        Some(d) if tsumogiri && super::tile::tenhou_to_mjai_one(d) == pai => Some(d),
+        _ => tile_index(view.hand, pai),
+    }
 }
 
 /// Tenhou tile class (`0..=33`) for an mjai label, exposed for the autoplay
@@ -159,16 +172,7 @@ fn tile_index(hand: &[u32], label: &str) -> Option<u32> {
 pub fn encode(action: &MjaiEvent, view: HandView) -> Option<String> {
     let value = match action {
         MjaiEvent::Dahai { pai, tsumogiri, .. } => {
-            // A tsumogiri is the tile at the tail of `hand`. Prefer it
-            // explicitly (it is the copy the client would send), but only when
-            // it actually matches the named tile — otherwise fall back to a
-            // normal lookup rather than throwing away the wrong one.
-            let drawn = view.is_tsumo.then(|| view.hand.last().copied()).flatten();
-            let index = match drawn {
-                Some(d) if *tsumogiri && super::tile::tenhou_to_mjai_one(d) == *pai => d,
-                _ => tile_index(view.hand, pai)?,
-            };
-            json!({ "tag": "D", "p": index })
+            json!({ "tag": "D", "p": dahai_index(view, pai, *tsumogiri)? })
         }
         MjaiEvent::Reach { .. } => json!({ "tag": "REACH" }),
         MjaiEvent::Chi { consumed, .. } => {
@@ -349,6 +353,25 @@ mod tests {
             tsumogiri: false,
         };
         assert!(encode(&ev, view(&hand, &[])).is_none());
+    }
+
+    /// Regression: with two identical copies in hand, a tsumogiri must name
+    /// the drawn copy — the tail — even when the other copy ranks first in
+    /// the ordinary lookup. Tenhou reads the tedashi/tsumogiri display off
+    /// the index, so the wrong copy shows opponents a tedashi that never
+    /// happened.
+    #[test]
+    fn tsumogiri_of_a_duplicated_tile_names_the_drawn_copy() {
+        // Two plain 5m; index 17 was drawn last, 19 ranks first in take_one.
+        let hand = [19, 17];
+        let v = HandView {
+            hand: &hand,
+            melds: &[],
+            is_tsumo: true,
+        };
+        assert_eq!(dahai_index(v, "5m", true), Some(17));
+        // A tedashi of the same label keeps the ordinary ranking.
+        assert_eq!(dahai_index(v, "5m", false), Some(19));
     }
 
     #[test]

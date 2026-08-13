@@ -388,12 +388,49 @@ impl PlatformAutoplay for TenhouAutoplay {
             return result;
         }
 
+        // A riichi is a declaration *and* a discard, and Tenhou will not
+        // take one without the other: press the button alone and the client
+        // sits on its clock, then completes the riichi *itself* by throwing
+        // the drawn tile at expiry. So the tile is resolved before anything
+        // is pressed, and a riichi whose discard cannot be performed — a bot
+        // that names no tile (nothing prompts a follow-up decision here, see
+        // #257), or a tracked hand that has lost the named one — skips the
+        // declaration whole. Not declaring costs this turn's riichi; a blind
+        // declaration commits the hand to a wait the bot never chose.
+        let reach_tile = match ctx.action {
+            MjaiEvent::Reach {
+                pai: Some(tile), ..
+            } => match tile_index_for(state, tile, true) {
+                Some(i) => Some(i),
+                None => {
+                    warn!(
+                        target: LOG,
+                        "riichi tile {tile} is not in the tracked hand; skipping the \
+                         declaration rather than letting the client resolve it blind"
+                    );
+                    return result;
+                }
+            },
+            MjaiEvent::Reach { pai: None, .. } => {
+                warn!(
+                    target: LOG,
+                    "the bot declared riichi without naming the discard; Tenhou needs \
+                     both in one action, so the declaration is skipped and the turn \
+                     will time out to a plain tsumogiri"
+                );
+                return result;
+            }
+            _ => None,
+        };
+
         let step = match ctx.action {
-            MjaiEvent::Dahai { pai, .. } => {
+            MjaiEvent::Dahai { pai, tsumogiri, .. } => {
                 // The one action with no button behind it — but still not a
                 // position: the client's discard handler is addressed by tile
-                // index, which the encoder already resolves.
-                let Some(tile_index) = tile_index_for(state, pai) else {
+                // index, which the encoder already resolves. The tsumogiri
+                // flag rides along because the index is also the display:
+                // throwing the drawn copy is what *makes* it a tsumogiri.
+                let Some(tile_index) = tile_index_for(state, pai, *tsumogiri) else {
                     warn!(target: LOG, "discard {pai} is not in the tracked hand; skipping");
                     return result;
                 };
@@ -426,53 +463,33 @@ impl PlatformAutoplay for TenhouAutoplay {
         push_pre_delay(&mut result.steps, ctx, kind);
         result.steps.push(step);
 
-        // A riichi is a declaration *and* a discard, and the client will sit
-        // on its clock until it gets both. The bot names the tile on the
-        // reach itself, so both go in one plan — nothing else is coming to
+        // The declaration went out above; the tile the bot named on the
+        // reach completes it in the same plan — nothing else is coming to
         // provide the second half. (Same shape as Mahjong Soul's Path A; the
         // `reach` the server echoes back is not a new decision for the bot,
         // and waiting for one is what let a declared riichi burn its turn.)
-        if let MjaiEvent::Reach { pai, .. } = ctx.action {
-            match pai {
-                Some(tile) => match tile_index_for(state, tile) {
-                    Some(tile_index) => {
-                        // Let the client finish taking the declaration before
-                        // handing it the tile.
-                        result.steps.push(Step::Sleep {
-                            duration_ms: ctx.cfg.inter_click_delay_ms,
-                        });
-                        result.steps.push(Step::Discard { tile_index });
-                    }
-                    None => {
-                        warn!(
-                            target: LOG,
-                            "riichi tile {tile} is not in the tracked hand; declaring \
-                             without it — the client will wait out its clock"
-                        );
-                    }
-                },
-                // A bot that declares riichi without naming the tile leaves
-                // the second half to a follow-up decision. Say so: on Tenhou
-                // nothing prompts one, so the hand stalls rather than
-                // misplays. The built-in bot always names it.
-                None => {
-                    result.awaiting_riichi_dahai = true;
-                    warn!(
-                        target: LOG,
-                        "the bot declared riichi without naming the discard; Tenhou \
-                         needs both, so this hand will wait on its clock"
-                    );
-                }
-            }
+        if let Some(tile_index) = reach_tile {
+            // Let the client finish taking the declaration before handing
+            // it the tile.
+            result.steps.push(Step::Sleep {
+                duration_ms: ctx.cfg.inter_click_delay_ms,
+            });
+            result.steps.push(Step::Discard { tile_index });
         }
         result
     }
 }
 
 /// Resolve the mjai tile the bot named to the physical copy we hold, reusing
-/// the encoder's red-aware lookup.
-fn tile_index_for(state: &crate::autoplay::tenhou_state::TenhouState, pai: &str) -> Option<u32> {
-    crate::bridge::tenhou::encode::tile_index_public(&state.hand, pai)
+/// the encoder's red-aware, drawn-tile-aware lookup — the index is also the
+/// tedashi/tsumogiri display, so the same copy the encoder would name must
+/// be the one handed to the client.
+fn tile_index_for(
+    state: &crate::autoplay::tenhou_state::TenhouState,
+    pai: &str,
+    tsumogiri: bool,
+) -> Option<u32> {
+    crate::bridge::tenhou::encode::dahai_index(state.hand_view(), pai, tsumogiri)
 }
 
 #[cfg(test)]
@@ -764,12 +781,13 @@ mod tests {
         );
     }
 
-    /// A bot that declares riichi without naming the tile leaves the second
-    /// half to a follow-up decision. Tenhou never prompts one, so the plan
-    /// says it is still owed rather than pretending it is done.
+    /// Regression (blind riichi): a bot that declares riichi without naming
+    /// the tile leaves a declaration Tenhou cannot complete — nothing prompts
+    /// a follow-up decision, and at clock expiry the *client* finishes the
+    /// riichi by throwing the drawn tile, committing the hand to a wait the
+    /// bot never chose. The plan must not press anything at all.
     #[test]
-    fn a_riichi_with_no_tile_named_still_owes_its_discard() {
-        use crate::autoplay::platform::Step;
+    fn a_riichi_with_no_tile_named_is_not_declared() {
         let st = tenhou_state::TenhouState {
             seat: 0,
             hand: vec![0, 4, 8],
@@ -805,11 +823,104 @@ mod tests {
         };
         let plan = TenhouAutoplay::new().plan(&ctx);
         assert!(
-            !plan.steps.iter().any(|s| matches!(s, Step::Discard { .. })),
-            "no tile was named, so none may be thrown: {:?}",
+            plan.steps.is_empty(),
+            "a riichi that cannot be completed must not be started: {:?}",
             plan.steps
         );
-        assert!(plan.awaiting_riichi_dahai);
+    }
+
+    /// The same refusal when the hand cannot produce the named tile: a
+    /// declaration whose discard the client would have to resolve itself is
+    /// worse than no declaration.
+    #[test]
+    fn a_riichi_whose_tile_is_not_held_is_not_declared() {
+        let st = tenhou_state::TenhouState {
+            seat: 0,
+            hand: vec![0, 4, 8],
+            melds: Vec::new(),
+            is_tsumo: true,
+            window: Some(tenhou_state::DecisionWindow {
+                ops: tenhou_state::OP_REACH,
+                opened_at: std::time::Instant::now(),
+            }),
+        };
+        let action = MjaiEvent::Reach {
+            actor: 0,
+            pai: Some("9s".into()),
+        };
+        let cfg = crate::config::MajsoulAutoplayConfig::default();
+        let snap = snapshot_fixture();
+        let ctx = ActionContext {
+            action: &action,
+            snapshot: &snap,
+            legal_actions: &[],
+            our_seat: 0,
+            last_kawa_tile: None,
+            last_self_tsumo: None,
+            self_riichi_accepted: false,
+            reach_state: ReachState::Idle,
+            num_players: 4,
+            cfg: &cfg,
+            delay_cfg: crate::config::DelayModelConfig::default(),
+            budget: None,
+            probs: None,
+            delay_script: None,
+            tenhou: Some(&st),
+        };
+        let plan = TenhouAutoplay::new().plan(&ctx);
+        assert!(plan.steps.is_empty(), "{:?}", plan.steps);
+    }
+
+    /// Regression: the plan's discard must name the drawn copy for a
+    /// tsumogiri. The index is also the display — Tenhou shows a tsumogiri
+    /// exactly when the thrown index is the drawn one — and the ordinary
+    /// lookup prefers the higher index, which here is the *held* copy.
+    #[test]
+    fn a_tsumogiri_plan_discards_the_drawn_copy() {
+        use crate::autoplay::platform::Step;
+        let st = tenhou_state::TenhouState {
+            seat: 0,
+            // Two plain 5m: 19 held, 17 drawn last (the tail).
+            hand: vec![19, 17],
+            melds: Vec::new(),
+            is_tsumo: true,
+            window: Some(tenhou_state::DecisionWindow {
+                ops: 0,
+                opened_at: std::time::Instant::now(),
+            }),
+        };
+        let action = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "5m".into(),
+            tsumogiri: true,
+        };
+        let cfg = crate::config::MajsoulAutoplayConfig::default();
+        let snap = snapshot_fixture();
+        let ctx = ActionContext {
+            action: &action,
+            snapshot: &snap,
+            legal_actions: &[],
+            our_seat: 0,
+            last_kawa_tile: None,
+            last_self_tsumo: None,
+            self_riichi_accepted: false,
+            reach_state: ReachState::Idle,
+            num_players: 4,
+            cfg: &cfg,
+            delay_cfg: crate::config::DelayModelConfig::default(),
+            budget: None,
+            probs: None,
+            delay_script: None,
+            tenhou: Some(&st),
+        };
+        let plan = TenhouAutoplay::new().plan(&ctx);
+        assert!(
+            plan.steps
+                .iter()
+                .any(|s| matches!(s, Step::Discard { tile_index: 17 })),
+            "must throw the drawn copy: {:?}",
+            plan.steps
+        );
     }
 
     fn snapshot_fixture() -> crate::game_state::snapshot::GameStateSnapshot {
