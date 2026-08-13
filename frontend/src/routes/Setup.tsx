@@ -12,7 +12,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Cloud } from 'lucide-react'
 import { Toaster } from '@/components/ui/sonner'
 import { InstallBlockingOverlay } from '@/components/InstallBlockingOverlay'
 import { NativeApiFields } from '@/components/NativeApiFields'
@@ -25,6 +24,8 @@ import { useTauriBridge } from '@/hooks/useTauriBridge'
 import { useConfigStore } from '@/stores/configStore'
 import { ManifestField } from '@/components/ManifestField'
 import { GithubMark, DiscordMark } from '@/components/BrandMarks'
+import { MjotLogo } from '@/components/MjotBrand'
+import { NATIVE_3P, NATIVE_4P, isNativeBot } from '@/lib/nativeBots'
 import { AKAGI_GITHUB_URL, AKAGI_DISCORD_URL, openExternal } from '@/lib/external'
 import { PLATFORMS, platformInfo } from '@/lib/platforms'
 import { LANG_LABELS, SUPPORTED_LANGS, type SupportedLang } from '@/i18n'
@@ -46,11 +47,9 @@ const BOT_4P_NAME = 'mortal'
 const BOT_3P_NAME = 'mortal3p'
 const BOT_4P_ASSET = 'release4p.zip'
 const BOT_3P_ASSET = 'release3p.zip'
-// Reserved names of the built-in, pure-Rust bots (see `src/bot/native.rs`).
-// Always available (weights are embedded in the binary), so a native active bot
-// is a working assistant — the wizard must not report "no bot / no analysis".
-const NATIVE_4P_NAME = 'akagi-native'
-const NATIVE_3P_NAME = 'akagi-native3p'
+// The built-in bots (shared names from `@/lib/nativeBots`) are always
+// available (weights are embedded in the binary), so a native active bot is a
+// working assistant — the wizard must not report "no bot / no analysis".
 
 export function Setup() {
   const { t } = useTranslation()
@@ -188,12 +187,16 @@ export function Setup() {
           ...draft.bot,
           // Enable the assistant on setup completion: there's always a working
           // zero-install built-in bot (the BotConfig defaults select it), so
-          // the user gets recommendations out of the box. If a previous run
-          // installed the author bots, keep selecting them; otherwise the
-          // defaults (built-in native bot) stand.
+          // the user gets recommendations out of the box.
+          //
+          // Active-bot pick, in priority order: MJOT enabled → the built-in
+          // bots (cloud inference only applies to them — selecting an author
+          // bot here would finish the wizard with an enabled API nothing
+          // uses); else author bots installed by a previous run → keep them;
+          // else the defaults (built-in native bot) stand.
           enabled: true,
-          active_4p: has4p ? BOT_4P_NAME : draft.bot.active_4p,
-          active_3p: has3p ? BOT_3P_NAME : draft.bot.active_3p,
+          active_4p: draft.bot.api.enabled ? NATIVE_4P : has4p ? BOT_4P_NAME : draft.bot.active_4p,
+          active_3p: draft.bot.api.enabled ? NATIVE_3P : has3p ? BOT_3P_NAME : draft.bot.active_3p,
         },
       }
       await invoke('update_config', { newConfig: final })
@@ -867,13 +870,15 @@ function ConfigureBotsStep({
     <div className="grid gap-4">
       <h2 className="text-lg font-semibold">{t('setup.configure.title')}</h2>
 
-      {/* Built-in bot: optional cloud inference. Shown first — the built-in
-          bot is the always-present default, so this is the primary thing to
-          configure here even when no author bots are installed. */}
+      {/* Built-in bot: optional MJOT cloud inference. Shown first — the
+          built-in bot is the always-present default, so this is the primary
+          thing to configure here even when no author bots are installed.
+          The MJOT lockup is the heading (its wordmark reads "MJOT"); the
+          tagline underneath says what it is. */}
       <div className="rounded-md border p-3 grid gap-3">
-        <div className="flex items-center gap-2 font-medium text-sm">
-          <Cloud className="h-4 w-4" />
-          {t('bots.api.title')}
+        <div className="grid gap-1">
+          <MjotLogo className="h-7 w-auto justify-self-start" label="MJOT" />
+          <span className="text-xs text-muted-foreground">{t('bots.api.mjot_tagline')}</span>
         </div>
         <NativeApiFields
           value={draft.bot.api}
@@ -1001,14 +1006,15 @@ function FinishStep({ draft }: { draft: AppConfig }) {
   }, [])
   const has4p = installed?.some((b) => b.name === BOT_4P_NAME) ?? false
   const has3p = installed?.some((b) => b.name === BOT_3P_NAME) ?? false
-  // Mirror what `finish()` actually persists: prefer the author Mortal bot when
-  // installed, otherwise keep the configured active bot (which defaults to the
-  // built-in native bot). A native active bot is a working assistant, so the
-  // summary must reflect it instead of claiming analysis is unavailable.
-  const eff4p = has4p ? BOT_4P_NAME : draft.bot.active_4p
-  const eff3p = has3p ? BOT_3P_NAME : draft.bot.active_3p
-  const botLabel = (name: string) =>
-    name === NATIVE_4P_NAME || name === NATIVE_3P_NAME ? t('bots.native_builtin') : name
+  // Mirror what `finish()` actually persists: MJOT enabled → the built-in
+  // bots; else prefer the author Mortal bot when installed; else keep the
+  // configured active bot (which defaults to the built-in native bot). A
+  // native active bot is a working assistant, so the summary must reflect it
+  // instead of claiming analysis is unavailable.
+  const apiOn = draft.bot.api.enabled
+  const eff4p = apiOn ? NATIVE_4P : has4p ? BOT_4P_NAME : draft.bot.active_4p
+  const eff3p = apiOn ? NATIVE_3P : has3p ? BOT_3P_NAME : draft.bot.active_3p
+  const botLabel = (name: string) => (isNativeBot(name) ? t('bots.native_builtin') : name)
   const botParts = [
     eff4p ? `${botLabel(eff4p)} (4P)` : null,
     eff3p ? `${botLabel(eff3p)} (3P)` : null,

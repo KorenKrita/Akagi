@@ -367,7 +367,10 @@ pub async fn install_bot_from_github(
     name: Option<String>,
     state: State<'_, AppState>,
 ) -> CmdResult<BotInfo> {
-    let dir = state.config.read().await.bot.dir.clone();
+    let (dir, net) = {
+        let cfg = state.config.read().await;
+        (cfg.bot.dir.clone(), cfg.network.clone())
+    };
     let resolved = resolve_dir(Path::new(&dir));
     std::fs::create_dir_all(&resolved)
         .map_err(|e| format!("create bot dir {}: {e}", resolved.display()))?;
@@ -382,6 +385,7 @@ pub async fn install_bot_from_github(
         &resolved,
         &state.notify_bus,
         state.runtime.as_ref(),
+        &net,
     )
     .await
     .map_err(|e| format!("install: {e:#}"))?;
@@ -430,7 +434,10 @@ pub async fn update_bot_from_manifest(
     name: String,
     state: State<'_, AppState>,
 ) -> CmdResult<BotInfo> {
-    let dir = state.config.read().await.bot.dir.clone();
+    let (dir, net) = {
+        let cfg = state.config.read().await;
+        (cfg.bot.dir.clone(), cfg.network.clone())
+    };
     let resolved = resolve_dir(Path::new(&dir));
     let registry = BotRegistry::scan(&resolved).map_err(|e| format!("scan bots: {e:#}"))?;
     let entry = registry
@@ -462,6 +469,7 @@ pub async fn update_bot_from_manifest(
         &resolved,
         &state.notify_bus,
         state.runtime.as_ref(),
+        &net,
     )
     .await
     .map_err(|e| format!("install: {e:#}"))?;
@@ -1346,29 +1354,44 @@ pub async fn check_for_update(
     let Ok(_guard) = state.updater_lock.try_lock() else {
         return Err("another update operation is in progress".into());
     };
-    crate::updater::check_for_update(UPSTREAM_REPO)
+    let net = state.config.read().await.network.clone();
+    let info = crate::updater::check_for_update(UPSTREAM_REPO, &net)
         .await
-        .map_err(|e| format!("check for update: {e:#}"))
+        .map_err(|e| format!("check for update: {e:#}"))?;
+    // Stash server-side: `apply_update` acts only on what *we* fetched,
+    // never on an UpdateInfo the webview hands back.
+    *state.pending_update.write().await = info.clone();
+    Ok(info)
 }
 
-/// Download the matching release zip, verify SHA-256, swap the binary
-/// via `self_replace::self_replace`, then relaunch. On success the
-/// process exits inside `app.restart()` and this never returns. The
-/// typed error variant lets the frontend distinguish "fall back to
-/// release page" (`read_only_install`, `unsupported_platform`,
-/// `no_matching_asset`) from a real network / integrity error.
+/// Download the release zip found by the last `check_for_update`
+/// (mirror fallback per `[network]` config), verify digest + minisign
+/// signature, swap the binary via `self_replace::self_replace`, then
+/// relaunch. Takes no payload — the pending update is read from
+/// `AppState`, so the webview cannot substitute its own URLs or trust
+/// markers. On success the process exits inside `app.restart()` and
+/// this never returns. The typed error variant lets the frontend
+/// distinguish "fall back to release page" (`read_only_install`,
+/// `unsupported_platform`, `no_matching_asset`, `signature_missing`)
+/// from a real network / integrity error.
 #[tauri::command]
 pub async fn apply_update(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    info: crate::updater::UpdateInfo,
 ) -> Result<(), crate::updater::UpdateError> {
     let Ok(_guard) = state.updater_lock.try_lock() else {
         return Err(crate::updater::UpdateError::Other {
             message: "another update operation is in progress".into(),
         });
     };
-    crate::updater::apply::download_and_apply(&app, &info).await
+    let info = state.pending_update.read().await.clone();
+    let Some(info) = info else {
+        return Err(crate::updater::UpdateError::Other {
+            message: "no pending update — run a check first".into(),
+        });
+    };
+    let net = state.config.read().await.network.clone();
+    crate::updater::apply::download_and_apply(&app, &info, &net).await
 }
 
 // ---------- Built-in bot cloud inference (native API) ----------
@@ -1451,7 +1474,7 @@ pub async fn native_api_models(
     }
 }
 
-/// Liveness + per-model queue depth (`GET /healthz`, no auth).
+/// Liveness + aggregate load (`GET /healthz`, no auth).
 #[tauri::command]
 pub async fn native_api_health(
     base_url: String,
@@ -1596,6 +1619,50 @@ pub async fn native_api_subscription_result(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Start a Creem checkout (`POST /creem/create-checkout`, no auth). One
+/// endpoint for both one-time and subscription products. Not idempotent —
+/// each call opens a fresh checkout.
+///
+/// `redeem` mirrors `native_api_create_order`: one-time products only,
+/// `true` has the poll return the API key directly instead of a redeem code.
+#[tauri::command]
+pub async fn native_api_create_checkout(
+    base_url: String,
+    use_system_proxy: Option<bool>,
+    product: String,
+    redeem: bool,
+) -> CmdResult<crate::bot::purchase::CreatedCheckout> {
+    crate::bot::purchase::create_checkout(
+        &base_url,
+        use_system_proxy.unwrap_or(false),
+        &product,
+        redeem,
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// Poll a Creem checkout (`POST /creem/result`, no auth). Idempotent; same
+/// payload shape as the PayPal order poll — on `ready` a one-time purchase
+/// carries the code or key per its `redeem` flag, a subscription carries the
+/// key with `days: 0`.
+#[tauri::command]
+pub async fn native_api_checkout_result(
+    base_url: String,
+    use_system_proxy: Option<bool>,
+    checkout_id: String,
+    claim: String,
+) -> CmdResult<crate::bot::purchase::OrderResult> {
+    crate::bot::purchase::checkout_result(
+        &base_url,
+        use_system_proxy.unwrap_or(false),
+        &checkout_id,
+        &claim,
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
+}
+
 fn persist_config(config: &AppConfig, path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1679,6 +1746,8 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::native_api_order_result,
             $crate::ipc::commands::native_api_create_subscription,
             $crate::ipc::commands::native_api_subscription_result,
+            $crate::ipc::commands::native_api_create_checkout,
+            $crate::ipc::commands::native_api_checkout_result,
         ]
     };
 }

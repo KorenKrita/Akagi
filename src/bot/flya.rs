@@ -6,7 +6,6 @@ use crate::bot::api::{
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 use std::time::Duration;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -235,10 +234,11 @@ impl FlyApiClient {
 
     pub async fn health(&self) -> Result<Health> {
         let models = self.models().await?;
+        let workers_alive = !models.is_empty();
         Ok(Health {
-            status: if models.is_empty() { "degraded" } else { "ok" }.to_string(),
-            models: models.into_iter().map(|m| m.id).collect(),
-            queue_depth: BTreeMap::new(),
+            status: if workers_alive { "ok" } else { "degraded" }.to_string(),
+            queue_depth: 0,
+            workers_alive,
         })
     }
 

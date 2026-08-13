@@ -1,26 +1,40 @@
-//! Download a release zip, verify SHA-256, extract just the binary,
-//! atomically swap it into place via `self_replace`, then trigger a
-//! restart.
+//! Download a release zip (direct or via mirrors), verify integrity,
+//! extract just the binary, atomically swap it into place via
+//! `self_replace`, then trigger a restart.
+//!
+//! Integrity policy: the SHA-256 digest from release metadata is checked
+//! when present, but the *trust anchor* is the minisign signature —
+//! metadata and bytes may both have come through an untrusted
+//! accelerator mirror. When any part of the flow touched a mirror, a
+//! valid signature is mandatory; a fully-direct download of an old
+//! unsigned release keeps the historical digest-only behaviour.
 //!
 //! Only the running platform's binary is extracted — the bundled
 //! Python+UV runtime tree stays untouched. That's fine for normal patch
 //! releases (which only change Rust code); the user is reminded in the
 //! UI that runtime-bump releases may require a full reinstall.
 
-use crate::github::{build_client, extract_zip_safe};
+use crate::config::NetworkConfig;
+use crate::github::mirror::{self, Source};
+use crate::github::{
+    build_client, download_with_fallback, extract_zip_safe, fetch_text_with_fallback, signing,
+};
 use crate::updater::check::UpdateInfo;
 use crate::updater::error::UpdateError;
 use anyhow::{anyhow, Context, Result};
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
-use tokio::io::AsyncWriteExt;
+use tracing::{info as log_info, warn};
 
 /// Top-level entry point called by the `apply_update` IPC command.
 /// On success the function does NOT return — `app.restart()` exits the
 /// process. Failures map to `UpdateError` so the frontend can decide
 /// between a generic toast and a "fall back to release page" hint.
-pub async fn download_and_apply(app: &AppHandle, info: &UpdateInfo) -> Result<(), UpdateError> {
+pub async fn download_and_apply(
+    app: &AppHandle,
+    info: &UpdateInfo,
+    net: &NetworkConfig,
+) -> Result<(), UpdateError> {
     // Determine the running exe path and verify its parent is writable
     // before we burn bandwidth on a download we can't apply.
     let current_exe = std::env::current_exe()
@@ -44,13 +58,62 @@ pub async fn download_and_apply(app: &AppHandle, info: &UpdateInfo) -> Result<()
         .context("create staging dir next to current exe")
         .map_err(UpdateError::from)?;
     let zip_path = tempdir.path().join("release.zip");
-    let downloaded_digest = download_zip(&info.asset_url, &zip_path)
-        .await
-        .map_err(UpdateError::from)?;
+
+    let client = build_client().map_err(UpdateError::from)?;
+    let zip_candidates = mirror::candidates(net, &info.asset_url);
+    let (zip_source, downloaded_digest) =
+        download_with_fallback(&client, &zip_candidates, &zip_path)
+            .await
+            .map_err(UpdateError::from)?;
+    log_info!(
+        "update zip downloaded via {zip_source:?} ({} bytes expected)",
+        info.asset_size
+    );
 
     if let Some(expected) = info.asset_digest_sha256.as_deref() {
         if !downloaded_digest.eq_ignore_ascii_case(expected) {
             return Err(UpdateError::DigestMismatch);
+        }
+    }
+
+    // Signature policy. `mirror_involved` is the union of every place
+    // untrusted bytes could have entered: the metadata fetch (digest and
+    // asset URL fields) and the zip download itself.
+    let mirror_involved = info.meta_source == Source::Mirror || zip_source == Source::Mirror;
+    match info.sig_url.as_deref() {
+        Some(sig_url) => {
+            let sig_candidates = mirror::candidates(net, sig_url);
+            let (sig_text, sig_source) = fetch_text_with_fallback(&client, &sig_candidates)
+                .await
+                .context("fetch release signature")
+                .map_err(UpdateError::from)?;
+            log_info!("release signature fetched via {sig_source:?}");
+            // The expected trusted comment is computed from the version
+            // the release CLAIMS to be and our own platform triple —
+            // never from the metadata's asset name. Forged metadata that
+            // pairs a fake newer tag with a genuine (validly signed)
+            // older zip then fails right here: no signature exists whose
+            // trusted comment names the fake version. This ties the
+            // signature to `scripts/package-zip.sh`'s naming; if a
+            // release's tag and Cargo version ever disagree, the update
+            // fails closed to the release page.
+            let triple = crate::updater::check::triple_for_current_platform()
+                .ok_or(UpdateError::UnsupportedPlatform)?;
+            let expected_name =
+                crate::updater::check::expected_asset_name(&info.latest_version, triple);
+            if let Err(e) = signing::verify_release_asset(&zip_path, &sig_text, &expected_name) {
+                warn!("release signature verification failed: {e:#}");
+                return Err(UpdateError::SignatureInvalid);
+            }
+        }
+        None if mirror_involved => {
+            // Unsigned release + untrusted transport: refuse. The user
+            // can still update manually from the release page.
+            return Err(UpdateError::SignatureMissing);
+        }
+        None => {
+            // Old unsigned release over a direct connection — the
+            // pre-signing trust level, digest check above still applies.
         }
     }
 
@@ -111,42 +174,6 @@ fn is_dir_writable(dir: &Path) -> bool {
     }
 }
 
-/// Stream `url` to `path`, returning the hex SHA-256 of the bytes
-/// written. We hash on the fly so a multi-hundred-MB zip never has to
-/// be re-read just to digest it.
-async fn download_zip(url: &str, path: &Path) -> Result<String> {
-    let client = build_client()?;
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .context("send download request")?
-        .error_for_status()
-        .context("download endpoint returned error")?;
-
-    let mut file = tokio::fs::File::create(path)
-        .await
-        .with_context(|| format!("create {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    while let Some(chunk) = response.chunk().await.context("read body chunk")? {
-        hasher.update(&chunk);
-        file.write_all(&chunk)
-            .await
-            .with_context(|| format!("write {}", path.display()))?;
-    }
-    file.flush().await.ok();
-    Ok(hex_encode(hasher.finalize().as_slice()))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        use std::fmt::Write;
-        let _ = write!(out, "{b:02x}");
-    }
-    out
-}
-
 /// Walk `dir` looking for an entry whose file name matches `binary_name`.
 /// The release zip wraps everything in a single top-level
 /// `akagi-<version>-<triple>/` directory so we have to descend at least
@@ -192,16 +219,6 @@ mod tests {
             z.write_all(body).unwrap();
         }
         z.finish().unwrap();
-    }
-
-    #[test]
-    fn hex_encode_matches_known_value() {
-        // SHA-256 of empty input.
-        let h = Sha256::digest(b"");
-        assert_eq!(
-            hex_encode(h.as_slice()),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
     }
 
     #[test]

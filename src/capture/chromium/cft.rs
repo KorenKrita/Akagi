@@ -186,7 +186,7 @@ struct ManifestDownload {
     url: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct ManifestDownloads {
     #[serde(default)]
     chrome: Vec<ManifestDownload>,
@@ -195,6 +195,10 @@ struct ManifestDownloads {
 #[derive(Debug, Clone, Deserialize)]
 struct ChannelEntry {
     version: String,
+    /// Absent in npmmirror's `last-known-good-versions.json` (the
+    /// downloads-free variant is the only channels manifest the mirror
+    /// carries) — the binary URL is constructed from the version instead.
+    #[serde(default)]
     downloads: ManifestDownloads,
 }
 
@@ -231,53 +235,134 @@ const CHANNELS_URL: &str =
 const ALL_VERSIONS_URL: &str =
     "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json";
 
-/// Resolve a `Channel` to a concrete `(version, asset_url)` pair for
-/// the host platform. Two manifest fetches at most:
-/// - For Stable/Beta/Dev/Canary, only the channels endpoint.
-/// - For a literal version, only the all-versions endpoint.
-async fn resolve_asset(client: &reqwest::Client, channel: &Channel) -> Result<(String, String)> {
+/// Official binary bucket — every `downloads.chrome[].url` in the
+/// manifests points here. Hard-blocked in mainland China.
+const GCS_BASE: &str = "https://storage.googleapis.com/chrome-for-testing-public";
+/// npmmirror (Alibaba) mirrors the GCS bucket layout 1:1 plus a subset
+/// of the metadata files: `last-known-good-versions.json` (channels,
+/// no download URLs) and `known-good-versions-with-downloads.json`.
+/// Verified 2026-08-12. The `-with-downloads` channels variant and the
+/// `LATEST_RELEASE_*` pins are NOT mirrored.
+const NPMMIRROR_BASE: &str = "https://registry.npmmirror.com/-/binary/chrome-for-testing";
+
+/// Per-attempt ceiling on manifest fetches. The all-versions manifest is
+/// ~5 MB, so this is generous; the point is that a black-holed
+/// connection fails over to the mirror instead of hanging forever.
+const MANIFEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// Rewrite an official GCS binary URL to its npmmirror twin. `None`
+/// when the URL isn't under the GCS bucket.
+fn npmmirror_rewrite(url: &str) -> Option<String> {
+    url.strip_prefix(GCS_BASE)
+        .map(|rest| format!("{NPMMIRROR_BASE}{rest}"))
+}
+
+/// Binary URL constructed from scratch — used when the manifest came
+/// from npmmirror's downloads-free channels file. The path layout
+/// `<ver>/<platform>/chrome-<platform>.zip` is shared by both hosts.
+fn binary_url(base: &str, version: &str, platform: &str) -> String {
+    format!("{base}/{version}/{platform}/chrome-{platform}.zip")
+}
+
+async fn fetch_json<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    url: &str,
+    what: &str,
+) -> Result<T> {
+    client
+        .get(url)
+        .timeout(MANIFEST_TIMEOUT)
+        .send()
+        .await
+        .with_context(|| format!("fetch {what}"))?
+        .error_for_status()
+        .with_context(|| format!("{what} endpoint returned an error"))?
+        .json()
+        .await
+        .with_context(|| format!("parse {what}"))
+}
+
+fn pick_channel(bag: ChannelsBag, channel: &Channel) -> Result<ChannelEntry> {
+    match channel {
+        Channel::Stable => bag.stable,
+        Channel::Beta => bag.beta,
+        Channel::Dev => bag.dev,
+        Channel::Canary => bag.canary,
+        Channel::Literal(_) => None,
+    }
+    .ok_or_else(|| anyhow!("channel not present in CfT manifest"))
+}
+
+/// Resolve a `Channel` to a concrete `(version, download candidates)`
+/// for the host platform. Candidates are tried in order by the caller;
+/// the second entry is always the other host's URL for the same file,
+/// so a user who can reach the manifest but not the binary bucket (or
+/// vice versa) still succeeds.
+///
+/// Official endpoints are tried first; when they are unreachable the
+/// resolve falls back to npmmirror's mirrored metadata (channel pins
+/// without download URLs, so the binary URL is constructed from the
+/// shared bucket layout).
+async fn resolve_asset(
+    client: &reqwest::Client,
+    channel: &Channel,
+) -> Result<(String, Vec<String>)> {
     let platform = cft_platform()
         .ok_or_else(|| anyhow!("Chrome-for-Testing is not available for this platform"))?;
     match channel {
         Channel::Stable | Channel::Beta | Channel::Dev | Channel::Canary => {
-            let m: ChannelsManifest = client
-                .get(CHANNELS_URL)
-                .send()
+            match fetch_json::<ChannelsManifest>(client, CHANNELS_URL, "CfT channels manifest")
                 .await
-                .context("fetch CfT channels manifest")?
-                .error_for_status()?
-                .json()
-                .await
-                .context("parse CfT channels manifest")?;
-            let entry = match channel {
-                Channel::Stable => m.channels.stable,
-                Channel::Beta => m.channels.beta,
-                Channel::Dev => m.channels.dev,
-                Channel::Canary => m.channels.canary,
-                Channel::Literal(_) => unreachable!(),
+            {
+                Ok(m) => {
+                    let entry = pick_channel(m.channels, channel)?;
+                    let url = entry
+                        .downloads
+                        .chrome
+                        .into_iter()
+                        .find(|d| d.platform == platform)
+                        .ok_or_else(|| {
+                            anyhow!("CfT manifest has no {platform} asset for {}", entry.version)
+                        })?
+                        .url;
+                    let mut candidates = vec![url.clone()];
+                    candidates.extend(npmmirror_rewrite(&url));
+                    Ok((entry.version, candidates))
+                }
+                Err(e) => {
+                    warn!("official CfT channels manifest unreachable ({e:#}); trying npmmirror");
+                    let m: ChannelsManifest = fetch_json(
+                        client,
+                        &format!("{NPMMIRROR_BASE}/last-known-good-versions.json"),
+                        "npmmirror CfT channels manifest",
+                    )
+                    .await?;
+                    let entry = pick_channel(m.channels, channel)?;
+                    let candidates = vec![
+                        binary_url(NPMMIRROR_BASE, &entry.version, platform),
+                        binary_url(GCS_BASE, &entry.version, platform),
+                    ];
+                    Ok((entry.version, candidates))
+                }
             }
-            .ok_or_else(|| anyhow!("channel not present in CfT manifest"))?;
-            let url = entry
-                .downloads
-                .chrome
-                .into_iter()
-                .find(|d| d.platform == platform)
-                .ok_or_else(|| {
-                    anyhow!("CfT manifest has no {platform} asset for {}", entry.version)
-                })?
-                .url;
-            Ok((entry.version, url))
         }
         Channel::Literal(v) => {
-            let m: AllVersionsManifest = client
-                .get(ALL_VERSIONS_URL)
-                .send()
-                .await
-                .context("fetch CfT all-versions manifest")?
-                .error_for_status()?
-                .json()
-                .await
-                .context("parse CfT all-versions manifest")?;
+            let (m, from_mirror): (AllVersionsManifest, bool) =
+                match fetch_json(client, ALL_VERSIONS_URL, "CfT all-versions manifest").await {
+                    Ok(m) => (m, false),
+                    Err(e) => {
+                        warn!(
+                        "official CfT all-versions manifest unreachable ({e:#}); trying npmmirror"
+                    );
+                        let m = fetch_json(
+                            client,
+                            &format!("{NPMMIRROR_BASE}/known-good-versions-with-downloads.json"),
+                            "npmmirror CfT all-versions manifest",
+                        )
+                        .await?;
+                        (m, true)
+                    }
+                };
             let entry = m
                 .versions
                 .into_iter()
@@ -290,7 +375,14 @@ async fn resolve_asset(client: &reqwest::Client, channel: &Channel) -> Result<(S
                 .find(|d| d.platform == platform)
                 .ok_or_else(|| anyhow!("CfT manifest has no {platform} asset for {v}"))?
                 .url;
-            Ok((entry.version, url))
+            let candidates = match (npmmirror_rewrite(&url), from_mirror) {
+                // Manifest came from the mirror → the binary bucket is
+                // likely blocked too; try the mirror first.
+                (Some(alt), true) => vec![alt, url],
+                (Some(alt), false) => vec![url, alt],
+                (None, _) => vec![url],
+            };
+            Ok((entry.version, candidates))
         }
     }
 }
@@ -304,6 +396,9 @@ async fn resolve_asset(client: &reqwest::Client, channel: &Channel) -> Result<(S
 pub async fn install(channel: &Channel, notify: &NotifyBus) -> Result<String> {
     let client = reqwest::Client::builder()
         .user_agent("akagi-cft-downloader")
+        // Short connect ceiling: blocked hosts black-hole rather than
+        // reset, and fallback to the mirror needs the attempt to *fail*.
+        .connect_timeout(std::time::Duration::from_secs(10))
         .build()
         .context("build http client")?;
     let toast = "capture-cft-download";
@@ -314,7 +409,7 @@ pub async fn install(channel: &Channel, notify: &NotifyBus) -> Result<String> {
             .sticky()
             .id(toast),
     );
-    let (version, url) = resolve_asset(&client, channel).await?;
+    let (version, url_candidates) = resolve_asset(&client, channel).await?;
     let install_dir = install_dir_for(&version)?;
     if install_dir.exists() && installed_chrome_exists(&install_dir) {
         let _ = notify.send(
@@ -324,7 +419,6 @@ pub async fn install(channel: &Channel, notify: &NotifyBus) -> Result<String> {
         return Ok(version);
     }
 
-    info!("downloading CfT {version} from {url}");
     let _ = notify.send(
         Notification::info(format!("Downloading Chrome for Testing {version}"))
             .body("0%")
@@ -338,7 +432,25 @@ pub async fn install(channel: &Channel, notify: &NotifyBus) -> Result<String> {
     std::fs::create_dir_all(&staging_root)
         .with_context(|| format!("create {}", staging_root.display()))?;
     let zip_path = staging_root.join(format!("cft-{version}.zip"));
-    download_with_progress(&client, &url, &zip_path, notify, toast, &version).await?;
+    let mut last_err: Option<anyhow::Error> = None;
+    let mut downloaded = false;
+    for url in &url_candidates {
+        info!("downloading CfT {version} from {url}");
+        match download_with_progress(&client, url, &zip_path, notify, toast, &version).await {
+            Ok(()) => {
+                downloaded = true;
+                break;
+            }
+            Err(e) => {
+                warn!("CfT download from {url} failed: {e:#}");
+                let _ = std::fs::remove_file(&zip_path);
+                last_err = Some(e.context(format!("download {url}")));
+            }
+        }
+    }
+    if !downloaded {
+        return Err(last_err.unwrap_or_else(|| anyhow!("no CfT download candidates")));
+    }
 
     let _ = notify.send(
         Notification::info(format!("Installing Chrome for Testing {version}"))
@@ -433,7 +545,14 @@ async fn download_with_progress(
         .with_context(|| format!("create {}", dest.display()))?;
     let mut downloaded: u64 = 0;
     let mut last_emit = std::time::Instant::now();
-    while let Some(chunk) = response.chunk().await.context("read body chunk")? {
+    // Bound the quiet time between chunks (not total transfer time) so a
+    // stalled connection fails over to the next URL candidate.
+    while let Some(chunk) =
+        tokio::time::timeout(std::time::Duration::from_secs(60), response.chunk())
+            .await
+            .context("download stalled")?
+            .context("read body chunk")?
+    {
         file.write_all(&chunk)
             .await
             .with_context(|| format!("write {}", dest.display()))?;
@@ -537,6 +656,59 @@ mod tests {
         let key_garbage = version_sort_key("not-a-version");
         // garbage should sort *less* than well-formed (i64::MIN component)
         assert!(key_garbage < key_good);
+    }
+
+    #[test]
+    fn npmmirror_rewrite_maps_gcs_urls_only() {
+        assert_eq!(
+            npmmirror_rewrite(
+                "https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.138/linux64/chrome-linux64.zip"
+            )
+            .as_deref(),
+            Some(
+                "https://registry.npmmirror.com/-/binary/chrome-for-testing/151.0.7922.138/linux64/chrome-linux64.zip"
+            )
+        );
+        assert_eq!(npmmirror_rewrite("https://example.com/chrome.zip"), None);
+    }
+
+    #[test]
+    fn binary_url_matches_bucket_layout() {
+        assert_eq!(
+            binary_url(GCS_BASE, "151.0.7922.138", "win64"),
+            "https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.138/win64/chrome-win64.zip"
+        );
+        assert_eq!(
+            binary_url(NPMMIRROR_BASE, "151.0.7922.138", "mac-arm64"),
+            "https://registry.npmmirror.com/-/binary/chrome-for-testing/151.0.7922.138/mac-arm64/chrome-mac-arm64.zip"
+        );
+    }
+
+    /// npmmirror only carries the downloads-free channels manifest
+    /// (`last-known-good-versions.json`); its entries must parse with
+    /// `downloads` defaulting to empty.
+    #[test]
+    fn channels_manifest_parses_npmmirror_shape_without_downloads() {
+        let body = r#"{
+            "timestamp": "2026-08-11T22:20:47.187Z",
+            "channels": {
+                "Stable": { "channel": "Stable", "version": "151.0.7922.138", "revision": "1654411" },
+                "Beta":   { "channel": "Beta",   "version": "152.0.7977.30",  "revision": "1669021" }
+            }
+        }"#;
+        let m: ChannelsManifest = serde_json::from_str(body).unwrap();
+        let stable = pick_channel(m.channels.clone(), &Channel::Stable).unwrap();
+        assert_eq!(stable.version, "151.0.7922.138");
+        assert!(stable.downloads.chrome.is_empty());
+        let beta = pick_channel(m.channels, &Channel::Beta).unwrap();
+        assert_eq!(beta.version, "152.0.7977.30");
+    }
+
+    #[test]
+    fn pick_channel_missing_channel_errors() {
+        let body = r#"{ "channels": { "Stable": { "version": "1.2.3.4", "downloads": {} } } }"#;
+        let m: ChannelsManifest = serde_json::from_str(body).unwrap();
+        assert!(pick_channel(m.channels, &Channel::Canary).is_err());
     }
 
     #[test]

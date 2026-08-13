@@ -69,21 +69,26 @@ bridge to them.
   the client-wide `REQUEST_TIMEOUT`. Building an `ApiClient` builds a fresh
   connection pool, so hold one and reuse it. Consumed by `NativeBot` and by the
   `native_api_*` IPC commands (redeem a code, check a key, list models).
-- `purchase` — the unauthenticated PayPal handshake used by the in-app "Buy
-  key" flow: `create_order` / `create_subscription` return an `approve_url`
-  plus a `claim_secret`, and `order_result` / `subscription_result` poll with
-  that secret until the server hands back a key. `create_order` takes a
-  `redeem` flag: with `true` the server redeems the prepaid code into a key
-  itself, so the poll — and the buyer's backup email — carry the key rather
-  than a one-time code the app has already spent. Pass `false` only to renew
-  an existing key, the one case that needs the raw code, since `renew_key`
-  exists only on `/v3/redeem`; the caller branches on whichever of
-  `OrderResult`'s `key` / `code` is set, not on the flag it sent, so an older
-  server that ignores `redeem` still degrades to the classic flow. Prices are
-  server-owned — only the product id crosses the wire, and no client secret is
-  embedded in the binary. Stateless like `api`; the polling state machine lives
-  in the frontend's purchase store, driven through the `native_api_*` IPC
-  commands.
+- `purchase` — the unauthenticated payment handshakes used by the in-app "Buy
+  key" flow, one per provider. PayPal: `create_order` / `create_subscription`
+  return an `approve_url` plus a `claim_secret`, and `order_result` /
+  `subscription_result` poll with that secret until the server hands back a
+  key. Creem (merchant of record): `create_checkout` serves both product kinds
+  through one endpoint and `checkout_result` is the single poll — its payload
+  reuses `OrderResult` (a subscription resolves to `key` with `days: 0`).
+  `create_order` / `create_checkout` take a `redeem` flag: with `true` the
+  server redeems the prepaid code into a key itself, so the poll — and the
+  buyer's backup email — carry the key rather than a one-time code the app has
+  already spent. Pass `false` only to renew an existing key, the one case that
+  needs the raw code, since `renew_key` exists only on `/v3/redeem`; the
+  caller branches on whichever of `OrderResult`'s `key` / `code` is set, not
+  on the flag it sent, so an older server that ignores `redeem` still degrades
+  to the classic flow. (On the Creem create, `redeem: false` is omitted from
+  the wire entirely — the endpoint is shared with subscriptions, where an
+  unexpected field risks a `400`.) Prices are server-owned — only the product
+  id crosses the wire, and no client secret is embedded in the binary.
+  Stateless like `api`; the polling state machine lives in the frontend's
+  purchase store, driven through the `native_api_*` IPC commands.
 - `supervisor` — `run_bot_manager`: constructs the `BotManager` and drives
   its run loop off the `MjaiBus`. Tolerates a missing Python runtime — the
   built-in `native` bots need none.

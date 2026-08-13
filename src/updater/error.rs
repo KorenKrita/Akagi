@@ -29,6 +29,20 @@ pub enum UpdateError {
     #[error("downloaded asset SHA-256 digest does not match release metadata")]
     DigestMismatch,
 
+    /// Some part of the update flow went through a third-party mirror,
+    /// but the release ships no minisign signature to verify the bytes
+    /// against (releases before v3.6 are unsigned). UI falls back to
+    /// "Open release page" so the user can download over a channel they
+    /// trust.
+    #[error("release is unsigned and the download used a mirror; refusing to install")]
+    SignatureMissing,
+
+    /// The downloaded zip failed minisign verification (bad signature,
+    /// wrong key, or a validly-signed *different* asset — version swap).
+    /// We refuse to swap regardless of where the bytes came from.
+    #[error("release signature verification failed")]
+    SignatureInvalid,
+
     /// The matching asset for the running triple isn't in the release.
     /// Either the workflow didn't upload it yet, or the version pre-dates
     /// the current platform support.

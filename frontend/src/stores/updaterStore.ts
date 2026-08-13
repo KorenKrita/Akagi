@@ -14,6 +14,10 @@ export type UpdateInfo = {
   asset_url: string
   asset_size: number
   asset_digest_sha256: string | null
+  /** `.minisig` companion asset URL; null for unsigned (≤v3.5.0) releases. */
+  sig_url: string | null
+  /** Where the release metadata came from ('direct' GitHub or a 'mirror'). */
+  meta_source: 'direct' | 'mirror'
 }
 
 /// Mirrors `crate::updater::error::UpdateError`. The `kind` tag is what
@@ -23,6 +27,8 @@ export type UpdateError =
   | { kind: 'unsupported_platform' }
   | { kind: 'read_only_install'; path: string }
   | { kind: 'digest_mismatch' }
+  | { kind: 'signature_missing' }
+  | { kind: 'signature_invalid' }
   | { kind: 'no_matching_asset' }
   | { kind: 'other'; message: string }
 
@@ -111,7 +117,10 @@ export const useUpdaterStore = create<UpdaterStore>()(
         if (!info || get().applying) return null
         set({ applying: true })
         try {
-          await invoke<void>('apply_update', { info })
+          // No payload: the backend applies the update it found during
+          // check_for_update (stashed server-side), so the webview can't
+          // substitute URLs or trust markers.
+          await invoke<void>('apply_update')
           // Unreachable on success — the backend calls
           // `AppHandle::restart` after a successful swap, which exits
           // the current process.

@@ -35,7 +35,7 @@ import { toast } from '@/components/ui/sonner'
 import { PurchaseDialog } from '@/components/PurchaseDialog'
 import { useConfigStore } from '@/stores/configStore'
 import { usePurchaseStore, type PurchasePhase } from '@/stores/purchaseStore'
-import type { KeyStatus, ModelInfo, NativeApiConfig, RedeemResponse } from '@/types'
+import type { ApiHealth, KeyStatus, ModelInfo, NativeApiConfig, RedeemResponse } from '@/types'
 
 /** Shape of a key the server issues: 32 letters and digits, nothing else. */
 const KEY_PATTERN = /^[A-Za-z0-9]{32}$/
@@ -276,15 +276,16 @@ export function NativeApiFields({
     setCheckingHealth(true)
     setErr(null)
     try {
-      const h = await invoke<{ status: string; models: string[] }>('native_api_health', {
+      const h = await invoke<ApiHealth>('native_api_health', {
         baseUrl: activeBaseUrl,
         key: activeKey,
         provider,
         useSystemProxy: value.use_system_proxy,
       })
-      toast.success(t('bots.api.health_ok', { status: h.status }), {
-        description: h.models.join(', '),
-      })
+      const msg = t('bots.api.health_ok', { status: h.status })
+      const opts = { description: t('bots.api.health_queue', { n: h.queue_depth }) }
+      if (h.status === 'ok') toast.success(msg, opts)
+      else toast.warning(msg, opts)
     } catch (e) {
       setErr(String(e))
     } finally {

@@ -4,10 +4,12 @@ import {
   AlertTriangle,
   CheckCircle2,
   ExternalLink,
+  Info,
   Mail,
   RefreshCw,
   XCircle,
 } from 'lucide-react'
+import { useKeyStatus } from '@/hooks/useKeyStatus'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -18,15 +20,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { MjotMark } from '@/components/MjotBrand'
 import { PRODUCTS, type Product } from '@/lib/products'
-import { usePurchaseStore } from '@/stores/purchaseStore'
+import { usePurchaseStore, type PaymentProvider } from '@/stores/purchaseStore'
 
 /**
- * Self-serve key purchase (PayPal). Mirrors the RedeemDialog contract: the
- * minted key is handed to `onNewKey`, which routes it into the key field and
- * (on the Bots page) persists it immediately. The purchase itself runs in
- * `purchaseStore`, so closing this dialog mid-checkout does NOT abort it —
- * the buyer can finish on PayPal and reopen the dialog (or just wait; a key
+ * Self-serve key purchase (Creem by default, PayPal behind an explicit
+ * switch). Mirrors the RedeemDialog contract: the minted key is handed to
+ * `onNewKey`, which routes it into the key field and (on the Bots page)
+ * persists it immediately. The purchase itself runs in `purchaseStore`, so
+ * closing this dialog mid-checkout does NOT abort it — the buyer can finish
+ * on the provider's checkout page and reopen the dialog (or just wait; a key
  * that arrives with the dialog closed is auto-saved to the config).
  */
 export function PurchaseDialog({
@@ -45,11 +49,32 @@ export function PurchaseDialog({
   const { t } = useTranslation()
   const p = usePurchaseStore()
   const [productId, setProductId] = useState<string | null>(null)
-  const [renew, setRenew] = useState(false)
+  // Creem (card / Google Pay / Apple Pay / Alipay) is the primary provider;
+  // PayPal stays available but only behind an explicit "pay with PayPal
+  // instead" click, never as the default.
+  const [provider, setProvider] = useState<PaymentProvider>('creem')
+  /** The buyer's explicit renew choice; `null` = not touched, use the default. */
+  const [renewChoice, setRenewChoice] = useState<boolean | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   const selected: Product | null = PRODUCTS.find((x) => x.id === productId) ?? null
   const busy = p.phase === 'creating' || p.phase === 'approving' || p.phase === 'redeeming'
+  // Brand name for interpolated strings ("opens {{provider}}") — a proper
+  // noun, so it is NOT translated; the picker labels are (they may carry a
+  // descriptive suffix like the supported payment methods).
+  const providerName = provider === 'paypal' ? 'PayPal' : 'Creem'
+
+  // Is the saved key still alive? Besides liveness, the status carries the
+  // plan, which decides whether stacking time onto the key is even legal
+  // (renewal codes are same-plan only).
+  const keyStatus = useKeyStatus(baseUrl, useSystemProxy, currentKey)
+
+  // A buyer who already holds a live key of the product's plan almost always
+  // wants MORE TIME on it, not a second credential — so renewal defaults ON
+  // for that case (with a visible reminder below the switch). An explicit
+  // toggle by the buyer always wins over the default.
+  const renew =
+    renewChoice ?? (keyStatus !== null && selected !== null && keyStatus.plan === selected.plan)
 
   // While mounted, a freshly-minted key flows through the same path as a
   // redeemed one (key field + caller-side persist).
@@ -80,6 +105,7 @@ export function PurchaseDialog({
       baseUrl,
       useSystemProxy,
       product: selected,
+      provider,
       renewKey: renew && selected.kind === 'onetime' ? currentKey : undefined,
     })
   }
@@ -114,7 +140,11 @@ export function PurchaseDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('bots.api.buy_title')}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2.5">
+            {/* Decorative — the title text right beside it names MJOT. */}
+            <MjotMark className="h-7 w-auto shrink-0" />
+            {t('bots.api.buy_title')}
+          </DialogTitle>
         </DialogHeader>
 
         {p.phase === 'idle' && (
@@ -150,19 +180,58 @@ export function PurchaseDialog({
             </div>
             <span className="text-xs text-muted-foreground">{t('bots.api.buy_price_note')}</span>
 
-            {selected?.kind === 'onetime' && currentKey.trim() !== '' && (
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex flex-col">
-                  <Label>{t('bots.api.buy_renew')}</Label>
-                  <span className="text-xs text-muted-foreground">
-                    {t('bots.api.buy_renew_hint')}
-                  </span>
-                </div>
-                <Switch checked={renew} onCheckedChange={setRenew} />
+            {/* Creem is the one visible payment method; PayPal exists only as
+                the muted "pay with PayPal instead" escape hatch (and a way
+                back). No two-card picker — the default should not look like
+                an open question. */}
+            <div className="grid gap-1">
+              <Label>{t('bots.api.buy_provider')}</Label>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                <span className="text-sm">
+                  {provider === 'creem'
+                    ? t('bots.api.buy_provider_creem')
+                    : t('bots.api.buy_provider_paypal')}
+                </span>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                  onClick={() => setProvider(provider === 'creem' ? 'paypal' : 'creem')}
+                >
+                  {provider === 'creem'
+                    ? t('bots.api.buy_switch_paypal')
+                    : t('bots.api.buy_switch_creem')}
+                </button>
               </div>
+            </div>
+
+            {selected?.kind === 'onetime' && currentKey.trim() !== '' && (
+              <>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex flex-col">
+                    <Label>{t('bots.api.buy_renew')}</Label>
+                    <span className="text-xs text-muted-foreground">
+                      {t('bots.api.buy_renew_hint')}
+                    </span>
+                  </div>
+                  <Switch checked={renew} onCheckedChange={setRenewChoice} />
+                </div>
+                {renew && (
+                  <div className="flex items-start gap-2 rounded-md border border-primary/40 bg-primary/5 p-2">
+                    <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <span className="text-xs">
+                      {t('bots.api.buy_renew_active', {
+                        last4: currentKey.trim().slice(-4),
+                        until: keyStatus?.expires_at ?? '—',
+                      })}
+                    </span>
+                  </div>
+                )}
+              </>
             )}
             {selected?.kind === 'subscription' && (
-              <span className="text-xs text-muted-foreground">{t('bots.api.buy_sub_hint')}</span>
+              <span className="text-xs text-muted-foreground">
+                {t('bots.api.buy_sub_hint', { provider: providerName })}
+              </span>
             )}
             {err && <span className="text-sm text-red-400 [overflow-wrap:anywhere]">{err}</span>}
           </div>
@@ -312,7 +381,7 @@ export function PurchaseDialog({
                 {t('common.close')}
               </Button>
               <Button onClick={buy} disabled={!selected}>
-                {t('bots.api.buy_submit')}
+                {t('bots.api.buy_submit', { provider: providerName })}
               </Button>
             </>
           )}

@@ -14,10 +14,7 @@ import {
   TONE_DOT,
   type IndicatorTone,
 } from '@/lib/statusIndicators'
-
-// Reserved built-in bot names (see `src/bot/native.rs`).
-const NATIVE_4P = 'akagi-native'
-const NATIVE_3P = 'akagi-native3p'
+import { NATIVE_3P, NATIVE_4P } from '@/lib/nativeBots'
 
 function IndicatorDot({
   tone,

@@ -4,6 +4,9 @@ target
 node_modules
 .assets
 
+# Release-signing secret key (public half is tracked as minisign.pub)
+secrets/
+
 # Claude
 .claude
 CLAUDE.md

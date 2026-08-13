@@ -106,15 +106,45 @@ pub struct RedeemResponse {
     pub extended: bool,
 }
 
-/// Response from `GET /healthz` — liveness + per-model queue depth.
+/// Response from `GET /healthz` — liveness + aggregate load.
+///
+/// The endpoint exposes aggregates only; nothing about the model registry
+/// (model ids come from the authenticated, plan-filtered `/v3/models`).
+/// `status` is `"degraded"` when any model worker is down.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Health {
     #[serde(default)]
     pub status: String,
-    #[serde(default)]
-    pub models: Vec<String>,
-    #[serde(default)]
-    pub queue_depth: BTreeMap<String, i64>,
+    /// Total pending + in-flight inference rows. Older servers sent a
+    /// per-model map here — still accepted, summed to the same total, so a
+    /// health check against a not-yet-updated server doesn't read as down.
+    #[serde(default, deserialize_with = "queue_depth_total")]
+    pub queue_depth: i64,
+    /// `false` when any model worker is down. Absent on older servers;
+    /// defaults to `true` so their `"ok"` doesn't render as degraded.
+    #[serde(default = "default_true")]
+    pub workers_alive: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Accept the aggregate integer or the legacy per-model map (summed).
+fn queue_depth_total<'de, D>(de: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Depth {
+        Total(i64),
+        PerModel(BTreeMap<String, i64>),
+    }
+    Ok(match Depth::deserialize(de)? {
+        Depth::Total(n) => n,
+        Depth::PerModel(m) => m.values().sum(),
+    })
 }
 
 #[derive(Serialize)]
@@ -274,7 +304,7 @@ pub async fn redeem_with_proxy(
         .context("parse /v3/redeem response")
 }
 
-/// `GET /healthz` (no auth) — liveness + per-model queue depth.
+/// `GET /healthz` (no auth) — liveness + aggregate load.
 pub async fn health(base_url: &str) -> Result<Health> {
     health_with_proxy(base_url, false).await
 }
@@ -488,6 +518,42 @@ mod tests {
         assert_eq!(k.topk, 3);
     }
 
+    /// The 2026-08 server update reshaped `/healthz`: `models` was dropped
+    /// and `queue_depth` became a single aggregate integer. Parsing that
+    /// integer into the old per-model map type was a hard serde error — a
+    /// healthy server would have shown up as a failed health check.
+    #[test]
+    fn health_parses_aggregate_shape() {
+        let raw = r#"{"status":"ok","queue_depth":3,"workers_alive":true}"#;
+        let h: Health = serde_json::from_str(raw).unwrap();
+        assert_eq!(h.status, "ok");
+        assert_eq!(h.queue_depth, 3);
+        assert!(h.workers_alive);
+
+        let raw = r#"{"status":"degraded","queue_depth":0,"workers_alive":false}"#;
+        let h: Health = serde_json::from_str(raw).unwrap();
+        assert_eq!(h.status, "degraded");
+        assert!(!h.workers_alive);
+    }
+
+    /// A not-yet-updated server still sends the legacy shape (per-model map
+    /// plus a `models` list). It must keep parsing: the map sums to the same
+    /// aggregate total, unknown fields are ignored, and the missing
+    /// `workers_alive` defaults to alive rather than degraded.
+    #[test]
+    fn health_accepts_legacy_per_model_shape() {
+        let raw = r#"{"status":"ok","models":["4p-x","3p-x"],"queue_depth":{"4p-x":2,"3p-x":1}}"#;
+        let h: Health = serde_json::from_str(raw).unwrap();
+        assert_eq!(h.status, "ok");
+        assert_eq!(h.queue_depth, 3);
+        assert!(h.workers_alive);
+
+        // Bare minimum body — every field defaulted.
+        let h: Health = serde_json::from_str("{}").unwrap();
+        assert_eq!(h.queue_depth, 0);
+        assert!(h.workers_alive);
+    }
+
     #[test]
     fn models_wrapper_parses() {
         let raw = r#"{"models":[{"id":"4p-ot2","game":"4p","desc":"4p Mortal v4 (ot2), 192x40"},{"id":"3p-ot2","game":"3p","desc":"3p Mortal v4"}]}"#;
@@ -578,7 +644,10 @@ mod tests {
                 "200 OK",
                 r#"{"key":"K","key_last4":"cdef","plan":"basic","expires_at":"2026-08-04","extended":false}"#.into(),
             ),
-            ("200 OK", r#"{"status":"ok","models":["4p-x"]}"#.into()),
+            (
+                "200 OK",
+                r#"{"status":"ok","queue_depth":0,"workers_alive":true}"#.into(),
+            ),
         ]);
         let r = redeem(&base, " CODE ", Some(" "), None).await.unwrap();
         assert_eq!(r.key.as_deref(), Some("K"));
