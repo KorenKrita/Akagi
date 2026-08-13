@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { X } from 'lucide-react'
 import { BotShowList } from '@/components/BotShowList'
 import { pickShow, visibleItems } from '@/lib/botShow'
@@ -61,10 +62,10 @@ export function Overlay() {
 
   const items = visibleItems(show, cfg.top_n)
 
-  // Closing the overlay persists `enabled = false`, so it stays closed across
-  // restarts. Settings is the way back.
+  // The in-window close button is session-only. Keep `overlay.enabled` intact
+  // so an enabled overlay returns on the next launch.
   const close = () => {
-    void invoke('set_overlay_enabled', { enabled: false }).catch(() => {})
+    void getCurrentWindow().close().catch(() => {})
   }
 
   return (

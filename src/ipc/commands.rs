@@ -208,10 +208,8 @@ pub async fn update_config(
 /// Flip `overlay.enabled` and apply it, without going through the Settings
 /// page's whole-config save.
 ///
-/// The overlay's own close button is the reason this exists: closing the
-/// window has to *stay* closed across restarts, and the overlay webview has no
-/// business round-tripping (and re-persisting) an entire `AppConfig` it never
-/// loaded.
+/// This backs the Game-page toolbar shortcut; the overlay's own close button
+/// closes only its window and deliberately leaves this persisted flag alone.
 #[tauri::command]
 pub async fn set_overlay_enabled(
     enabled: bool,

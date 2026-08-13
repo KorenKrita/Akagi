@@ -11,8 +11,8 @@ import { invoke } from '@/lib/tauri'
 //
 // It drives the same persisted `overlay.enabled` flag as the Settings card, via
 // `set_overlay_enabled`. The backend broadcasts `overlay-config` afterwards, so
-// this button, the Settings card, and the overlay's own × button can never
-// disagree about whether the overlay is open.
+// this button and the Settings card stay in sync. The overlay's own × button
+// only closes its window for the current session.
 export function OverlayToggle() {
   const { t } = useTranslation()
   const overlay = useConfigStore((s) => s.config?.overlay)

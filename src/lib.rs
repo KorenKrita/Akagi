@@ -202,8 +202,8 @@ pub fn run() {
                 // once no windows remain — no `exit(0)`, so the window-state save
                 // and every other shutdown path still runs. This closes the
                 // *window*; it deliberately does not touch `overlay.enabled`, so
-                // the overlay comes back on the next launch. Only a deliberate ×
-                // (or the toggle) turns the feature off.
+                // the overlay comes back on the next launch. Only the persisted
+                // toolbar/Settings toggle turns the feature off.
                 if let Some(main) = app.get_webview_window("main") {
                     let handle = app.handle().clone();
                     main.on_window_event(move |event| {
