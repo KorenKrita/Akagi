@@ -29,6 +29,8 @@ pub mod defaults;
 pub mod engine;
 #[cfg(feature = "infer")]
 pub mod model;
+#[cfg(feature = "infer")]
+pub mod selection;
 
 /// Feature-plane and action-space geometry for a given player count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

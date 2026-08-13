@@ -191,6 +191,16 @@ export type NativeApiConfig = {
   use_system_proxy: boolean
 }
 
+/** Copilot-style weighted discard for the built-in bot's local model.
+ *  Mirrors `crate::config::BotSelectionConfig`. */
+export type BotSelectionConfig = {
+  /** 0 = off (always the model's top pick). 1..=5 = weighted sampling level. */
+  randomize_level: number
+}
+
+export const RANDOMIZE_LEVEL_MIN = 0
+export const RANDOMIZE_LEVEL_MAX = 5
+
 /** The always-on-top suggestion overlay. Mirrors `crate::config::OverlayConfig`. */
 export type OverlayConfig = {
   enabled: boolean
@@ -237,6 +247,7 @@ export type AppConfig = {
     active_3p: string
     auto_sync: boolean
     dir: string
+    selection: BotSelectionConfig
     api: NativeApiConfig
   }
   capture: CaptureConfig

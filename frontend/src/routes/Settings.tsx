@@ -278,6 +278,37 @@ export function Settings() {
               onChange={(e) => setDraft({ ...draft, bot: { ...draft.bot, dir: e.target.value } })}
             />
           </Field>
+          <Field
+            label={t('settings.randomize_level')}
+            hint={t('settings.randomize_level_hint')}
+          >
+            <Select
+              value={String(draft.bot.selection?.randomize_level ?? 0)}
+              onValueChange={(v) =>
+                setDraft({
+                  ...draft,
+                  bot: {
+                    ...draft.bot,
+                    selection: {
+                      ...(draft.bot.selection ?? { randomize_level: 0 }),
+                      randomize_level: Number(v),
+                    },
+                  },
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[0, 1, 2, 3, 4, 5].map((level) => (
+                  <SelectItem key={level} value={String(level)}>
+                    {t(`settings.randomize_level_${level}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
         </CardContent>
       </Card>
 

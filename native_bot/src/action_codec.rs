@@ -79,7 +79,7 @@ fn discards_aka(a: &Action) -> bool {
 /// `prob` is the softmax over the deduplicated legal set. Ties break on action
 /// id (ascending), which is deterministic and keeps [`pick_by_logits`] in
 /// agreement with `rank_by_logits(..)[0]`.
-fn rank_all(legal: &[Action], logits: &[f32], num_players: u8) -> Vec<(Action, f32)> {
+pub(crate) fn rank_all(legal: &[Action], logits: &[f32], num_players: u8) -> Vec<(Action, f32)> {
     // BTreeMap: iteration is by action id, making the tie order deterministic.
     let mut by_id: BTreeMap<usize, &Action> = BTreeMap::new();
     for a in legal {
@@ -154,6 +154,22 @@ pub fn rank_by_logits(
     top_n: usize,
 ) -> Vec<(Action, f32)> {
     let mut ranked = rank_all(legal, logits, num_players);
+    ranked.truncate(top_n);
+    ranked
+}
+
+/// The top `top_n` **discard-only** candidates from the full ranking, best
+/// first. Used by the Copilot-style weighted-discard sampler: it must sample
+/// from the model's top-3 *tiles*, not from the top-3 actions overall (which
+/// could be mostly calls / riichi).
+pub(crate) fn rank_discards(
+    legal: &[Action],
+    logits: &[f32],
+    num_players: u8,
+    top_n: usize,
+) -> Vec<(Action, f32)> {
+    let mut ranked = rank_all(legal, logits, num_players);
+    ranked.retain(|(a, _)| a.action_type == ActionType::Discard);
     ranked.truncate(top_n);
     ranked
 }

@@ -22,6 +22,7 @@ function makeConfig(over: {
       active_3p: 'akagi-native3p',
       auto_sync: false,
       dir: '',
+      selection: { randomize_level: 0 },
       api: {
         enabled: false,
         base_url: '',

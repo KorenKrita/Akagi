@@ -9,6 +9,32 @@ pub enum ApiProvider {
     Ot3,
 }
 
+/// Weighted-discard selection for the built-in bot — a port of
+/// MahjongCopilot's `ai_randomize_choice`.
+///
+/// The model already scores every legal action; by default Akagi always plays
+/// its top pick (`randomize_level = 0`, argmax). Raising the level makes the
+/// autoplay sometimes play a runner-up tile instead, drawn from the model's
+/// own top-3 discard probabilities scaled by `power = 1 / (0.2 * level)`
+/// (level 1 ⇒ power 5, heavily concentrated on the top tile; level 5 ⇒
+/// power 1, raw policy probabilities).
+///
+/// Only affects discard decisions of the built-in bot's **local model** path;
+/// cloud-inference reactions are taken from the server as-is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BotSelectionConfig {
+    /// 0 = off (always play the model's top pick). 1..=5 = weighted sampling
+    /// level. Values above 5 are clamped by the engine.
+    pub randomize_level: u8,
+}
+
+impl Default for BotSelectionConfig {
+    fn default() -> Self {
+        Self { randomize_level: 0 }
+    }
+}
+
 /// Optional cloud-inference settings for the built-in (native) bot.
 ///
 /// When [`NativeApiConfig::is_active`] is true, the built-in bot proxies each
@@ -241,6 +267,9 @@ pub struct BotConfig {
     /// Root directory containing one subdir per bot. Resolved with the
     /// same fallback chain as other directory configs (`util::resolve_dir`).
     pub dir: String,
+    /// Copilot-style weighted-discard selection for the built-in bot's local
+    /// model (see [`BotSelectionConfig`]).
+    pub selection: BotSelectionConfig,
     /// Optional cloud-inference settings for the built-in native bot. When
     /// active, the native bot proxies decisions to a remote server instead of
     /// running the embedded model. See [`NativeApiConfig`].
@@ -285,6 +314,7 @@ impl Default for BotConfig {
             active: String::new(),
             auto_sync: true,
             dir: "mjai_bot".to_string(),
+            selection: BotSelectionConfig::default(),
             api: NativeApiConfig::default(),
         }
     }

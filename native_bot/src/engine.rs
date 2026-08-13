@@ -23,6 +23,7 @@ use crate::action_codec::{pick_by_logits, rank_by_logits};
 use crate::adapt::{obs_and_legal_3p, obs_and_legal_4p};
 use crate::mjai_compat::{parse_line, sanitize_3p};
 use crate::model::Model;
+use crate::selection::{self, SelectionParams};
 
 /// How many ranked candidates the engine surfaces for the HUD's multi-row
 /// recommendation card (top-N by policy probability).
@@ -110,6 +111,11 @@ pub struct Engine {
     backend: Backend,
     seat: u8,
     num_players: u8,
+    /// Copilot-style weighted-discard selection (0 = off / argmax). Switched
+    /// per decision by Akagi's `NativeBot` from `config.bot.selection`.
+    selection: SelectionParams,
+    /// RNG for the weighted sampler; seeded once from the wall clock.
+    rng: selection::Rng,
 }
 
 impl Engine {
@@ -132,6 +138,8 @@ impl Engine {
             backend,
             seat,
             num_players,
+            selection: SelectionParams::default(),
+            rng: selection::Rng::new(seed_from_wall_clock()),
         })
     }
 
@@ -216,52 +224,61 @@ impl Engine {
     /// legal action (not our turn / nothing to respond to).
     pub fn decide(&mut self) -> Result<Option<Decision>> {
         let seat = self.seat;
-        let (mut ranked, logits, last_discarder, drawn, reach_pai, forced) = match &mut self.backend
-        {
-            Backend::Four { state, model } => {
-                // `last_discard` is `(discarder_pid, tile)`.
-                let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
-                let drawn = state.drawn_tile;
-                let (obs, legal) = obs_and_legal_4p(state, seat);
-                if legal.is_empty() {
-                    return Ok(None);
+        let (mut ranked, logits, legal, last_discarder, drawn, reach_pai, forced) =
+            match &mut self.backend
+            {
+                Backend::Four { state, model } => {
+                    // `last_discard` is `(discarder_pid, tile)`.
+                    let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
+                    let drawn = state.drawn_tile;
+                    let (obs, legal) = obs_and_legal_4p(state, seat);
+                    if legal.is_empty() {
+                        return Ok(None);
+                    }
+                    // Forced ⇔ the *legal* set is a singleton — `ranked` is cut to
+                    // SHOW_TOP_N below, so its length can't be used for this.
+                    let forced = legal.len() == 1;
+                    let logits = model.forward_logits(&obs)?;
+                    let ranked = rank_by_logits(&legal, &logits, 4, SHOW_TOP_N);
+                    let Some((top, _)) = ranked.first() else {
+                        return Ok(None);
+                    };
+                    let reach_pai = if top.action_type == ActionType::Riichi {
+                        predict_reach_discard(state, model, seat, 4)
+                    } else {
+                        None
+                    };
+                    (ranked, logits, legal, last_discarder, drawn, reach_pai, forced)
                 }
-                // Forced ⇔ the *legal* set is a singleton — `ranked` is cut to
-                // SHOW_TOP_N below, so its length can't be used for this.
-                let forced = legal.len() == 1;
-                let logits = model.forward_logits(&obs)?;
-                let ranked = rank_by_logits(&legal, &logits, 4, SHOW_TOP_N);
-                let Some((top, _)) = ranked.first() else {
-                    return Ok(None);
-                };
-                let reach_pai = if top.action_type == ActionType::Riichi {
-                    predict_reach_discard(state, model, seat, 4)
-                } else {
-                    None
-                };
-                (ranked, logits, last_discarder, drawn, reach_pai, forced)
-            }
-            Backend::Three { state, model } => {
-                let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
-                let drawn = state.drawn_tile;
-                let (obs, legal) = obs_and_legal_3p(state, seat);
-                if legal.is_empty() {
-                    return Ok(None);
+                Backend::Three { state, model } => {
+                    let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
+                    let drawn = state.drawn_tile;
+                    let (obs, legal) = obs_and_legal_3p(state, seat);
+                    if legal.is_empty() {
+                        return Ok(None);
+                    }
+                    let forced = legal.len() == 1;
+                    let logits = model.forward_logits(&obs)?;
+                    let ranked = rank_by_logits(&legal, &logits, 3, SHOW_TOP_N);
+                    let Some((top, _)) = ranked.first() else {
+                        return Ok(None);
+                    };
+                    let reach_pai = if top.action_type == ActionType::Riichi {
+                        predict_reach_discard_3p(state, model, seat)
+                    } else {
+                        None
+                    };
+                    (ranked, logits, legal, last_discarder, drawn, reach_pai, forced)
                 }
-                let forced = legal.len() == 1;
-                let logits = model.forward_logits(&obs)?;
-                let ranked = rank_by_logits(&legal, &logits, 3, SHOW_TOP_N);
-                let Some((top, _)) = ranked.first() else {
-                    return Ok(None);
-                };
-                let reach_pai = if top.action_type == ActionType::Riichi {
-                    predict_reach_discard_3p(state, model, seat)
-                } else {
-                    None
-                };
-                (ranked, logits, last_discarder, drawn, reach_pai, forced)
-            }
-        };
+            };
+
+        // Copilot-style weighted discard (config `[bot.selection]
+        // randomize_level`): when enabled and the model's top action is a
+        // discard, maybe play one of the runner-up tiles, drawn from the
+        // model's own policy probabilities over its top-3 discards.
+        if self.selection.randomize_level > 0 {
+            ranked = self.maybe_randomize(ranked, &legal, &logits, self.num_players);
+        }
 
         // An mjai `reach` must name the discard or autoplay stalls (Majsoul fuses
         // declaring and discarding into one click). If the riichi-discard
@@ -301,6 +318,66 @@ impl Engine {
             }
         }
     }
+
+    /// Set the Copilot-style weighted-discard selection (`randomize_level`,
+    /// 0 = off / argmax). Akagi's `NativeBot` calls this every decision from
+    /// `config.bot.selection`, so a settings change applies to the next move.
+    pub fn set_selection_level(&mut self, randomize_level: u8) {
+        self.selection.randomize_level = randomize_level.min(5);
+    }
+
+    /// Weighted discard sampling (Copilot's `ai_randomize_choice`).
+    ///
+    /// Only fires when the model's *top* action is a discard — calls / riichi
+    /// pass through untouched, matching Copilot's `randomize_action`, which
+    /// only rewrites `DAHAI` reactions. When it fires, the returned ranking
+    /// puts the sampled tile first so the HUD's top-N card stays truthful about
+    /// what will actually be played.
+    fn maybe_randomize(
+        &mut self,
+        ranked: Vec<(Action, f32)>,
+        legal: &[Action],
+        logits: &[f32],
+        num_players: u8,
+    ) -> Vec<(Action, f32)> {
+        let level = self.selection.randomize_level;
+        let Some((top, _)) = ranked.first() else {
+            return ranked;
+        };
+        if top.action_type != ActionType::Discard {
+            return ranked;
+        }
+        let discards = crate::action_codec::rank_discards(legal, logits, num_players, 3);
+        if discards.len() < 2 {
+            return ranked;
+        }
+        let cands: Vec<(u8, f32)> = discards
+            .iter()
+            .filter_map(|(a, p)| a.tile.map(|t| (t, *p)))
+            .collect();
+        let Some(idx) = selection::pick_index(&cands, level, &mut self.rng) else {
+            return ranked;
+        };
+        let chosen = &discards[idx];
+        let mut out = Vec::with_capacity(ranked.len());
+        out.push(chosen.clone());
+        out.extend(ranked.into_iter().filter(|(a, _)| {
+            !(a.action_type == ActionType::Discard && a.tile == chosen.0.tile)
+        }));
+        out.truncate(SHOW_TOP_N);
+        out
+    }
+}
+
+/// Nondeterministic RNG seed for the weighted sampler. A few low bits of the
+/// nanosecond counter are mixed in so two engines (or restarts) don't replay
+/// the same sequence.
+fn seed_from_wall_clock() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    (now.as_nanos() as u64) ^ (now.subsec_nanos() as u64).rotate_left(17) ^ 0xA6A5_5E5E_0000_0001
 }
 
 /// Map a ranked `(Action, prob)` list into displayable `(BotAction, prob)`
