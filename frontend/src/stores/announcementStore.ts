@@ -1,14 +1,12 @@
 import { create } from 'zustand'
 
-import { RELEASES, type ReleaseEntry } from '@/announcements/releases'
-import { releasedEntries, selectUnseenReleases } from '@/announcements/select'
-import { compareVersions } from '@/lib/appVersion'
+import { ANNOUNCEMENTS, type AnnouncementEntry } from '@/announcements/entries'
+import { eligibleEntries, selectUnseenEntries } from '@/announcements/select'
 
-// Highest version whose release announcement the user has already seen.
-// Absent on fresh installs and on the first run of a build that
-// introduced the system — `selectUnseenReleases` treats that as "show
-// the newest few".
-const LAST_SEEN_KEY = 'akagi.announcement.releases.lastSeen'
+// ISO date of the newest announcement the user has already seen. Absent
+// on fresh installs and on the first run of a build that introduced the
+// system — `selectUnseenEntries` treats that as "show the newest few".
+const LAST_SEEN_KEY = 'akagi.announcement.lastSeen'
 
 function loadLastSeen(): string | null {
   if (typeof localStorage === 'undefined') return null
@@ -20,19 +18,14 @@ function loadLastSeen(): string | null {
 }
 
 type AnnouncementStore = {
-  /** Persisted baseline; null until the user closes their first What's-new. */
-  lastSeenVersion: string | null
-  /** Version resolved at launch by `<ReleaseAnnouncementDialog />`. */
+  /** Persisted baseline; null until the user closes their first showing. */
+  lastSeenDate: string | null
+  /** Version resolved at launch by `<AnnouncementsDialog />`. */
   currentVersion: string | null
-  /** Entries the open dialog is showing. */
-  entries: ReleaseEntry[]
+  /** Entries the open dialog is showing, newest first. */
+  entries: AnnouncementEntry[]
   open: boolean
-  /**
-   * True from the moment the launch check decides the dialog will show
-   * until that showing is closed. The AkagiMS promo dialog reads this to
-   * defer (without spending one of its capped showings) so the two never
-   * stack on one launch.
-   */
+  /** True while an armed launch showing hasn't been opened yet. */
   launchShowPending: boolean
   /**
    * Launch path, called once the running version resolves: pick the
@@ -44,19 +37,19 @@ type AnnouncementStore = {
   showLaunch: () => void
   /** Settings entry point: browse every announcement for this build. */
   openHistory: () => void
-  /** Any close (Got it / X / Esc / outside click) marks the build seen. */
+  /** Any close (Got it / X / Esc / outside click) marks the shown entries seen. */
   close: () => void
 }
 
 export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
-  lastSeenVersion: loadLastSeen(),
+  lastSeenDate: loadLastSeen(),
   currentVersion: null,
   entries: [],
   open: false,
   launchShowPending: false,
 
   prepareLaunch: (currentVersion) => {
-    const unseen = selectUnseenReleases(RELEASES, get().lastSeenVersion, currentVersion)
+    const unseen = selectUnseenEntries(ANNOUNCEMENTS, get().lastSeenDate, currentVersion)
     if (unseen.length === 0) {
       set({ currentVersion })
       return false
@@ -71,22 +64,23 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
 
   openHistory: () => {
     const current = get().currentVersion
-    const entries = current === null ? [...RELEASES] : releasedEntries(RELEASES, current)
+    const entries =
+      current === null ? [...ANNOUNCEMENTS] : eligibleEntries(ANNOUNCEMENTS, current)
     set({ entries, open: true })
   },
 
   close: () => {
     set((s) => {
-      // Only ever advance the baseline — closing the dialog on a
-      // downgraded build must not resurrect announcements the user
-      // already saw on the newer one.
-      const version = s.currentVersion
+      // The newest shown entry's date becomes the baseline. Only ever
+      // advance — closing the dialog on a downgraded build (which shows
+      // older entries) must not resurrect announcements the user already
+      // saw on the newer one.
+      const newest = s.entries[0]?.date ?? null
       const advance =
-        version !== null &&
-        (s.lastSeenVersion === null || compareVersions(version, s.lastSeenVersion) > 0)
+        newest !== null && (s.lastSeenDate === null || newest > s.lastSeenDate)
       if (advance) {
         try {
-          localStorage.setItem(LAST_SEEN_KEY, version)
+          localStorage.setItem(LAST_SEEN_KEY, newest)
         } catch {
           /* quota — ignore */
         }
@@ -94,7 +88,7 @@ export const useAnnouncementStore = create<AnnouncementStore>((set, get) => ({
       return {
         open: false,
         launchShowPending: false,
-        lastSeenVersion: advance ? version : s.lastSeenVersion,
+        lastSeenDate: advance ? newest : s.lastSeenDate,
       }
     })
   },

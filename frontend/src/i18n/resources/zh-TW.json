@@ -754,38 +754,41 @@
   },
   "announcements": {
     "akagims": {
-      "title": "認識 AkagiMS — 專為雀魂打造",
-      "intro": "Akagi 專案的新姊妹作,現已推出。",
-      "screenshot_alt": "AkagiMS 正在全自動模式下自己打一局段位戰",
-      "feature_majsoul_title": "專為雀魂設計",
-      "feature_majsoul_desc": "只為一款遊戲打造,一切都圍繞它調校。",
-      "feature_embedded_title": "內建遊戲客戶端",
-      "feature_embedded_desc": "雀魂直接在程式視窗裡開啟 — 不用代理、不用憑證、不用第二個瀏覽器。",
-      "feature_fullauto_title": "全自動打牌",
-      "feature_fullauto_desc": "自己排段位戰、打完、關掉結算畫面、再排下一局。",
-      "feature_zero_setup_title": "即開即用",
-      "feature_zero_setup_desc": "下載、解壓、執行。AI 就在程式裡。",
-      "view_download": "前往下載",
-      "got_it": "知道了",
       "card_title": "AkagiMS — 專為雀魂打造的獨立版",
       "card_desc": "內建遊戲客戶端、全自動打牌、即開即用。下載、解壓、執行就好。",
-      "card_dismiss": "關閉"
+      "card_dismiss": "關閉",
+      "screenshot_alt": "AkagiMS 正在全自動模式下自己打一局段位戰",
+      "view_download": "前往下載"
     },
-    "whats_new": {
-      "title": "新功能",
-      "intro": "近期更新的重點整理。",
+    "dialog": {
+      "title": "公告",
+      "intro": "版本更新重點與專案消息。",
       "got_it": "知道了",
       "all_releases": "完整版本紀錄",
-      "settings_button": "新功能"
+      "settings_button": "公告"
     },
-    "releases": {
+    "entries": {
       "v3_5_0": {
+        "title": "內購更新:支援支付寶、Apple Pay、Google Pay,MJOT 全新識別",
         "mjot_title": "MJOT 雲端 AI",
         "mjot_desc": "線上推理服務正式命名為 MJOT,全新品牌識別,狀態顯示更清楚。",
         "checkout_title": "應用程式內購買",
         "checkout_desc": "不用離開應用程式即可購買或續期 MJOT 時數——支援信用卡、Google Pay、Apple Pay 與支付寶,PayPal 仍可使用。",
         "health_title": "更聰明的續期與健康檢查",
         "health_desc": "續期預設加到目前的金鑰上,服務健康檢查現在會回報佇列深度與降載狀態。"
+      },
+      "akagims": {
+        "title": "AkagiMS 登場:專為雀魂打造的獨立應用程式",
+        "majsoul_title": "專為雀魂設計",
+        "majsoul_desc": "只為一款遊戲打造,一切都圍繞它調校。",
+        "embedded_title": "內建遊戲客戶端",
+        "embedded_desc": "雀魂直接在程式視窗裡開啟 — 不用代理、不用憑證、不用第二個瀏覽器。",
+        "fullauto_title": "全自動打牌",
+        "fullauto_desc": "自己排段位戰、打完、關掉結算畫面、再排下一局。",
+        "zero_setup_title": "即開即用",
+        "zero_setup_desc": "下載、解壓、執行。AI 就在程式裡。",
+        "image_alt": "AkagiMS 正在全自動模式下自己打一局段位戰",
+        "link_label": "前往下載"
       }
     }
   },

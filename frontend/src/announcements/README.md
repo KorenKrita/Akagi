@@ -1,12 +1,21 @@
-# Release announcements
+# In-app announcements
 
-Bundled "What's new" entries shown by `<ReleaseAnnouncementDialog />` after
-an update. On launch the dialog compares the running version against the
-persisted `akagi.announcement.releases.lastSeen` baseline and shows every
-entry in between (skip-level updates replay all missed versions); with no
-baseline (fresh install / first run of the build that introduced this) it
-shows the newest few. Settings → Updates → "What's new" reopens the full
-history at any time.
+Bundled announcement entries shown by `<AnnouncementsDialog />` as a
+collapsible list (one row per entry with a one-line title; the newest row
+starts expanded). Two kinds of entry share the list:
+
+- **Release announcements** — carry a `version`; hidden while the running
+  build is older than that version.
+- **Product news** — no `version` (e.g. the AkagiMS launch); always
+  eligible.
+
+On launch the dialog compares the entry dates against the persisted
+`akagi.announcement.lastSeen` baseline and shows every entry newer than
+it (skip-level updates replay all missed announcements); with no baseline
+(fresh install / first run of the build that introduced this) it shows
+the newest few. Any close records the newest shown entry as seen.
+Settings → Updates → "Announcements" reopens the full history at any
+time.
 
 ## Adding an announcement for a release (pre-release checklist)
 
@@ -14,12 +23,16 @@ Do this **before** tagging the release — the maintainer's release tagging
 script (a local script, not part of this repo) refuses to tag a version
 that has no committed entry here.
 
-1. **`releases.ts`** — prepend an entry to `RELEASES` (newest first):
+1. **`entries.ts`** — prepend an entry to `ANNOUNCEMENTS` (newest first;
+   dates must be unique and strictly descending down the array):
 
    ```ts
    {
-     version: '3.6.0',            // exact version you are about to tag
-     date: '2026-08-20',          // planned publish date, ISO
+     id: 'v3_6_0',              // i18n slug: version with . / - → _
+     date: '2026-08-20',        // planned publish date, ISO
+     version: '3.6.0',          // exact version you are about to tag
+     image: someScreenshot,     // optional: import from @/assets
+     link: 'https://…',         // optional: external action button
      features: [
        { icon: Rocket, key: 'tenhou_autoplay' },
        // 2–4 highlights is the sweet spot; icons come from lucide-react
@@ -27,16 +40,18 @@ that has no committed entry here.
    },
    ```
 
-2. **Locale strings** — for each feature `key`, add `<key>_title` and
-   `<key>_desc` under `announcements.releases.<slug>` in **all four**
-   resources (`en.json`, `ja.json`, `zh-TW.json`, `zh-CN.json`), where
-   `<slug>` is the version with dots/dashes replaced by underscores and a
-   leading `v` — `3.6.0` → `v3_6_0`:
+2. **Locale strings** — under `announcements.entries.<id>` in **all
+   four** resources (`en.json`, `ja.json`, `zh-TW.json`, `zh-CN.json`):
+   a `title` (the collapsed one-line summary, e.g. "In-app purchases:
+   Alipay, Apple Pay, …"), a `<key>_title` + `<key>_desc` pair per
+   feature, plus `image_alt` when the entry has an `image` and
+   `link_label` when it has a `link`:
 
    ```jsonc
    "announcements": {
-     "releases": {
+     "entries": {
        "v3_6_0": {
+         "title": "…",
          "tenhou_autoplay_title": "…",
          "tenhou_autoplay_desc": "…"
        }
@@ -46,14 +61,18 @@ that has no committed entry here.
 
 3. **Commit**, then tag the release as usual.
 
-`releases.test.ts` fails if entries are out of order, duplicated, dated
+`entries.test.ts` fails if entries are out of order, duplicated, dated
 wrongly, or missing any locale string — run `npm test` in `frontend/` to
-validate. Keep highlights user-facing (what changed for the player), not a
-commit log; the dialog links to GitHub releases for the full notes.
+validate. Keep highlights user-facing (what changed for the player), not
+a commit log; the dialog links to GitHub releases for the full notes.
+
+Product news entries work the same way — just omit `version` and pick a
+unique `id`.
 
 ## Files
 
-- `releases.ts` — the data: one `ReleaseEntry` per release, newest first.
+- `entries.ts` — the data: one `AnnouncementEntry` per announcement,
+  newest first.
 - `select.ts` — pure selection logic (which entries a launch should show).
 - Store/UI live in `../stores/announcementStore.ts` and
-  `../components/ReleaseAnnouncementDialog.tsx`.
+  `../components/AnnouncementsDialog.tsx`.

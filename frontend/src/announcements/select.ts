@@ -1,5 +1,5 @@
 import { compareVersions } from '@/lib/appVersion'
-import type { ReleaseEntry } from './releases'
+import type { AnnouncementEntry } from './entries'
 
 /**
  * With no recorded baseline we can't tell a fresh install from an
@@ -8,28 +8,32 @@ import type { ReleaseEntry } from './releases'
  */
 export const MAX_FRESH_ENTRIES = 3
 
-/** Entries for this build, newest first. Entries for versions newer than
- *  the running build (added ahead of an upcoming release) are hidden. */
-export function releasedEntries(
-  entries: readonly ReleaseEntry[],
+/**
+ * Entries visible to this build, in array (newest-first) order.
+ * Version-tagged entries newer than the running build are hidden;
+ * version-less product news is always eligible.
+ */
+export function eligibleEntries(
+  entries: readonly AnnouncementEntry[],
   currentVersion: string,
-): ReleaseEntry[] {
-  return [...entries]
-    .filter((e) => compareVersions(e.version, currentVersion) <= 0)
-    .sort((a, b) => compareVersions(b.version, a.version))
+): AnnouncementEntry[] {
+  return entries.filter(
+    (e) => e.version === undefined || compareVersions(e.version, currentVersion) <= 0,
+  )
 }
 
 /**
- * What the launch dialog should show: every entry newer than the
- * last-seen baseline (so skip-level updates replay the announcements in
- * between), or the newest `MAX_FRESH_ENTRIES` when there is no baseline.
+ * What the launch dialog should show: every eligible entry dated after
+ * the last-seen baseline (so skip-level updates replay the announcements
+ * in between), or the newest `MAX_FRESH_ENTRIES` when there is no
+ * baseline. ISO dates order lexically, so plain string compare works.
  */
-export function selectUnseenReleases(
-  entries: readonly ReleaseEntry[],
-  lastSeenVersion: string | null,
+export function selectUnseenEntries(
+  entries: readonly AnnouncementEntry[],
+  lastSeenDate: string | null,
   currentVersion: string,
-): ReleaseEntry[] {
-  const eligible = releasedEntries(entries, currentVersion)
-  if (lastSeenVersion === null) return eligible.slice(0, MAX_FRESH_ENTRIES)
-  return eligible.filter((e) => compareVersions(e.version, lastSeenVersion) > 0)
+): AnnouncementEntry[] {
+  const eligible = eligibleEntries(entries, currentVersion)
+  if (lastSeenDate === null) return eligible.slice(0, MAX_FRESH_ENTRIES)
+  return eligible.filter((e) => e.date > lastSeenDate)
 }

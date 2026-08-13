@@ -1463,7 +1463,7 @@ function UpdatesCard() {
               variant="outline"
               onClick={() => useAnnouncementStore.getState().openHistory()}
             >
-              {t('announcements.whats_new.settings_button')}
+              {t('announcements.dialog.settings_button')}
             </Button>
             <Button
               size="sm"
