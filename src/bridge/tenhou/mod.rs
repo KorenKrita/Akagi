@@ -406,6 +406,17 @@ impl TenhouBridge {
         // draw a rinshan replacement first, and that `T<n>` opens its own.
         self.state.window = None;
 
+        // ...unless the meld itself is claimable: an opponent's kakan can be
+        // robbed (chankan), and the server says so the same way it does for a
+        // discard — a `t` bitmask on the frame. The client draws its ron menu
+        // straight from that attribute, so a frame without one opens nothing.
+        if actor != self.state.seat {
+            match parse_u32(msg, "t").unwrap_or(0) {
+                0 => {}
+                ops => self.state.open_window(ops),
+            }
+        }
+
         // Nukidora has its own bit pattern; handle before structured parse.
         if (m & 0x3F) == 0x20 {
             if actor == self.state.seat {
@@ -1176,6 +1187,59 @@ mod tests {
             }
             other => panic!("expected Dahai, got {other:?}"),
         }
+    }
+
+    /// Regression (chankan): an opponent's kakan can be robbed, and the
+    /// server marks it exactly as it marks a claimable discard — a `t`
+    /// bitmask on the frame. Dropping it left autoplay with no window, so
+    /// the ron (or the pass that keeps the clock from running out) was
+    /// never pressed.
+    #[test]
+    fn an_opponents_kakan_with_t_opens_a_ron_window() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,4,8,12,16,20,24,28,32,36,40,44,48"}"#,
+        );
+        // Shimocha adds to a pon of 1m (crafted kakan m = 16) and we may rob
+        // it: the frame carries t = 8 (ron).
+        let kakan = parse_one(&mut b, r#"{"tag":"N","who":"1","m":"16","t":"8"}"#);
+        assert!(matches!(kakan[0], MjaiEvent::Kakan { actor: 1, .. }));
+        let w = b.state.window.expect("chankan must open a window");
+        assert!(w.allows(crate::autoplay::tenhou_state::OP_RON));
+        assert!(w.has_declinable_claim(), "a chankan pass is a real decline");
+    }
+
+    /// A kakan we cannot rob carries no `t`, and must leave no window: a
+    /// stale one would let a later bot reply act into the caller's turn.
+    #[test]
+    fn an_opponents_kakan_without_t_opens_nothing() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,4,8,12,16,20,24,28,32,36,40,44,48"}"#,
+        );
+        // Open a claim window first so the kakan has something to clear.
+        parse_one(&mut b, r#"{"tag":"e50","t":"1"}"#);
+        assert!(b.state.window.is_some());
+        parse_one(&mut b, r#"{"tag":"N","who":"1","m":"16"}"#);
+        assert!(b.state.window.is_none(), "no t, no claim");
+    }
+
+    /// Our own kakan never opens a window off its own frame — the rinshan
+    /// draw that follows opens the real one.
+    #[test]
+    fn our_own_kakan_opens_no_window_even_with_t() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,4,8,12,16,20,24,28,32,36,40,44,48"}"#,
+        );
+        parse_one(&mut b, r#"{"tag":"N","who":"0","m":"16","t":"8"}"#);
+        assert!(b.state.window.is_none());
     }
 
     #[test]
