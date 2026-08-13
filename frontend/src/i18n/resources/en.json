@@ -354,8 +354,8 @@
     "autoplay": {
       "title": "Autoplay",
       "enable": "Enable autoplay",
-      "enable_help": "When enabled, Akagi clicks the bot's chosen action on the Mahjong Soul board automatically. Requires the Chromium capture mode and a running game tab.",
-      "platform_note": "Mahjong Soul only.",
+      "enable_help": "When enabled, Akagi performs the bot's chosen action for you. Requires the Chromium capture mode and a running game tab. On Mahjong Soul the action is clicked on the board; on Tenhou it is sent directly over the game connection.",
+      "platform_note": "These click-timing knobs apply to Mahjong Soul only. Tenhou autoplay sends the action over the game connection and does not click, so it uses the thinking-time model below but none of the settings above.",
       "requires_chromium": "Autoplay requires the Chromium capture mode.",
       "pre_click_delay_min": "Pre-click delay (min, ms)",
       "pre_click_delay_max": "Pre-click delay (max, ms)",

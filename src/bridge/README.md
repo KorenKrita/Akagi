@@ -28,9 +28,26 @@ state.
 
 ## Selecting a bridge
 
-`bridge::for_platform(platform)` returns a `Box<dyn Bridge>` for the configured
-[`Platform`](../config/platform.rs). The proxy handler builds a fresh bridge
-inside `handle_websocket` so per-flow state is isolated.
+`bridge::for_platform(platform, flow_log, session, hooks)` returns a
+`Box<dyn Bridge>` for the configured [`Platform`](../config/platform.rs). The
+proxy handler builds a fresh bridge inside `handle_websocket` so per-flow state
+is isolated.
+
+## `BridgeHooks`
+
+Shared slots the autoplay layer hands to a bridge. Every field is optional and
+platform-specific, and only the chromium capture path wires them at all — the
+MITM path has no `Page` handle, so nothing consumes them. They exist because
+autoplay needs facts only the protocol parser sees:
+
+| Field | Platform | Carries |
+|---|---|---|
+| `time_budget` | Majsoul | The server's per-decision-window time grant (`OptionalOperationList.time_fixed/time_add`). |
+| `input_watch` | Majsoul | A counter of the client's own uplink input commands, so a click can be told from one the UI swallowed. |
+| `tenhou_state` | Tenhou | The hand at Tenhou tile-index resolution plus the current decision window — what makes a client frame encodable. |
+
+Bundled into one struct so adding a platform's slot doesn't grow the argument
+list of every constructor between here and the capture backend.
 
 ## Adding a new platform
 
@@ -38,12 +55,19 @@ inside `handle_websocket` so per-flow state is isolated.
 2. Create `src/bridge/<name>/mod.rs` with a struct that implements `Bridge`.
 3. Re-export it from `src/bridge/mod.rs` and add the match arm in
    `for_platform`.
+4. If the platform will support autoplay and its planner needs something only
+   the parser sees, add a field to `BridgeHooks` rather than a new parameter.
 
 ## Existing bridges
 
 - `majsoul/` — Majsoul (lq.* protobuf over WS). `parser.rs` decodes raw
   WS frames into `ParsedMessage { msg_type, msg_id, method_name, payload }`;
-  `mod.rs` logs them but doesn't emit mjai yet (state machine is a
-  separate phase). See `majsoul/parser.rs` module docs for the 5-layer
-  wire format. Protocol layout follows the published Majsoul `liqi.proto`
-  schema; no third-party source code is copied.
+  `mod.rs` runs the state machine that turns them into mjai events. See
+  `majsoul/parser.rs` module docs for the 5-layer wire format. Protocol
+  layout follows the published Majsoul `liqi.proto` schema; no third-party
+  source code is copied.
+- `tenhou/` — Tenhou (plain JSON over WS). Parses server frames into mjai, and
+  implements `build` in the other direction — not on the autoplay path, which
+  drives the client's own input instead. See `tenhou/README.md`.
+- `riichi_city/` — Riichi City (JSON inside a 15-byte binary header).
+  Observe-only. See `riichi_city/README.md`.

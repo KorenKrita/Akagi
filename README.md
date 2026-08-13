@@ -153,7 +153,7 @@ https://github.com/user-attachments/assets/d5bc6ff6-6560-4365-ae55-660c9a522790
 | Platform | 4-Player | 3-Player | AutoPlay |
 |---|:---:|:---:|:---:|
 | **Mahjong Soul (Majsoul)** | &check; | &check; | &check; |
-| **Tenhou** | &check; | &check; | &cross; |
+| **Tenhou** | &check; | &check; | &check; |
 | **Riichi City** | &check; | &check; | &cross; |
 | **Amatsuki** | (planned) | (planned) | &cross; |
 
@@ -389,14 +389,13 @@ Done in alpha.8:
 - [x] Bot install from a GitHub release or a local ZIP file
 - [x] Chromium capture mode (no CA trust needed)
 - [x] **Custom themes** (frontend theming hooks)
-- [x] **AutoPlay** (Mahjong Soul first; the bot drives the table
+- [x] **AutoPlay** (Mahjong Soul and Tenhou; the bot drives the table
       autonomously)
 
 Planned:
 
 - [ ] **Amatsuki** platform support
 - [ ] **Refine Frontend** — tile layout, animations, accessibility
-- [ ] **Tenhou autoplay**
 
 Detailed bug tracking lives in
 [GitHub Issues](https://github.com/shinkuan/Akagi/issues).
@@ -434,8 +433,10 @@ truth for channel types.
 talks to the backend over push events (`mjai-event`, `bot-response`,
 `bot-status`, …) and a set of pull commands, both documented in
 [`src/ipc/README.md`](./src/ipc/README.md). With AutoPlay on, the
-`autoplay` manager consumes the bot's decisions and clicks the table
-through the Chromium capture backend (CDP).
+`autoplay` manager consumes the bot's decisions and performs them
+through the Chromium capture backend (CDP) — clicking the table on
+Mahjong Soul, or sending the action over the game's own connection on
+Tenhou, whose client protocol is plain enough to speak directly.
 
 ## Tech Stack
 
@@ -463,7 +464,7 @@ through the Chromium capture backend (CDP).
 .
 ├── src/
 │   ├── analysis/      Shanten / waits / agari-rate / risk / discard search
-│   ├── autoplay/      Bot decisions → table clicks via CDP (AutoPlay)
+│   ├── autoplay/      Bot decisions → table clicks (Mahjong Soul) or protocol frames (Tenhou), via CDP
 │   ├── bot/           Bot manager: built-in bot, cloud API client, mjai subprocess runner
 │   ├── bridge/        Per-platform protocol → MjaiEvent
 │   │   ├── majsoul/   Mahjong Soul (liqi protobuf)
