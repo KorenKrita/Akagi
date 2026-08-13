@@ -300,11 +300,16 @@ impl TenhouBridge {
         };
         let pai = tenhou_to_mjai_one(idx);
 
-        // Tsumogiri logic: for our own discards, compare against the just-drawn
-        // tile (handles edge case where tag is uppercase but tile is a tedashi
-        // that happens to match the drawn tile's index).
+        // Tsumogiri logic: for our own discards the tag's case is not a
+        // reliable signal, so compare against the just-drawn tile instead —
+        // `on_tsumo` pushes it onto the tail of `hand`.
+        //
+        // The `is_tsumo` gate is load-bearing. A call removes tiles from the
+        // *middle* of `hand`, so after our own chi/pon/kan the tail still
+        // holds the tile we drew last turn; without the gate, discarding that
+        // tile reports a tedashi as tsumogiri.
         let tsumogiri = if actor == self.state.seat {
-            self.state.hand.last().copied() == Some(idx)
+            self.state.is_tsumo && self.state.hand.last().copied() == Some(idx)
         } else {
             tsumogiri_uppercase
         };
@@ -339,6 +344,12 @@ impl TenhouBridge {
             return Vec::new();
         }
         let m = parse_u32(msg, "m").unwrap_or(0);
+
+        // A call ends whatever draw was in flight: our next discard is a
+        // tedashi unless a fresh `T<n>` arrives first (it does for the
+        // rinshan draw after ankan / kakan / nukidora). `on_dahai` reads this
+        // flag, so leaving it set would mis-report the post-call discard.
+        self.state.is_tsumo = false;
 
         // Nukidora has its own bit pattern; handle before structured parse.
         if (m & 0x3F) == 0x20 {
@@ -986,6 +997,106 @@ mod tests {
                 // index 40 / 4 = 10 → 2p (pin block starts at type 9 = 1p).
                 assert_eq!(pai, "2p");
                 assert!(*tsumogiri);
+            }
+            other => panic!("expected Dahai, got {other:?}"),
+        }
+    }
+
+    /// Regression: the first discard after our own call is a tedashi, never a
+    /// tsumogiri. A meld removes tiles from the *middle* of `state.hand`, so
+    /// the tail still holds the tile we drew on the previous turn — comparing
+    /// the discard against it (without checking `is_tsumo`) reported the
+    /// tedashi as tsumogiri.
+    #[test]
+    fn dahai_after_our_pon_is_tedashi_not_tsumogiri() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        // Hand holds two 1m (indices 0, 1) so we can pon a third.
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,1,4,5,8,9,12,16,20,24,28,32,36"}"#,
+        );
+
+        // Our turn: draw 2p (index 40), then tedashi the 1p (index 36). The
+        // drawn 2p stays at the tail of `hand`.
+        parse_one(&mut b, r#"{"tag":"T40"}"#);
+        let tedashi = parse_one(&mut b, r#"{"tag":"D36"}"#);
+        match &tedashi[0] {
+            MjaiEvent::Dahai {
+                pai, tsumogiri, ..
+            } => {
+                assert_eq!(pai, "1p");
+                assert!(!*tsumogiri, "drew 2p but discarded 1p");
+            }
+            other => panic!("expected Dahai, got {other:?}"),
+        }
+
+        // Kamicha (rel 3 → abs 3) discards a 1m (index 2).
+        parse_one(&mut b, r#"{"tag":"g2"}"#);
+
+        // We pon it. m = 1131: pon marker (bit 3), target_rel 3 (kamicha),
+        // tile type 1m, unused = the 4th copy (index 3), called tile at r = 2.
+        let pon = parse_one(&mut b, r#"{"tag":"N","who":"0","m":"1131"}"#);
+        match &pon[0] {
+            MjaiEvent::Pon {
+                actor,
+                target,
+                pai,
+                consumed,
+            } => {
+                assert_eq!(*actor, 0);
+                assert_eq!(*target, 3, "called off kamicha");
+                assert_eq!(pai, "1m");
+                assert_eq!(consumed, &["1m".to_string(), "1m".to_string()]);
+            }
+            other => panic!("expected Pon, got {other:?}"),
+        }
+
+        // Now discard the 2p we drew *last* turn. It is still the tail of
+        // `hand` (the pon removed the two 1m from the middle), but we did not
+        // draw this turn, so this is a tedashi.
+        let after_pon = parse_one(&mut b, r#"{"tag":"D40"}"#);
+        match &after_pon[0] {
+            MjaiEvent::Dahai {
+                actor,
+                pai,
+                tsumogiri,
+            } => {
+                assert_eq!(*actor, 0);
+                assert_eq!(pai, "2p");
+                assert!(!*tsumogiri, "no draw since the pon — must be tedashi");
+            }
+            other => panic!("expected Dahai, got {other:?}"),
+        }
+    }
+
+    /// The `is_tsumo` gate must not break the ordinary case: after ankan the
+    /// rinshan draw re-arms it, so tsumogiri of the replacement tile still
+    /// reports true.
+    #[test]
+    fn dahai_of_rinshan_draw_after_ankan_is_tsumogiri() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        // Four 5m (16..19, 16 is the red) so we can ankan them.
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"16,17,18,19,0,4,8,12,20,24,28,32,36"}"#,
+        );
+        parse_one(&mut b, r#"{"tag":"T40"}"#); // draw 2p
+
+        // Ankan of 5m: hai0 = 16, target 0 → m = 16 << 8 = 4096.
+        let kan = parse_one(&mut b, r#"{"tag":"N","who":"0","m":"4096"}"#);
+        assert!(matches!(kan[0], MjaiEvent::Ankan { actor: 0, .. }));
+
+        // Rinshan draw re-arms is_tsumo, so discarding it is a tsumogiri.
+        parse_one(&mut b, r#"{"tag":"T44"}"#); // draw 3p
+        let discard = parse_one(&mut b, r#"{"tag":"D44"}"#);
+        match &discard[0] {
+            MjaiEvent::Dahai {
+                pai, tsumogiri, ..
+            } => {
+                assert_eq!(pai, "3p");
+                assert!(*tsumogiri, "discarded the rinshan tile we just drew");
             }
             other => panic!("expected Dahai, got {other:?}"),
         }
