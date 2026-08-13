@@ -314,8 +314,7 @@ impl ProxyHandler {
                     self.platform,
                     flow_log,
                     Some(self.session.clone()),
-                    None,
-                    None,
+                    bridge::BridgeHooks::default(),
                 )))
             })
             .clone()

@@ -142,7 +142,7 @@ https://github.com/user-attachments/assets/2ce7cb71-8b25-4895-a12b-0a638665dcab
 | 平台 | 四麻 | 三麻 | AutoPlay |
 |---|:---:|:---:|:---:|
 | **雀魂（Mahjong Soul / Majsoul）** | &check; | &check; | &check; |
-| **天鳳（Tenhou）** | &check; | &check; | &cross; |
+| **天鳳（Tenhou）** | &check; | &check; | &check; |
 | **Riichi City** | &check; | &check; | &cross; |
 | **Amatsuki** | （規劃中） | （規劃中） | &cross; |
 
@@ -397,7 +397,7 @@ alpha.8 已完成：
 - [x] 從 GitHub release 或本機 ZIP 檔案安裝 bot
 - [x] Chromium 抓包模式（不需信任 CA）
 - [x] **自訂主題**（前端 theming hook）
-- [x] **AutoPlay**（先支援雀魂；由 bot 自主控制牌桌）
+- [x] **AutoPlay**（支援雀魂與天鳳；由 bot 自主控制牌桌）
 
 規劃中：
 
@@ -443,7 +443,8 @@ alpha.8 已完成：
 `bot-status`…）與 pull 指令和 backend 溝通，兩者的清單
 都在 [`src/ipc/README.md`](./src/ipc/README.md)。開啟
 AutoPlay 時，`autoplay` manager 會取用 bot 的決策，並透過
-Chromium 抓包 backend（CDP）點擊牌桌。
+Chromium 抓包 backend（CDP）執行：雀魂是在牌桌上點擊，天鳳的
+客戶端協定夠單純，則直接透過對局連線送出動作。
 
 ## 技術堆疊
 
@@ -471,7 +472,7 @@ Chromium 抓包 backend（CDP）點擊牌桌。
 .
 ├── src/
 │   ├── analysis/      向聽 / 待牌 / 和牌率 / 風險 / 切牌搜尋
-│   ├── autoplay/      bot 決策 → 透過 CDP 點擊牌桌（AutoPlay）
+│   ├── autoplay/      bot 決策 → 點擊牌桌（雀魂）或送出協定 frame（天鳳），皆走 CDP
 │   ├── bot/           Bot manager：內建 bot、雲端 API client、mjai 子行程執行器
 │   ├── bridge/        各平台協定 → MjaiEvent
 │   │   ├── majsoul/   雀魂（liqi protobuf）

@@ -170,6 +170,7 @@ pub fn run() {
                     config_path,
                     session.clone(),
                     mjai_bus.clone(),
+                    post_tracker_bus.clone(),
                     bot_response_bus.clone(),
                     bot_status_bus.clone(),
                     capture_status_bus.clone(),
@@ -243,7 +244,7 @@ pub fn run() {
 
                 if bot_enabled {
                     let cfg_for_bot = state.config.clone();
-                    let mjai_for_bot = mjai_bus.clone();
+                    let events_for_bot = post_tracker_bus.clone();
                     let resp = bot_response_bus.clone();
                     let bs = bot_status_bus.clone();
                     let nb = notify_bus.clone();
@@ -256,7 +257,7 @@ pub fn run() {
                     tauri::async_runtime::spawn(async move {
                         if let Err(e) = bot::run_bot_manager(
                             cfg_for_bot,
-                            mjai_for_bot,
+                            events_for_bot,
                             resp,
                             bs,
                             nb,

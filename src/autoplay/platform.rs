@@ -23,6 +23,37 @@ pub enum Step {
     /// pre-click "thinking" delay and the inter-click gap inside one
     /// action.
     Sleep { duration_ms: u32 },
+    /// Click the first DOM element the page has out of `selectors`.
+    ///
+    /// Tenhou wires its own action buttons through a document-level click
+    /// listener keyed on `name="c<handler>-<arg>"`, so dispatching a real
+    /// click on one runs the client's own handler — the action is performed
+    /// exactly as if the user had pressed it, with none of the coordinate
+    /// guessing a canvas needs. `label` is for logs only.
+    ///
+    /// A list, because some actions are offered under more than one slot and
+    /// which ones exist depends on the hand: the pon that keeps a red five
+    /// out of the meld is only drawn when there is a red five to keep. The
+    /// order is the caller's preference, not the document's.
+    DomClick {
+        selectors: Vec<String>,
+        label: String,
+    },
+    /// Block until the client is ready to take input, then continue.
+    ///
+    /// Frame arrival is not the start of the turn. Tenhou's server can send
+    /// several seats' actions at once — against millisecond-fast opponents it
+    /// routinely does — while the client spends seconds animating them, and
+    /// only then draws the buttons and starts its clock. Everything timed
+    /// from frame arrival is timed from the wrong instant.
+    AwaitReady { timeout_ms: u32 },
+    /// Discard the tile with this Tenhou index (`0..=135`) through the
+    /// client's own handler.
+    ///
+    /// Not a position: the client's discard entry point is addressed by tile,
+    /// so it resolves the rest itself — including where the tile currently
+    /// sits, which is why calls moving the hand cannot affect this.
+    Discard { tile_index: u32 },
 }
 
 /// State machine for handling Majsoul's fused reach+discard: the platform
@@ -87,6 +118,10 @@ pub struct ActionContext<'a> {
     /// User Lua delay policy, when loaded. Consulted by the delay model;
     /// on any script failure the built-in policy runs instead.
     pub delay_script: Option<&'a crate::autoplay::delay::DelayScript>,
+    /// Tenhou only: the bridge's hand at Tenhou tile-index resolution plus
+    /// the current decision window. `None` on other platforms, and on
+    /// Tenhou before the first parsed frame.
+    pub tenhou: Option<&'a crate::autoplay::tenhou_state::TenhouState>,
 }
 
 /// Output of `PlatformAutoplay::plan`. Captures both the click sequence
@@ -102,12 +137,11 @@ pub struct PlanResult {
     /// `AwaitingDahai`. Set only when the bot's `Reach` event omits
     /// `pai` and the platform needs a follow-up dahai.
     pub inject_reach_for_followup: bool,
-    /// When `true`, the next bot Dahai for our seat is the riichi tile
-    /// and should be clicked even if the manager has flipped its
-    /// `self_riichi_accepted` gate. Currently always set together with
-    /// `inject_reach_for_followup`; kept as a separate flag so future
-    /// platforms can express other "treat next dahai specially"
-    /// situations.
+    /// When `true`, the plan declared riichi without throwing the tile, so
+    /// the next bot Dahai for our seat is that tile and should be performed
+    /// even though the manager has flipped its `self_riichi_accepted` gate.
+    /// Only reached when the bot's `Reach` names no `pai` — with one, both
+    /// platforms declare and discard in a single plan.
     pub awaiting_riichi_dahai: bool,
 }
 

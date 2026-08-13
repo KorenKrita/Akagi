@@ -15,12 +15,14 @@
 //! Tenhou tile encoding lives in [`tile`]; meld bitfield decoding lives in
 //! [`meld`]; per-flow state in [`state`].
 
+pub mod encode;
 pub mod meld;
 pub mod state;
 pub mod tile;
 
 use super::{Bridge, Direction, ParseResult};
 use crate::{
+    autoplay::tenhou_state::{SharedTenhouState, TenhouState},
     config::Platform,
     logger::{FlowLogger, Session},
     schema::{mjai::Actor, MjaiEvent},
@@ -43,6 +45,10 @@ pub struct TenhouBridge {
     flow_log: Option<Arc<FlowLogger>>,
     session: Option<Arc<Session>>,
     mjai_log: Option<Arc<FlowLogger>>,
+    /// Autoplay's view of the hand and the current decision window. Written
+    /// after every parsed frame; `None` unless the chromium capture path
+    /// wired it (see [`crate::autoplay::tenhou_state`]).
+    shared: Option<SharedTenhouState>,
 }
 
 impl TenhouBridge {
@@ -52,7 +58,31 @@ impl TenhouBridge {
             flow_log,
             session,
             mjai_log: None,
+            shared: None,
         }
+    }
+
+    /// Attach the slot autoplay reads the hand and decision window from.
+    pub fn with_shared_state(mut self, shared: Option<SharedTenhouState>) -> Self {
+        self.shared = shared;
+        self
+    }
+
+    /// Mirror the tracked hand + window into the shared slot. Called once per
+    /// parsed frame, after dispatch has applied its effects.
+    fn publish(&self) {
+        let Some(shared) = &self.shared else { return };
+        let Ok(mut guard) = shared.write() else {
+            warn!(target: "akagi::bridge::tenhou", "tenhou state slot poisoned");
+            return;
+        };
+        *guard = Some(TenhouState {
+            seat: self.state.seat,
+            hand: self.state.hand.clone(),
+            melds: self.state.melds.clone(),
+            is_tsumo: self.state.is_tsumo,
+            window: self.state.window,
+        });
     }
 
     /// Open a fresh `tenhou_<ts>.mjai.jsonl` mirroring the Majsoul rotation
@@ -108,10 +138,10 @@ impl TenhouBridge {
             return self.on_init(msg);
         }
         if let Some(actor) = tsumo_actor(tag) {
-            return self.on_tsumo(actor, tag);
+            return self.on_tsumo(actor, tag, msg);
         }
         if let Some((actor, tsumogiri_uppercase)) = dahai_actor(tag) {
-            return self.on_dahai(actor, tag, tsumogiri_uppercase);
+            return self.on_dahai(actor, tag, tsumogiri_uppercase, msg);
         }
         if tag == "N" && msg.get("m").is_some() {
             return self.on_meld(msg);
@@ -247,7 +277,7 @@ impl TenhouBridge {
     }
 
     /// `<T0/>`, `<U7/>`, `<V12/>`, `<W3/>` — tsumo.
-    fn on_tsumo(&mut self, actor_rel: u8, tag: &str) -> Vec<MjaiEvent> {
+    fn on_tsumo(&mut self, actor_rel: u8, tag: &str, msg: &JsonValue) -> Vec<MjaiEvent> {
         if actor_rel >= 4 {
             return Vec::new();
         }
@@ -265,6 +295,11 @@ impl TenhouBridge {
                 self.state.hand.push(idx);
                 self.state.is_tsumo = true;
             }
+            // Our draw always owes a discard, so the window opens whether or
+            // not the server offered anything extra (`t` absent → 0).
+            self.state.open_window(parse_u32(msg, "t").unwrap_or(0));
+        } else {
+            self.state.window = None;
         }
         let events = vec![MjaiEvent::Tsumo { actor, pai }];
         self.write_mjai(&events);
@@ -274,7 +309,13 @@ impl TenhouBridge {
     /// `<D7/>`, `<E/>`, `<f12/>` — dahai.
     /// `tsumogiri_uppercase` is true when the tag's leading letter is uppercase
     /// (Tenhou's signal that the discard is just-drawn).
-    fn on_dahai(&mut self, actor_rel: u8, tag: &str, tsumogiri_uppercase: bool) -> Vec<MjaiEvent> {
+    fn on_dahai(
+        &mut self,
+        actor_rel: u8,
+        tag: &str,
+        tsumogiri_uppercase: bool,
+        msg: &JsonValue,
+    ) -> Vec<MjaiEvent> {
         if actor_rel >= 4 {
             return Vec::new();
         }
@@ -300,11 +341,16 @@ impl TenhouBridge {
         };
         let pai = tenhou_to_mjai_one(idx);
 
-        // Tsumogiri logic: for our own discards, compare against the just-drawn
-        // tile (handles edge case where tag is uppercase but tile is a tedashi
-        // that happens to match the drawn tile's index).
+        // Tsumogiri logic: for our own discards the tag's case is not a
+        // reliable signal, so compare against the just-drawn tile instead —
+        // `on_tsumo` pushes it onto the tail of `hand`.
+        //
+        // The `is_tsumo` gate is load-bearing. A call removes tiles from the
+        // *middle* of `hand`, so after our own chi/pon/kan the tail still
+        // holds the tile we drew last turn; without the gate, discarding that
+        // tile reports a tedashi as tsumogiri.
         let tsumogiri = if actor == self.state.seat {
-            self.state.hand.last().copied() == Some(idx)
+            self.state.is_tsumo && self.state.hand.last().copied() == Some(idx)
         } else {
             tsumogiri_uppercase
         };
@@ -315,6 +361,15 @@ impl TenhouBridge {
         if actor == self.state.seat {
             if let Some(pos) = self.state.hand.iter().rposition(|&i| i == idx) {
                 self.state.hand.remove(pos);
+            }
+            // Our own discard closes the window it satisfied.
+            self.state.window = None;
+        } else {
+            // Someone else's discard opens a claim window only if the server
+            // says we may claim it (`t` bits: pon/kan/chi/ron).
+            match parse_u32(msg, "t").unwrap_or(0) {
+                0 => self.state.window = None,
+                ops => self.state.open_window(ops),
             }
         }
 
@@ -339,6 +394,28 @@ impl TenhouBridge {
             return Vec::new();
         }
         let m = parse_u32(msg, "m").unwrap_or(0);
+
+        // A call ends whatever draw was in flight: our next discard is a
+        // tedashi unless a fresh `T<n>` arrives first (it does for the
+        // rinshan draw after ankan / kakan / nukidora). `on_dahai` reads this
+        // flag, so leaving it set would mis-report the post-call discard.
+        self.state.is_tsumo = false;
+
+        // Whatever claim window this call resolved is now spent. Chi and pon
+        // re-open it below because they owe a discard; the kans and nukidora
+        // draw a rinshan replacement first, and that `T<n>` opens its own.
+        self.state.window = None;
+
+        // ...unless the meld itself is claimable: an opponent's kakan can be
+        // robbed (chankan), and the server says so the same way it does for a
+        // discard — a `t` bitmask on the frame. The client draws its ron menu
+        // straight from that attribute, so a frame without one opens nothing.
+        if actor != self.state.seat {
+            match parse_u32(msg, "t").unwrap_or(0) {
+                0 => {}
+                ops => self.state.open_window(ops),
+            }
+        }
 
         // Nukidora has its own bit pattern; handle before structured parse.
         if (m & 0x3F) == 0x20 {
@@ -420,6 +497,11 @@ impl TenhouBridge {
                     self.state.hand.remove(pos);
                 }
             }
+            // Chi and pon hand the turn straight back to us with a discard
+            // owed and nothing optional on offer.
+            if matches!(meld.kind, MeldKind::Chi | MeldKind::Pon) {
+                self.state.open_window(0);
+            }
             self.state.melds.push(meld);
         } else {
             // Track other players' melds is not required — observation only.
@@ -448,7 +530,15 @@ impl TenhouBridge {
                 .or(v.as_u64().map(|n| n as u8))
         });
         let events = match step {
-            Some(1) => vec![MjaiEvent::Reach { actor, pai: None }],
+            Some(1) => {
+                // Step 1 acknowledges the declaration; the riichi tile is
+                // still owed as a separate discard frame, so our window
+                // re-opens with nothing optional on offer.
+                if actor == self.state.seat {
+                    self.state.open_window(0);
+                }
+                vec![MjaiEvent::Reach { actor, pai: None }]
+            }
             Some(2) => {
                 if actor == self.state.seat {
                     self.state.in_riichi = true;
@@ -485,6 +575,8 @@ impl TenhouBridge {
             warn!(target: "akagi::bridge::tenhou", "agari involves sanma ghost slot, dropped");
             return Vec::new();
         }
+        // The kyoku is over; nothing is owed and nothing may be claimed.
+        self.state.window = None;
 
         // sc field is "before0,delta0,before1,delta1,..." in wire-rel order
         // (rel 0 = us). Always carries 4 pairs even in sanma; skip the pair
@@ -519,6 +611,7 @@ impl TenhouBridge {
 
     /// `<RYUUKYOKU .../>` — exhaustive draw.
     fn on_ryukyoku(&mut self, msg: &JsonValue) -> Vec<MjaiEvent> {
+        self.state.window = None;
         let sc = parse_csv_i32(msg, "sc");
         let mut deltas_abs = vec![0i32; self.state.num_players as usize];
         for (rel, chunk) in sc.chunks(2).take(4).enumerate() {
@@ -587,12 +680,21 @@ impl Bridge for TenhouBridge {
             args: msg.clone(),
         });
         let events = self.dispatch(&msg);
+        // Mirror the freshly-applied hand + window to autoplay. Done for every
+        // dispatched frame, not just the ones that produced mjai events: a
+        // frame that only closes the decision window still has to be seen.
+        self.publish();
         ParseResult { events, parsed }
     }
 
-    fn build(&mut self, _command: &MjaiEvent) -> Option<Vec<u8>> {
-        // Observe-only mode. Autoplay is intentionally out-of-scope.
-        None
+    /// Encode a bot action as the Tenhou client frame that performs it.
+    ///
+    /// Resolves tile *indices* against the hand this bridge tracks, so it is
+    /// only meaningful for our own seat. Returns `None` for events with no
+    /// client frame and for any action naming a tile we do not hold — see
+    /// [`encode::encode`].
+    fn build(&mut self, command: &MjaiEvent) -> Option<Vec<u8>> {
+        encode::encode(command, self.state.hand_view()).map(String::into_bytes)
     }
 }
 
@@ -989,6 +1091,155 @@ mod tests {
             }
             other => panic!("expected Dahai, got {other:?}"),
         }
+    }
+
+    /// Regression: the first discard after our own call is a tedashi, never a
+    /// tsumogiri. A meld removes tiles from the *middle* of `state.hand`, so
+    /// the tail still holds the tile we drew on the previous turn — comparing
+    /// the discard against it (without checking `is_tsumo`) reported the
+    /// tedashi as tsumogiri.
+    #[test]
+    fn dahai_after_our_pon_is_tedashi_not_tsumogiri() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        // Hand holds two 1m (indices 0, 1) so we can pon a third.
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,1,4,5,8,9,12,16,20,24,28,32,36"}"#,
+        );
+
+        // Our turn: draw 2p (index 40), then tedashi the 1p (index 36). The
+        // drawn 2p stays at the tail of `hand`.
+        parse_one(&mut b, r#"{"tag":"T40"}"#);
+        let tedashi = parse_one(&mut b, r#"{"tag":"D36"}"#);
+        match &tedashi[0] {
+            MjaiEvent::Dahai { pai, tsumogiri, .. } => {
+                assert_eq!(pai, "1p");
+                assert!(!*tsumogiri, "drew 2p but discarded 1p");
+            }
+            other => panic!("expected Dahai, got {other:?}"),
+        }
+
+        // Kamicha (rel 3 → abs 3) discards a 1m (index 2).
+        parse_one(&mut b, r#"{"tag":"g2"}"#);
+
+        // We pon it. m = 1131: pon marker (bit 3), target_rel 3 (kamicha),
+        // tile type 1m, unused = the 4th copy (index 3), called tile at r = 2.
+        let pon = parse_one(&mut b, r#"{"tag":"N","who":"0","m":"1131"}"#);
+        match &pon[0] {
+            MjaiEvent::Pon {
+                actor,
+                target,
+                pai,
+                consumed,
+            } => {
+                assert_eq!(*actor, 0);
+                assert_eq!(*target, 3, "called off kamicha");
+                assert_eq!(pai, "1m");
+                assert_eq!(consumed, &["1m".to_string(), "1m".to_string()]);
+            }
+            other => panic!("expected Pon, got {other:?}"),
+        }
+
+        // Now discard the 2p we drew *last* turn. It is still the tail of
+        // `hand` (the pon removed the two 1m from the middle), but we did not
+        // draw this turn, so this is a tedashi.
+        let after_pon = parse_one(&mut b, r#"{"tag":"D40"}"#);
+        match &after_pon[0] {
+            MjaiEvent::Dahai {
+                actor,
+                pai,
+                tsumogiri,
+            } => {
+                assert_eq!(*actor, 0);
+                assert_eq!(pai, "2p");
+                assert!(!*tsumogiri, "no draw since the pon — must be tedashi");
+            }
+            other => panic!("expected Dahai, got {other:?}"),
+        }
+    }
+
+    /// The `is_tsumo` gate must not break the ordinary case: after ankan the
+    /// rinshan draw re-arms it, so tsumogiri of the replacement tile still
+    /// reports true.
+    #[test]
+    fn dahai_of_rinshan_draw_after_ankan_is_tsumogiri() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        // Four 5m (16..19, 16 is the red) so we can ankan them.
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"16,17,18,19,0,4,8,12,20,24,28,32,36"}"#,
+        );
+        parse_one(&mut b, r#"{"tag":"T40"}"#); // draw 2p
+
+        // Ankan of 5m: hai0 = 16, target 0 → m = 16 << 8 = 4096.
+        let kan = parse_one(&mut b, r#"{"tag":"N","who":"0","m":"4096"}"#);
+        assert!(matches!(kan[0], MjaiEvent::Ankan { actor: 0, .. }));
+
+        // Rinshan draw re-arms is_tsumo, so discarding it is a tsumogiri.
+        parse_one(&mut b, r#"{"tag":"T44"}"#); // draw 3p
+        let discard = parse_one(&mut b, r#"{"tag":"D44"}"#);
+        match &discard[0] {
+            MjaiEvent::Dahai { pai, tsumogiri, .. } => {
+                assert_eq!(pai, "3p");
+                assert!(*tsumogiri, "discarded the rinshan tile we just drew");
+            }
+            other => panic!("expected Dahai, got {other:?}"),
+        }
+    }
+
+    /// Regression (chankan): an opponent's kakan can be robbed, and the
+    /// server marks it exactly as it marks a claimable discard — a `t`
+    /// bitmask on the frame. Dropping it left autoplay with no window, so
+    /// the ron (or the pass that keeps the clock from running out) was
+    /// never pressed.
+    #[test]
+    fn an_opponents_kakan_with_t_opens_a_ron_window() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,4,8,12,16,20,24,28,32,36,40,44,48"}"#,
+        );
+        // Shimocha adds to a pon of 1m (crafted kakan m = 16) and we may rob
+        // it: the frame carries t = 8 (ron).
+        let kakan = parse_one(&mut b, r#"{"tag":"N","who":"1","m":"16","t":"8"}"#);
+        assert!(matches!(kakan[0], MjaiEvent::Kakan { actor: 1, .. }));
+        let w = b.state.window.expect("chankan must open a window");
+        assert!(w.allows(crate::autoplay::tenhou_state::OP_RON));
+        assert!(w.has_declinable_claim(), "a chankan pass is a real decline");
+    }
+
+    /// A kakan we cannot rob carries no `t`, and must leave no window: a
+    /// stale one would let a later bot reply act into the caller's turn.
+    #[test]
+    fn an_opponents_kakan_without_t_opens_nothing() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,4,8,12,16,20,24,28,32,36,40,44,48"}"#,
+        );
+        // Open a claim window first so the kakan has something to clear.
+        parse_one(&mut b, r#"{"tag":"e50","t":"1"}"#);
+        assert!(b.state.window.is_some());
+        parse_one(&mut b, r#"{"tag":"N","who":"1","m":"16"}"#);
+        assert!(b.state.window.is_none(), "no t, no claim");
+    }
+
+    /// Our own kakan never opens a window off its own frame — the rinshan
+    /// draw that follows opens the real one.
+    #[test]
+    fn our_own_kakan_opens_no_window_even_with_t() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        parse_one(
+            &mut b,
+            r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,4,8,12,16,20,24,28,32,36,40,44,48"}"#,
+        );
+        parse_one(&mut b, r#"{"tag":"N","who":"0","m":"16","t":"8"}"#);
+        assert!(b.state.window.is_none());
     }
 
     #[test]

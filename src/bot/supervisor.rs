@@ -10,7 +10,7 @@ use crate::bot::registry::BotRegistry;
 use crate::bot::runtime::PythonRuntime;
 use crate::bot::BotManager;
 use crate::config::AppConfig;
-use crate::event_bus::{BotResponseBus, BotStatusBus, MjaiBus, NotifyBus};
+use crate::event_bus::{BotResponseBus, BotStatusBus, NotifyBus, PostTrackerBus};
 use crate::inspector::InspectorWriter;
 use crate::util;
 use anyhow::Result;
@@ -21,7 +21,7 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::warn;
 
 /// Build a `BotManager` from the shared `config` + `runtime` and run it
-/// until the MJAI bus closes. Returns `Err` only on setup failure (missing
+/// until the post-tracker bus closes. Returns `Err` only on setup failure (missing
 /// runtime, unscannable bot dir); transient runtime errors are absorbed by
 /// the manager itself.
 ///
@@ -31,7 +31,7 @@ use tracing::warn;
 #[allow(clippy::too_many_arguments)]
 pub async fn run_bot_manager(
     config: Arc<RwLock<AppConfig>>,
-    mjai: MjaiBus,
+    events: PostTrackerBus,
     response_bus: BotResponseBus,
     status_bus: BotStatusBus,
     notify_bus: NotifyBus,
@@ -86,6 +86,6 @@ pub async fn run_bot_manager(
         inspector,
         syncs_in_flight,
     );
-    let rx = mjai.subscribe();
+    let rx = events.subscribe();
     manager.run(rx).await
 }

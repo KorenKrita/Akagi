@@ -24,7 +24,7 @@ use crate::autoplay::AutoplayContext;
 use crate::bridge::Direction;
 use crate::capture::flow::{slugify, FlowBridges};
 use crate::config::HttpCaptureConfig;
-use crate::event_bus::MjaiBus;
+use crate::event_bus::{MjaiBus, NotifyBus};
 use crate::inspector::annotate::{self, RequestView};
 use crate::inspector::InspectorWriter;
 use crate::schema::{
@@ -129,8 +129,10 @@ pub fn page_handle_cleared_by_removal(owner: Option<&str>, removed: &[String]) -
 
 /// Hosts whose WebSocket creation hands the page handle to autoplay.
 /// `maj-soul.com` covers en/cn/jp portals; `mahjongsoul.com` is the
-/// Yostar mirror.
-const AUTOPLAY_HOST_HINTS: &[&str] = &["maj-soul.com", "mahjongsoul.com"];
+/// Yostar mirror. `tenhou.net` and `mjv.jp` are Tenhou's portal and its
+/// game gateway respectively — Tenhou autoplay speaks on the page's own
+/// socket, so it needs the same page handle.
+const AUTOPLAY_HOST_HINTS: &[&str] = &["maj-soul.com", "mahjongsoul.com", "tenhou.net", "mjv.jp"];
 
 fn is_autoplay_target_url(ws_url: &str) -> bool {
     AUTOPLAY_HOST_HINTS.iter().any(|h| ws_url.contains(h))
@@ -151,6 +153,7 @@ pub async fn run(
     inspector: InspectorWriter,
     autoplay: Option<Arc<AutoplayContext>>,
     http_cfg: HttpCaptureConfig,
+    notify: NotifyBus,
 ) -> Result<()> {
     info!("CDP connecting to {endpoint}");
     let (browser_owned, mut handler) = Browser::connect(endpoint)
@@ -236,6 +239,7 @@ pub async fn run(
                     inspector.clone(),
                     autoplay.clone(),
                     http_cfg.clone(),
+                    notify.clone(),
                 )
                 .await
                 {
@@ -268,9 +272,185 @@ pub async fn run(
     Err(anyhow!("CDP loop terminated"))
 }
 
+/// URL of the script that carries the Tenhou client.
+///
+/// Versioned (`/4/1141.js`, reached through a redirect from `latest.js`), so
+/// the pattern matches by shape rather than by version.
+const TENHOU_CLIENT_URL_PATTERN: &str = "*tenhou.net/4/*.js";
+
+/// Ask the browser to hand us the Tenhou client script before the page runs
+/// it, so it can be rewritten to expose its handler registry.
+///
+/// Paused at the *response* stage: we want the bytes, not just the request.
+async fn enable_script_rewrite(page: &Page) -> Result<()> {
+    use chromiumoxide::cdp::browser_protocol::fetch::{EnableParams, RequestPattern, RequestStage};
+    let pattern = RequestPattern {
+        url_pattern: Some(TENHOU_CLIENT_URL_PATTERN.to_string()),
+        resource_type: None,
+        request_stage: Some(RequestStage::Response),
+    };
+    let params = EnableParams {
+        patterns: Some(vec![pattern]),
+        handle_auth_requests: None,
+    };
+    page.execute(params).await.context("Fetch.enable")?;
+    Ok(())
+}
+
+/// Reload the page if its client script slipped past the interceptor.
+///
+/// Attaching is racy by construction: the browser opens on the game URL and
+/// we subscribe afterwards, so the client script is usually fetched — or
+/// served from disk cache — before `Fetch.enable` takes effect. The
+/// interceptor is then armed for a request that has already happened.
+///
+/// Reloading past the cache puts the script back through it. Done once, at
+/// attach, so it lands on the lobby rather than mid-game; a page that already
+/// carries the door is left alone, which is what keeps this from looping.
+async fn reload_if_uninstrumented(page: &Page) -> Result<()> {
+    use chromiumoxide::cdp::browser_protocol::page::ReloadParams;
+
+    let expr = format!(
+        "(()=>{{try{{return !!window.{} || !/tenhou\\.net/.test(location.host);}}\
+          catch(e){{return true}}}})()",
+        crate::autoplay::tenhou::inject::EXPORT_GLOBAL
+    );
+    let done = page
+        .evaluate(expr)
+        .await
+        .ok()
+        .and_then(|r| r.value().and_then(|v| v.as_bool()))
+        .unwrap_or(true);
+    if done {
+        return Ok(());
+    }
+    info!("CDP: re-loading the Tenhou client so it passes through the interceptor");
+    let params = ReloadParams::builder().ignore_cache(true).build();
+    page.execute(params).await.context("Page.reload")?;
+    Ok(())
+}
+
+/// Rewrite one paused response and let it through.
+///
+/// Every outcome continues the request — instrumentation that fails must cost
+/// the discard path, never the page. A derivation failure is surfaced to the
+/// user because it means the client changed shape and the pattern that finds
+/// its handler registry needs revisiting; that is a report worth having.
+async fn rewrite_paused_script(
+    page: &Page,
+    notify: &NotifyBus,
+    request_id: chromiumoxide::cdp::browser_protocol::fetch::RequestId,
+    url: &str,
+) {
+    use crate::autoplay::tenhou::inject;
+    use chromiumoxide::cdp::browser_protocol::fetch::{
+        ContinueRequestParams, FulfillRequestParams, GetResponseBodyParams,
+    };
+
+    let passthrough = |id: chromiumoxide::cdp::browser_protocol::fetch::RequestId| {
+        ContinueRequestParams::builder().request_id(id).build().ok()
+    };
+
+    let body = match page
+        .execute(GetResponseBodyParams::new(request_id.clone()))
+        .await
+    {
+        Ok(r) => {
+            let inner = r.result;
+            if inner.base64_encoded {
+                base64::engine::general_purpose::STANDARD
+                    .decode(inner.body.as_bytes())
+                    .ok()
+                    .and_then(|b| String::from_utf8(b).ok())
+            } else {
+                Some(inner.body)
+            }
+        }
+        Err(e) => {
+            // Redirects and other bodiless responses land here. The pattern
+            // is deliberately loose enough to catch the client whatever
+            // version it is served under, so it also catches its neighbours;
+            // that is expected, not a fault.
+            debug!("CDP: no body for {url}: {e:#}");
+            None
+        }
+    };
+
+    let rewritten = match body.as_deref().map(inject::rewrite_client) {
+        Some(Ok(js)) => Some(js),
+        // Not the client at all — the URL pattern matches its neighbours
+        // too (`inflate_min.js`, the `latest.js` redirect). Nothing to say.
+        Some(Err(inject::InjectError::NoDiscardHandler)) => {
+            debug!("CDP: {url} is not the Tenhou client; passing through");
+            None
+        }
+        // It *is* the client — it registers a discard handler — but the
+        // registry could not be recovered. That means the client changed
+        // shape, which is the one failure here that cannot be diagnosed from
+        // logs alone, so ask for a report.
+        Some(Err(e)) => {
+            warn!("CDP: cannot instrument the Tenhou client ({url}): {e}");
+            let _ = notify.send(
+                crate::schema::Notification::warn("Tenhou autoplay unavailable")
+                    .body(format!(
+                        "This build of the Tenhou client could not be instrumented ({e}).                          Discards will not be played. Please report this so the client                          pattern can be updated."
+                    ))
+                    .sticky(),
+            );
+            None
+        }
+        None => None,
+    };
+
+    let sent = match rewritten {
+        Some(js) => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(js.as_bytes());
+            match FulfillRequestParams::builder()
+                .request_id(request_id.clone())
+                .response_code(200)
+                // A fulfilled response carries none of the original headers.
+                // Today the browser sniffs the missing type and executes
+                // anyway, but one `X-Content-Type-Options: nosniff` on
+                // tenhou.net's side would turn that into a blocked script —
+                // so say what it is.
+                .response_header(
+                    chromiumoxide::cdp::browser_protocol::fetch::HeaderEntry::new(
+                        "Content-Type",
+                        "text/javascript",
+                    ),
+                )
+                .body(encoded)
+                .build()
+            {
+                Ok(p) => {
+                    if let Err(e) = page.execute(p).await {
+                        warn!("CDP: could not serve the instrumented client: {e:#}");
+                        false
+                    } else {
+                        info!("CDP: Tenhou client instrumented ({url})");
+                        true
+                    }
+                }
+                Err(e) => {
+                    warn!("CDP: could not build the instrumented response: {e}");
+                    false
+                }
+            }
+        }
+        None => false,
+    };
+
+    if !sent {
+        if let Some(p) = passthrough(request_id) {
+            let _ = page.execute(p).await;
+        }
+    }
+}
+
 /// Enable Network on the page, subscribe to the four WS events, and
 /// spawn a routing task. Returns the task handle so the poll loop can
 /// abort it when the tab closes.
+#[allow(clippy::too_many_arguments)]
 async fn attach_page(
     page: Page,
     target_id: String,
@@ -279,10 +459,28 @@ async fn attach_page(
     inspector: InspectorWriter,
     autoplay: Option<Arc<AutoplayContext>>,
     http_cfg: HttpCaptureConfig,
+    notify: NotifyBus,
 ) -> Result<JoinHandle<()>> {
     page.execute(NetworkEnableParams::default())
         .await
         .context("Network.enable")?;
+    // The pause listener has to exist before `Fetch.enable` arms the
+    // interceptor: a request paused with no listener yet is a request nobody
+    // ever continues, and the page hangs on it. The stream buffers
+    // (unbounded) until the routing task below starts polling, so
+    // subscribing early costs nothing.
+    let mut on_paused = page
+        .event_listener::<chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused>()
+        .await
+        .context("subscribe requestPaused")?;
+    // Instrument the Tenhou client on its way in. Scoped to that one script
+    // so nothing else on the page is paused; a failure to enable is logged
+    // and the session continues without a discard path.
+    if let Err(e) = enable_script_rewrite(&page).await {
+        warn!("CDP: client instrumentation unavailable on target {target_id}: {e:#}");
+    } else if let Err(e) = reload_if_uninstrumented(&page).await {
+        warn!("CDP: could not re-load the client for instrumentation: {e:#}");
+    }
     let mut on_created = page
         .event_listener::<EventWebSocketCreated>()
         .await
@@ -314,6 +512,10 @@ async fn attach_page(
     let handle = tokio::spawn(async move {
         loop {
             tokio::select! {
+                Some(ev) = on_paused.next() => {
+                    let url = ev.request.url.clone();
+                    rewrite_paused_script(&page, &notify, ev.request_id.clone(), &url).await;
+                }
                 Some(ev) = on_created.next() => {
                     let key = FlowKey {
                         target: target_id.clone(),

@@ -1,10 +1,16 @@
 # Tenhou bridge
 
 Translates Tenhou (天鳳) WebSocket frames into the mjai event stream the rest
-of AkagiV3 consumes. Used in **observe-only mode**: server → client frames are
-parsed; client → server frames and `Bridge::build` are no-ops. The reasoning is
-that all game state we need to feed analysis / bots arrives on server frames;
-client frames are user input and contribute no new information.
+of AkagiV3 consumes, and back again for autoplay.
+
+Only server → client frames are **parsed**: all game state analysis and the
+bots need arrives on them, and client frames are user input that contributes no
+new information. `Bridge::build` goes the other way — it encodes a bot's chosen
+action as the client frame that performs it (see `encode.rs`). Autoplay does
+**not** use it: the Tenhou client owns its board state and freezes if a discard
+reaches the server without going through its own handler, so `autoplay::tenhou`
+drives the client's input path instead and takes only the tile-index lookup
+from that module.
 
 ## Wire format at a glance
 
@@ -53,6 +59,54 @@ integer. Bit decoding lives in `meld.rs` and follows
 <http://tenhou.net/img/mentsu136.txt> exactly. Nukidora (北抜き) is the special
 case `(m & 0x3F) == 0x20` — handled before the structured decoder.
 
+### The `t` attribute — decision windows
+
+Tsumo and discard frames may carry a `t` bitmask naming what the server is
+offering us. It plays the same role Majsoul's `OptionalOperationList` does, and
+the bridge tracks it in `State::window` for `autoplay::tenhou_state`. The bits
+mean different things depending on which frame carried them, but the two sets do
+not overlap:
+
+| bit | on our draw (`T<n>`) | on a discard (`D`/`E`/`F`/`G<n>`) |
+|---|---|---|
+| 1 | — | pon |
+| 2 | — | daiminkan |
+| 4 | — | chi |
+| 8 | — | ron |
+| 16 | tsumo agari | — |
+| 32 | riichi | — |
+| 64 | 九種九牌 | — |
+
+Ankan and kakan are not in the mask — the client derives them from the hand, and
+so does Akagi, via the riichi engine's legal actions. Parsing is unconditional
+even though only autoplay consumes it: it is cheap, and a stale window is worse
+than none.
+
+One more frame carries the claim bits: an opponent's kakan `N` when the kan can
+be robbed (chankan). The client builds its ron menu straight from that
+attribute — `(u=~~a.t)&&ec.Ni(u)` in its `N` handler — and the bridge opens a
+window from it the same way it does for a discard. Our own calls never open one
+off their own frame; the rinshan draw that follows does.
+
+## Encoding actions (`encode.rs`)
+
+The inverse direction, and the only implementation of `Bridge::build` for this
+platform. Nothing sends its output today — see above — but the tile lookup at
+its core is what autoplay uses to name a discard, and the frame table is the
+executable statement of the client protocol.
+
+Tenhou addresses tiles by index in `0..=135` — the specific physical copy — so
+an mjai tile *string* only resolves against a tracked hand, which is why this
+lives in the bridge rather than in autoplay.
+Lookup scans candidates in descending index order and matches the red/plain
+distinction exactly, so a request for a plain five never consumes the red copy;
+an unsatisfiable request fails instead of substituting the wrong tile. Matched
+tiles are removed from a working pool, so a pon of two identical tiles yields
+two distinct indices.
+
+Session control (`JOIN` / `GOK` / `NEXTREADY`) is deliberately **not** encoded:
+Akagi observes a real client, which sends those itself.
+
 ## Adding a new tag handler
 
 1. Add a `match` arm in `TenhouBridge::dispatch` (`mod.rs`) that routes the new
@@ -62,12 +116,13 @@ case `(m & 0x3F) == 0x20` — handled before the structured decoder.
    when appropriate).
 3. Add a unit test covering at least one realistic JSON input.
 
-## Why observation only
+## Why client frames are still not parsed
 
-The Tenhou bridge is intentionally scoped to "look at server messages, ignore
-client messages." Autoplay (`Bridge::build`) is intentionally not implemented
-— it returns `None`. If you want to add autoplay later you would also need to
-revisit `parse(Direction::Up, ..)` to track action acks.
+`parse(Direction::Up, ..)` remains a no-op even now that autoplay exists. What
+autoplay does goes through the client's own handlers, and the client then sends
+the frame itself — after which the server echoes the action to all seats, so it
+arrives on the downlink like any other event. Parsing the uplink would only
+duplicate that.
 
 ## References
 

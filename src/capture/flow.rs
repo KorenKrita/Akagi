@@ -9,9 +9,7 @@
 //! `FlowBridges<K>` lifts that pattern out so both backends share one
 //! lazy-create + ref-count-clean-up implementation.
 
-use crate::autoplay::budget::SharedTimeBudget;
-use crate::autoplay::verify::SharedInputWatch;
-use crate::bridge::{self, Bridge};
+use crate::bridge::{self, Bridge, BridgeHooks};
 use crate::config::Platform;
 use crate::logger::Session;
 use std::collections::HashMap;
@@ -30,13 +28,9 @@ pub type SharedBridge = Arc<StdMutex<Box<dyn Bridge>>>;
 pub struct FlowBridges<K> {
     session: Arc<Session>,
     platform: Platform,
-    /// Shared time-budget slot handed to every bridge this map creates.
-    /// `None` when the backend has no autoplay context (MITM proxy).
-    time_budget: Option<SharedTimeBudget>,
-    /// Shared input-command counter handed to every bridge this map
-    /// creates, for autoplay click verification. Wired exactly like
-    /// `time_budget`.
-    input_watch: Option<SharedInputWatch>,
+    /// Autoplay's shared slots, handed to every bridge this map creates.
+    /// Empty when the backend has no autoplay context (MITM proxy).
+    hooks: BridgeHooks,
     map: StdMutex<HashMap<K, SharedBridge>>,
     next_flow_id: AtomicU64,
 }
@@ -45,17 +39,11 @@ impl<K> FlowBridges<K>
 where
     K: Eq + Hash + Clone,
 {
-    pub fn new(
-        session: Arc<Session>,
-        platform: Platform,
-        time_budget: Option<SharedTimeBudget>,
-        input_watch: Option<SharedInputWatch>,
-    ) -> Self {
+    pub fn new(session: Arc<Session>, platform: Platform, hooks: BridgeHooks) -> Self {
         Self {
             session,
             platform,
-            time_budget,
-            input_watch,
+            hooks,
             map: StdMutex::new(HashMap::new()),
             next_flow_id: AtomicU64::new(1),
         }
@@ -86,8 +74,7 @@ where
                     self.platform,
                     flow_log,
                     Some(self.session.clone()),
-                    self.time_budget.clone(),
-                    self.input_watch.clone(),
+                    self.hooks.clone(),
                 )))
             })
             .clone()

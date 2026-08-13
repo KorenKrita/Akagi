@@ -47,11 +47,32 @@ pub type NotifyBus = broadcast::Sender<Notification>;
 /// Producer: `analysis::runner`. Consumers: `ipc` forwarder, future HUD.
 pub type AnalysisBus = broadcast::Sender<AnalysisResult>;
 
-/// Post-tracker fan-out: each `MjaiEvent` re-emitted *after* the
-/// `GameTracker` has applied it to the engine state. Subscribers can rely
-/// on the live game-state mirror being current when this fires (vs. the
-/// raw `MjaiBus` where ordering against the tracker is racy).
-pub type PostTrackerBus = broadcast::Sender<MjaiEvent>;
+/// One `MjaiEvent` as re-emitted after the `GameTracker` applied it.
+///
+/// `can_act` rides with the event rather than being read off the tracker
+/// on arrival, and that is the whole point of the type: a subscriber that
+/// pauses between events (the bot manager waits on inference) would
+/// otherwise ask a tracker that has moved on, and get the answer for a
+/// later event than the one it is holding. One frame can carry several
+/// seats' actions, so that is not a rare race — it is most of them.
+#[derive(Debug, Clone)]
+pub struct TrackedEvent {
+    pub event: MjaiEvent,
+    /// Whether the riichi engine offers our seat a choice in the state this
+    /// event produced — its own turn, or a claim on someone's discard.
+    ///
+    /// `None` when the engine has no opinion to give: no game in progress,
+    /// or no seat tagged (observer / replay). Consumers treat that as "no
+    /// opinion" and fall back to their own policy rather than going silent.
+    pub can_act: Option<bool>,
+}
+
+/// Post-tracker fan-out: each event re-emitted *after* the `GameTracker`
+/// has applied it to the engine state, carrying what the engine then had
+/// to say about our seat. Subscribers can rely on the live game-state
+/// mirror being current when this fires (vs. the raw `MjaiBus` where
+/// ordering against the tracker is racy).
+pub type PostTrackerBus = broadcast::Sender<TrackedEvent>;
 
 /// Fan-out for game-history lifecycle events. Producer:
 /// `crate::history::recorder` (on each finalised game / deletion).

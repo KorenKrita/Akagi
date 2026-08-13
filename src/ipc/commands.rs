@@ -150,7 +150,7 @@ pub async fn update_config(
     // false still requires an Akagi relaunch to actually stop it.
     if claim_bot_manager_spawn(bot_now_enabled, &state.bot_manager_started) {
         let cfg_for_bot = state.config.clone();
-        let mjai = state.mjai_bus.clone();
+        let events = state.post_tracker_bus.clone();
         let resp = state.bot_response_bus.clone();
         let bs = state.bot_status_bus.clone();
         let nb = state.notify_bus.clone();
@@ -160,7 +160,7 @@ pub async fn update_config(
         let started_flag = state.bot_manager_started.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(e) =
-                crate::bot::run_bot_manager(cfg_for_bot, mjai, resp, bs, nb, inspector, rt, syncs)
+                crate::bot::run_bot_manager(cfg_for_bot, events, resp, bs, nb, inspector, rt, syncs)
                     .await
             {
                 tracing::error!("Bot manager failed: {e:#}");

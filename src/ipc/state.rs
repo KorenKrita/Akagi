@@ -21,6 +21,7 @@ use crate::bot::PythonRuntime;
 use crate::config::AppConfig;
 use crate::event_bus::{
     AnalysisBus, BotResponseBus, BotStatusBus, CaptureStatusBus, HistoryBus, MjaiBus, NotifyBus,
+    PostTrackerBus,
 };
 use crate::game_state::GameTracker;
 use crate::history::recorder::SharedPlatform;
@@ -67,6 +68,9 @@ pub struct AppState {
     pub log_session: Arc<Session>,
 
     pub mjai_bus: MjaiBus,
+    /// Events re-emitted after the tracker applied them. The bot manager
+    /// runs off this rather than `mjai_bus` — see `event_bus::TrackedEvent`.
+    pub post_tracker_bus: PostTrackerBus,
     pub bot_response_bus: BotResponseBus,
     pub bot_status_bus: BotStatusBus,
     pub capture_status_bus: CaptureStatusBus,
@@ -136,6 +140,7 @@ impl AppState {
         config_path: PathBuf,
         log_session: Arc<Session>,
         mjai_bus: MjaiBus,
+        post_tracker_bus: PostTrackerBus,
         bot_response_bus: BotResponseBus,
         bot_status_bus: BotStatusBus,
         capture_status_bus: CaptureStatusBus,
@@ -153,6 +158,7 @@ impl AppState {
             config_path: Arc::new(config_path),
             log_session,
             mjai_bus,
+            post_tracker_bus,
             bot_response_bus,
             bot_status_bus,
             capture_status_bus,
