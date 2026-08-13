@@ -72,32 +72,47 @@ pub trait Bridge: Send {
     fn build(&mut self, command: &MjaiEvent) -> Option<Vec<u8>>;
 }
 
+/// Slots the autoplay layer shares with a bridge.
+///
+/// Every field is optional and platform-specific: only the chromium capture
+/// path wires them at all (the MITM path has no `Page` handle, so nothing
+/// consumes them), and each bridge fills in the subset its own autoplay needs.
+/// Bundled into one struct so adding a platform's slot doesn't grow the
+/// argument list of every constructor along the way.
+#[derive(Clone, Default)]
+pub struct BridgeHooks {
+    /// Majsoul: the server's per-decision-window time budget, taken from
+    /// `OptionalOperationList` (see `autoplay::budget`).
+    pub time_budget: Option<crate::autoplay::budget::SharedTimeBudget>,
+    /// Majsoul: counter bumped on every uplink input command, so autoplay can
+    /// verify a click registered (see `autoplay::verify`).
+    pub input_watch: Option<crate::autoplay::verify::SharedInputWatch>,
+    /// Tenhou: hand at Tenhou tile-index resolution plus the current decision
+    /// window, needed to encode a client frame (see `autoplay::tenhou_state`).
+    pub tenhou_state: Option<crate::autoplay::tenhou_state::SharedTenhouState>,
+}
+
 /// Construct a bridge for the given platform.
 ///
 /// - `flow_log`: per-WS-flow text dump (one JSON line per parsed message).
 /// - `session`: passed through to bridges that open additional log files
 ///   on demand (e.g. Majsoul rotates a fresh `*.mjai.jsonl` per game).
-/// - `time_budget`: shared slot the Majsoul bridge fills with the server's
-///   per-decision-window time budget (see `autoplay::budget`). Only the
-///   chromium capture path wires this — the MITM path has no autoplay.
-///   Other platforms ignore it.
-/// - `input_watch`: counter the bridge bumps on every uplink input command,
-///   so autoplay can verify a click registered (see `autoplay::verify`).
-///   Wired exactly like `time_budget`.
+/// - `hooks`: autoplay's shared slots — see [`BridgeHooks`].
 pub fn for_platform(
     platform: crate::config::Platform,
     flow_log: Option<Arc<FlowLogger>>,
     session: Option<Arc<Session>>,
-    time_budget: Option<crate::autoplay::budget::SharedTimeBudget>,
-    input_watch: Option<crate::autoplay::verify::SharedInputWatch>,
+    hooks: BridgeHooks,
 ) -> Box<dyn Bridge> {
     match platform {
         crate::config::Platform::Majsoul => Box::new(
             MajsoulBridge::new(flow_log, session)
-                .with_time_budget(time_budget)
-                .with_input_watch(input_watch),
+                .with_time_budget(hooks.time_budget)
+                .with_input_watch(hooks.input_watch),
         ),
-        crate::config::Platform::Tenhou => Box::new(TenhouBridge::new(flow_log, session)),
+        crate::config::Platform::Tenhou => {
+            Box::new(TenhouBridge::new(flow_log, session).with_shared_state(hooks.tenhou_state))
+        }
         crate::config::Platform::RiichiCity => Box::new(RiichiCityBridge::new(flow_log, session)),
     }
 }

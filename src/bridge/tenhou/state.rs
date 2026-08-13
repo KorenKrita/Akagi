@@ -45,6 +45,11 @@ pub struct State {
     /// next `<INIT/>`. We defer emission so we know yonma vs sanma (via INIT's
     /// 0-score slot) and can stamp `num_players` correctly on `start_game`.
     pub pending_start_game: bool,
+    /// Decision window currently open for *our* seat, if any. Only consumed by
+    /// autoplay (see [`crate::autoplay::tenhou_state`]); parsing keeps it up to
+    /// date unconditionally because it is cheap and a stale window is worse
+    /// than none.
+    pub window: Option<crate::autoplay::tenhou_state::DecisionWindow>,
 }
 
 impl Default for State {
@@ -61,6 +66,7 @@ impl Default for State {
             num_players: 4,
             last_revealed_tile_actor: None,
             pending_start_game: false,
+            window: None,
         }
     }
 }
@@ -86,6 +92,16 @@ impl State {
         self.is_3p && abs == 3
     }
 
+    /// Borrow the parts an encode needs (see
+    /// [`super::encode::encode`]).
+    pub fn hand_view(&self) -> super::encode::HandView<'_> {
+        super::encode::HandView {
+            hand: &self.hand,
+            melds: &self.melds,
+            is_tsumo: self.is_tsumo,
+        }
+    }
+
     /// Reset per-kyoku fields. Called from `INIT`.
     pub fn reset_for_kyoku(&mut self) {
         self.hand.clear();
@@ -95,6 +111,15 @@ impl State {
         self.last_kawa_tile = "?".to_string();
         self.is_tsumo = false;
         self.last_revealed_tile_actor = None;
+        self.window = None;
+    }
+
+    /// Open a decision window for our seat with the server's `t` bitmask.
+    pub fn open_window(&mut self, ops: u32) {
+        self.window = Some(crate::autoplay::tenhou_state::DecisionWindow {
+            ops,
+            opened_at: std::time::Instant::now(),
+        });
     }
 }
 

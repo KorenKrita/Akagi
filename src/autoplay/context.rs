@@ -37,6 +37,11 @@ pub struct AutoplayContext {
     /// click and asks afterwards whether the count moved — the proof that
     /// the click registered (see `autoplay::verify`).
     pub input_watch: crate::autoplay::verify::SharedInputWatch,
+    /// Tenhou's hand at tile-index resolution plus its current decision
+    /// window, written by the Tenhou bridge (see `autoplay::tenhou_state`).
+    /// Read by the Tenhou autoplay planner, which encodes a client frame
+    /// rather than synthesising clicks.
+    pub tenhou_state: crate::autoplay::tenhou_state::SharedTenhouState,
 }
 
 impl AutoplayContext {
