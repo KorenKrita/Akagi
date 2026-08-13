@@ -855,15 +855,7 @@ mod tests {
             tsumogiri: false,
         };
         let cfg_ref = cfg();
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            Some("5p"),
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &[], Some("1m"), Some("5p"), false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         // sleep + click
         assert_eq!(result.steps.len(), 2);
@@ -894,15 +886,7 @@ mod tests {
             tsumogiri: true,
         };
         let cfg_ref = cfg();
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            Some("5p"),
-            true,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &[], Some("1m"), Some("5p"), true, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(result.steps.is_empty(), "no click while riichi accepted");
     }
@@ -936,15 +920,7 @@ mod tests {
             Action::new(ActionType::Discard, Some(120), vec![], Some(0)),
             Action::new(ActionType::Kita, Some(120), vec![], Some(0)),
         ];
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &legal,
-            Some("1z"),
-            Some("N"),
-            true,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &legal, Some("1z"), Some("N"), true, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert_eq!(result.steps.len(), 2, "sleep + X click, got {result:?}");
         match &result.steps[1] {
@@ -983,15 +959,7 @@ mod tests {
             Action::new(ActionType::Discard, Some(53), vec![], Some(0)),
             Action::new(ActionType::Kita, Some(120), vec![], Some(0)),
         ];
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &legal,
-            Some("1z"),
-            Some("5p"),
-            true,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &legal, Some("1z"), Some("5p"), true, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(
             result.steps.is_empty(),
@@ -1021,15 +989,7 @@ mod tests {
             Action::new(ActionType::Discard, Some(3), vec![], Some(0)),
             Action::new(ActionType::Ankan, Some(0), vec![0, 1, 2, 3], Some(0)),
         ];
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &legal,
-            Some("1z"),
-            Some("1m"),
-            true,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &legal, Some("1z"), Some("1m"), true, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert_eq!(result.steps.len(), 2, "sleep + X click, got {result:?}");
         match &result.steps[1] {
@@ -1084,15 +1044,7 @@ mod tests {
         };
         let cfg_ref = cfg();
         let script = assert_script(true);
-        let mut ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            None,
-            false,
-            &cfg_ref,
-        );
+        let mut ctx = ctx_for(&act, &snap, &[], Some("1m"), None, false, &cfg_ref);
         ctx.delay_script = Some(&script);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(
@@ -1107,15 +1059,7 @@ mod tests {
         // Post-draw discard on the same melded hand: draw tracked.
         snap.players[0].drawn_tile = Some("2p".into());
         let script = assert_script(false);
-        let mut ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            None,
-            false,
-            &cfg_ref,
-        );
+        let mut ctx = ctx_for(&act, &snap, &[], Some("1m"), None, false, &cfg_ref);
         ctx.delay_script = Some(&script);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(
@@ -1148,15 +1092,7 @@ mod tests {
         let mut cfg_ref = cfg();
         cfg_ref.hover_delay_ms = 200;
         cfg_ref.click_hold_ms = 100; // single-click dahai → 300ms overhead
-        let mut ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            None,
-            false,
-            &cfg_ref,
-        );
+        let mut ctx = ctx_for(&act, &snap, &[], Some("1m"), None, false, &cfg_ref);
         ctx.delay_script = Some(&script);
 
         // No budget clock: target minus the click overhead.
@@ -1205,15 +1141,7 @@ mod tests {
         let mut cfg_ref = cfg();
         cfg_ref.hover_delay_ms = 200;
         cfg_ref.click_hold_ms = 100;
-        let mut ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            None,
-            false,
-            &cfg_ref,
-        );
+        let mut ctx = ctx_for(&act, &snap, &[], Some("1m"), None, false, &cfg_ref);
         ctx.delay_script = Some(&script);
         let floor = ctx.delay_cfg.min_delay_ms;
 
@@ -1243,15 +1171,7 @@ mod tests {
         let cfg_ref = cfg();
         // Reach must be in legal_actions for the button position to resolve.
         let legal = vec![Action::new(ActionType::Riichi, None, vec![], Some(0))];
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &legal,
-            Some("1m"),
-            Some("5p"),
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &legal, Some("1m"), Some("5p"), false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         // sleep + reach btn + sleep + tile click
         assert_eq!(result.steps.len(), 4);
@@ -1291,15 +1211,7 @@ mod tests {
             Action::new(ActionType::Pass, None, vec![], Some(0)),
             Action::new(ActionType::Pon, None, vec![], Some(0)),
         ];
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &legal,
-            Some("1m"),
-            None,
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &legal, Some("1m"), None, false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert_eq!(result.steps.len(), 2);
         match &result.steps[1] {
@@ -1320,15 +1232,7 @@ mod tests {
         let snap = snapshot_with_hand(0, vec!["1m"]);
         let act = MjaiEvent::None;
         let cfg_ref = cfg();
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            None,
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &[], Some("1m"), None, false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(
             result.steps.is_empty(),
@@ -1347,15 +1251,7 @@ mod tests {
             Action::new(ActionType::Discard, Some(0), vec![], Some(0)),
             Action::new(ActionType::Discard, Some(4), vec![], Some(0)),
         ];
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &legal,
-            Some("1m"),
-            Some("1m"),
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &legal, Some("1m"), Some("1m"), false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert!(
             result.steps.is_empty(),
@@ -1384,15 +1280,7 @@ mod tests {
         let cfg_ref = cfg();
         // Even with last_self_tsumo set, dealer-first-discard layout
         // must override the tsumohai-offset path.
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            None,
-            Some("5p"),
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &[], None, Some("5p"), false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         assert_eq!(result.steps.len(), 2);
         match &result.steps[1] {
@@ -1421,15 +1309,7 @@ mod tests {
             tsumogiri: false,
         };
         let cfg_ref = cfg_with_dealer_delay(2000);
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            None,
-            None,
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &[], None, None, false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         // The dealer-pad wait is folded into the single pre-delay sleep:
         // [pre-delay sleep (>= animation pad), click]. With the zeroed
@@ -1467,15 +1347,7 @@ mod tests {
             tsumogiri: false,
         };
         let cfg_ref = cfg();
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("9m"),
-            Some("5p"),
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &[], Some("9m"), Some("5p"), false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         match &result.steps.last().unwrap() {
             Step::Click { x_norm, .. } => {
@@ -1505,15 +1377,7 @@ mod tests {
             tsumogiri: false,
         };
         let cfg_ref = cfg_with_dealer_delay(2000);
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            None,
-            Some("5p"),
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &[], None, Some("5p"), false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         // No dealer pad: just [pre-delay, click].
         assert_eq!(result.steps.len(), 2);
@@ -1542,15 +1406,7 @@ mod tests {
         cfg_ref.pre_click_delay_max_ms = 1000;
 
         let sleep_with_elapsed = |elapsed_ms: u32| {
-            let mut ctx = ctx_for(
-                &act,
-                &snap,
-                &[],
-                Some("1m"),
-                Some("5p"),
-                false,
-                &cfg_ref,
-            );
+            let mut ctx = ctx_for(&act, &snap, &[], Some("1m"), Some("5p"), false, &cfg_ref);
             ctx.delay_cfg = crate::config::DelayModelConfig {
                 distribution: crate::config::DelayDistribution::Uniform,
                 ..Default::default()
@@ -1593,15 +1449,7 @@ mod tests {
         let mut cfg_ref = cfg();
         cfg_ref.pre_click_delay_min_ms = 1234;
         cfg_ref.pre_click_delay_max_ms = 1234;
-        let mut ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            Some("5p"),
-            false,
-            &cfg_ref,
-        );
+        let mut ctx = ctx_for(&act, &snap, &[], Some("1m"), Some("5p"), false, &cfg_ref);
         // Config keeps LogNormal + calibrated table, but mode is legacy.
         ctx.delay_cfg.mode = crate::config::DelayMode::Legacy;
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1745,15 +1593,7 @@ mod tests {
             consumed: [consumed[0].to_string(), consumed[1].to_string()],
         };
         let cfg_ref = cfg();
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            legal,
-            Some(pai),
-            None,
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, legal, Some(pai), None, false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         result
             .steps
@@ -1853,15 +1693,7 @@ mod tests {
             consumed: ["5p".into(), "5p".into()],
         };
         let cfg_ref = cfg();
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &legal,
-            Some("5p"),
-            None,
-            false,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &legal, Some("5p"), None, false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
         let clicks: Vec<(f64, f64)> = result
             .steps

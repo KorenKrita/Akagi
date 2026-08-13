@@ -1636,7 +1636,13 @@ mod tests {
             assert_eq!(c.len(), 2, "tsumo react + reach follow-up react");
             assert!(matches!(c[0].as_slice(), [MjaiEvent::Tsumo { .. }]));
             assert!(
-                matches!(c[1].as_slice(), [MjaiEvent::Reach { actor: 2, pai: None }]),
+                matches!(
+                    c[1].as_slice(),
+                    [MjaiEvent::Reach {
+                        actor: 2,
+                        pai: None
+                    }]
+                ),
                 "follow-up feeds the runner the reach"
             );
         }
@@ -1646,12 +1652,18 @@ mod tests {
             matches!(emitted.action, MjaiEvent::Reach { actor: 2, pai: Some(ref t) } if t == "3p"),
             "the emitted reach carries the resolved riichi tile"
         );
-        assert!(mgr.drop_next_own_reach, "the bridge echo is now armed to drop");
+        assert!(
+            mgr.drop_next_own_reach,
+            "the bridge echo is now armed to drop"
+        );
 
         // The bridge's later reach echo for our seat must not reach the runner.
-        mgr.handle(MjaiEvent::Reach { actor: 2, pai: None })
-            .await
-            .unwrap();
+        mgr.handle(MjaiEvent::Reach {
+            actor: 2,
+            pai: None,
+        })
+        .await
+        .unwrap();
         assert_eq!(
             calls.lock().await.len(),
             2,
@@ -1676,15 +1688,24 @@ mod tests {
         );
         let emitted = resp_rx.try_recv().expect("a bot response");
         assert!(
-            matches!(emitted.action, MjaiEvent::Reach { actor: 2, pai: None }),
+            matches!(
+                emitted.action,
+                MjaiEvent::Reach {
+                    actor: 2,
+                    pai: None
+                }
+            ),
             "bare reach forwarded unchanged"
         );
         assert!(!mgr.drop_next_own_reach);
 
         // Bridge reach echo is buffered for the runner, not eaten.
-        mgr.handle(MjaiEvent::Reach { actor: 2, pai: None })
-            .await
-            .unwrap();
+        mgr.handle(MjaiEvent::Reach {
+            actor: 2,
+            pai: None,
+        })
+        .await
+        .unwrap();
         assert_eq!(calls.lock().await.len(), 1, "reach is not a decision point");
         assert!(
             mgr.pending
