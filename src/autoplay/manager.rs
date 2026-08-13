@@ -332,6 +332,21 @@ impl AutoplayManager {
                     }
                 }
                 Step::Discard { tile_index } => {
+                    // The client's discard handler applies locally whether or
+                    // not it is our turn — its own UI only reaches it while
+                    // one is — so a stale call desyncs the board, not just
+                    // wastes a frame. The riichi plan is the exception: its
+                    // own button press replaces the window (the server acks
+                    // the declaration and the bridge re-opens it), and the
+                    // tile it owes is still this plan's to throw.
+                    if discard_needs_window_guard(&resp.action)
+                        && self.tenhou_window_moved(planned_window)
+                    {
+                        warn!(
+                            "autoplay: decision window closed mid-delay — dropping stale discard"
+                        );
+                        return;
+                    }
                     let page_guard = self.ctx.page.read().await;
                     let Some(page) = page_guard.as_ref() else {
                         warn!("autoplay: no page handle — cannot discard");
@@ -919,6 +934,21 @@ impl AutoplayManager {
     }
 }
 
+/// Does a `Step::Discard` for this action require the decision window it
+/// was planned against to still be open?
+///
+/// Everything but a riichi does: the window's identity is how a discard that
+/// out-waited its turn — the client timed out and threw for us, or a human
+/// beat the bot to it — is told apart from one that is still owed. A riichi
+/// plan cannot use that test, because passing its own declaration button is
+/// what replaces the window (the server acks with `REACH step=1` and the
+/// bridge re-opens it for the tile), so the move is expected rather than
+/// evidence of staleness — and the tile must still go out or the client sits
+/// on its clock and times the hand out.
+fn discard_needs_window_guard(action: &MjaiEvent) -> bool {
+    !matches!(action, MjaiEvent::Reach { .. })
+}
+
 /// Which clicks to press again on retry `attempt` (0-based).
 ///
 /// In a multi-click plan — a chi/pon/kan whose candidate row needs
@@ -1139,6 +1169,68 @@ mod tests {
         assert_eq!(retry_hold_ms(120, 1), 360);
         assert_eq!(retry_hold_ms(1_500, 1), 2_000, "capped at 2s");
         assert_eq!(retry_hold_ms(u32::MAX, 5), 2_000, "no overflow");
+    }
+
+    /// Regression (stale discard into a live board): the client's discard
+    /// handler applies locally even when the turn is over, so a discard must
+    /// be dropped once the window it was planned against is gone. The riichi
+    /// plan is exempt — its own button press is what replaces the window,
+    /// and the tile is still owed.
+    #[test]
+    fn a_discard_is_guarded_by_its_window_except_for_riichi() {
+        let dahai = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "1m".into(),
+            tsumogiri: false,
+        };
+        assert!(discard_needs_window_guard(&dahai));
+        let reach = MjaiEvent::Reach {
+            actor: 0,
+            pai: Some("2m".into()),
+        };
+        assert!(!discard_needs_window_guard(&reach));
+    }
+
+    /// The window's `opened_at` is its identity: a slot holding a different
+    /// instant — or nothing — means the plan is stale. No planned window
+    /// (other platforms) never reports movement.
+    #[test]
+    fn tenhou_window_moved_tracks_the_slot() {
+        use crate::autoplay::tenhou_state::{DecisionWindow, TenhouState};
+        let m = make_manager();
+        let w1 = DecisionWindow {
+            ops: 0,
+            opened_at: std::time::Instant::now(),
+        };
+        let put = |window| {
+            *m.ctx.tenhou_state.write().unwrap() = Some(TenhouState {
+                seat: 0,
+                hand: vec![0],
+                melds: Vec::new(),
+                is_tsumo: true,
+                window,
+            });
+        };
+
+        put(Some(w1));
+        assert!(
+            !m.tenhou_window_moved(Some(w1)),
+            "same instant — still live"
+        );
+        assert!(
+            !m.tenhou_window_moved(None),
+            "nothing planned, nothing stale"
+        );
+
+        put(None);
+        assert!(m.tenhou_window_moved(Some(w1)), "window resolved — stale");
+
+        let w2 = DecisionWindow {
+            ops: 8,
+            opened_at: std::time::Instant::now(),
+        };
+        put(Some(w2));
+        assert!(m.tenhou_window_moved(Some(w1)), "window replaced — stale");
     }
 
     /// Observer/replay mode: `StartGame` with `id: None` must not cache a
