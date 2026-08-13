@@ -11,12 +11,15 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { AKAGIMS_DOWNLOAD_URL, openExternal } from '@/lib/external'
+import { useAnnouncementStore } from '@/stores/announcementStore'
 import { MAX_AKAGIMS_ANNOUNCEMENT_SHOWS, useUiPrefsStore } from '@/stores/uiPrefsStore'
 import screenshot from '@/assets/akagims-fullauto.jpg'
 
 // Delay so the announcement doesn't pop over the very first paint; keeps it
 // clear of the UpdateNotifier toast (3s) which stacks fine next to a dialog.
-const OPEN_DELAY_MS = 1500
+// Fires after the What's-new dialog's delay (1.5s) so that by the time this
+// timer runs, the release-announcement launch decision has been made.
+const OPEN_DELAY_MS = 2500
 
 // Release announcement for AkagiMS. Closing it distinguishes intent:
 // "Got it" dismisses for good, while X / Esc / outside-click only ends this
@@ -40,6 +43,10 @@ export function AkagiMsAnnouncementDialog() {
     if (dismissed || shows >= MAX_AKAGIMS_ANNOUNCEMENT_SHOWS) return
     fired.current = true
     const timer = setTimeout(() => {
+      // The What's-new dialog takes priority on launches right after an
+      // update — defer to the next launch without spending a showing.
+      const whatsNew = useAnnouncementStore.getState()
+      if (whatsNew.launchShowPending || whatsNew.open) return
       setOpen(true)
       recordShown()
     }, OPEN_DELAY_MS)

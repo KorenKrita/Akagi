@@ -770,6 +770,23 @@
       "card_title": "AkagiMS — 雀魂専用のスタンドアロン版",
       "card_desc": "ゲームクライアント内蔵、全自動プレイ、セットアップ不要。ダウンロードして解凍、実行するだけ。",
       "card_dismiss": "閉じる"
+    },
+    "whats_new": {
+      "title": "新機能のお知らせ",
+      "intro": "最近のアップデートの主な変更点です。",
+      "got_it": "OK",
+      "all_releases": "リリースノート一覧",
+      "settings_button": "新機能"
+    },
+    "releases": {
+      "v3_5_0": {
+        "mjot_title": "MJOT クラウド AI",
+        "mjot_desc": "オンライン推論サービスは MJOT になり、表示や状態がアプリ全体で分かりやすくなりました。",
+        "checkout_title": "アプリ内購入",
+        "checkout_desc": "アプリ内で MJOT の利用時間を購入・延長できます。カード / Google Pay / Apple Pay / Alipay に対応し、PayPal も引き続き利用できます。",
+        "health_title": "更新とヘルスチェックの改善",
+        "health_desc": "延長は既定で現在のキーに加算され、ヘルスチェックはキュー状況や性能低下を報告するようになりました。"
+      }
     }
   },
   "install_overlay": {

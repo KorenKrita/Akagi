@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ChevronLeft, X } from 'lucide-react'
-import { getVersion } from '@tauri-apps/api/app'
 
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -17,15 +16,10 @@ import { useIsNarrow } from '@/hooks/useIsNarrow'
 import { GithubMark, DiscordMark } from '@/components/BrandMarks'
 import { AkagiIcon, AkagiWordmark } from '@/components/BrandLogo'
 import { AKAGI_GITHUB_URL, AKAGI_DISCORD_URL, AKAGIMS_GITHUB_URL, openExternal } from '@/lib/external'
-import { HAS_TAURI } from '@/lib/tauri'
+import { getAppVersion, VERSION_FALLBACK } from '@/lib/appVersion'
 import { LANG_LABELS, SUPPORTED_LANGS, type SupportedLang } from '@/i18n'
 import { selectHasNotifiableUpdate, useUpdaterStore } from '@/stores/updaterStore'
 import { Menu } from './Menu'
-
-// Fallback used in the browser dev preview (no Tauri runtime → no
-// app.getVersion). Lines up with Cargo.toml so devs see a sensible
-// string until the real version resolves.
-const VERSION_FALLBACK = '3.5.0'
 
 export function Sidebar() {
   const { t, i18n } = useTranslation()
@@ -45,8 +39,7 @@ export function Sidebar() {
   const openUpdateDialog = useUpdaterStore((s) => s.openDialog)
   const [version, setVersion] = useState(VERSION_FALLBACK)
   useEffect(() => {
-    if (!HAS_TAURI) return
-    getVersion().then(setVersion).catch(() => {})
+    getAppVersion().then(setVersion)
   }, [])
 
   // Navigating closes the drawer — otherwise it would sit on top of the very

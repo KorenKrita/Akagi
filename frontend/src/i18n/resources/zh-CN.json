@@ -770,6 +770,23 @@
       "card_title": "AkagiMS — 专为雀魂打造的独立版",
       "card_desc": "内置游戏客户端、全自动打牌、开箱即用。下载、解压、运行就好。",
       "card_dismiss": "关闭"
+    },
+    "whats_new": {
+      "title": "新功能",
+      "intro": "近期更新的重点一览。",
+      "got_it": "知道了",
+      "all_releases": "完整版本记录",
+      "settings_button": "新功能"
+    },
+    "releases": {
+      "v3_5_0": {
+        "mjot_title": "MJOT 云端 AI",
+        "mjot_desc": "在线推理服务正式命名为 MJOT,全新品牌标识,状态显示更清晰。",
+        "checkout_title": "应用内购买",
+        "checkout_desc": "无需离开应用即可购买或续期 MJOT 时长——支持银行卡、Google Pay、Apple Pay 和支付宝,PayPal 仍然可用。",
+        "health_title": "更聪明的续期与健康检查",
+        "health_desc": "续期默认累加到当前密钥上,服务健康检查现在会报告队列深度和降级状态。"
+      }
     }
   },
   "install_overlay": {

@@ -26,6 +26,7 @@ import {
 import { HAS_TAURI, invoke } from '@/lib/tauri'
 import { openExternal } from '@/lib/external'
 import { useSidebar } from '@/hooks/useSidebar'
+import { useAnnouncementStore } from '@/stores/announcementStore'
 import { useCaptureStore } from '@/stores/captureStore'
 import { useConfigStore } from '@/stores/configStore'
 import { selectHasNotifiableUpdate, useUpdaterStore } from '@/stores/updaterStore'
@@ -1454,16 +1455,25 @@ function UpdatesCard() {
             )}
           </div>
         </Field>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">{lastCheckedLabel}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleCheck}
-            disabled={checking || !HAS_TAURI}
-          >
-            {checking ? t('updates.settings.checking') : t('updates.settings.check_now')}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => useAnnouncementStore.getState().openHistory()}
+            >
+              {t('announcements.whats_new.settings_button')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleCheck}
+              disabled={checking || !HAS_TAURI}
+            >
+              {checking ? t('updates.settings.checking') : t('updates.settings.check_now')}
+            </Button>
+          </div>
         </div>
         <Toggle
           label={t('updates.settings.auto_check')}
