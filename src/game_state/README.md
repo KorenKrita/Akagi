@@ -35,7 +35,7 @@ This module:
 | File          | Purpose                                              |
 |---------------|------------------------------------------------------|
 | `convert.rs`  | `to_riichienv(&AkagiEvent) -> Result<Option<RiEvent>>` |
-| `tracker.rs`  | `GameTracker`, `spawn(rx) -> Arc<Mutex<GameTracker>>` |
+| `tracker.rs`  | `GameTracker`, `spawn(rx) -> Arc<Mutex<GameTracker>>`, `our_seat_can_act()` |
 | `snapshot.rs` | `GameStateSnapshot`, `PlayerSnapshot`, `MeldSnapshot` |
 | `score.rs`    | `calculate_score`, `waits_for`, `is_tenpai`          |
 
@@ -60,6 +60,38 @@ println!("oya: {}, dora: {:?}", snap.oya, snap.dora_markers);
 ```
 
 `snapshot()` returns `None` until the first `start_game` event arrives.
+
+## The post-tracker bus, and `can_act`
+
+`spawn_with_post` re-emits every event on a second bus *after* the engine
+has applied it, as an `event_bus::TrackedEvent` — the event plus what the
+engine then had to say about our seat:
+
+```rust
+pub struct TrackedEvent {
+    pub event: MjaiEvent,
+    /// Is the engine offering our seat a choice in the state this event
+    /// produced? `None` when it has no opinion (no game, no seat).
+    pub can_act: Option<bool>,
+}
+```
+
+Subscribers to that bus (the analysis runner, the bot manager) can rely on
+the mirror being current when it fires, which the raw `MjaiBus` cannot
+promise.
+
+`can_act` rides *with* the event rather than being looked up on arrival, and
+that is the whole reason the type exists. One server frame can carry several
+seats' actions; the tracker applies them all in microseconds while a
+subscriber that pauses between events — the bot manager waits on inference —
+is still holding the first. Asking the tracker at that point answers about a
+state several events too late. `our_seat_can_act()` is therefore read under
+the same lock that applied the event.
+
+What counts as "can act" is: a legal-action set that is neither empty nor
+exactly `[Pass]`. riichienv hands a `Pass` to every seat while it is in its
+response phase — including seats with nothing to claim — so a lone pass is
+the engine saying "not yours", not offering a decline.
 
 ## Score / wait helpers
 

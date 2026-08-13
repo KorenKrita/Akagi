@@ -38,11 +38,16 @@ bridge to them.
   forwarded onto the `NotifyBus` (→ `notify` Tauri event → bottom-right
   toast); every other line is logged as before, and a malformed payload
   after the prefix is dropped with a `warn!`.
-- `manager` — `BotManager`: subscribes to the `MjaiBus`, accumulates
-  events between decision points (own tsumo / others' dahai-or-kakan /
-  reach_accepted / hora / ryukyoku / end_kyoku / end_game), flushes the
-  pending batch through the `BotRunner`, and broadcasts every
-  `BotResponse` (including `MjaiEvent::None`) on the `BotResponseBus`.
+- `manager` — `BotManager`: subscribes to the **post-tracker bus**,
+  accumulates events between decision points, flushes the pending batch
+  through the `BotRunner`, and broadcasts every `BotResponse` (including
+  `MjaiEvent::None`) on the `BotResponseBus`. A decision point is an event
+  whose *shape* could open a decision for our seat (own tsumo / others'
+  dahai-or-kakan / own chi-or-pon) **and** which the riichi engine says
+  our seat can actually act on — see "Deciding what to ask" below. Round
+  and game boundaries (hora / ryukyoku / end_kyoku / end_game) flush
+  regardless: they open no decision, but they are how the bot hears the
+  hand ended, and `end_game` is where the runner is torn down.
   Spawn point is `start_game` carrying the bot's seat in the `id` field
   and the table's `num_players`. The manager picks `active_4p` or
   `active_3p` from `BotConfig` based on `num_players`; an empty slot for
@@ -90,11 +95,41 @@ bridge to them.
   Stateless like `api`; the polling state machine lives in the frontend's
   purchase store, driven through the `native_api_*` IPC commands.
 - `supervisor` — `run_bot_manager`: constructs the `BotManager` and drives
-  its run loop off the `MjaiBus`. Tolerates a missing Python runtime — the
-  built-in `native` bots need none.
+  its run loop off the `PostTrackerBus`. Tolerates a missing Python runtime
+  — the built-in `native` bots need none.
 - `test_http` (test-only) — a tiny scripted HTTP mock shared by the `api`,
   `purchase` and `native` tests, so they can assert on the raw request
   (path, `Authorization` header, body) and script the response.
+
+## Deciding what to ask
+
+A bot is fed every event and answers every event, so its replies cannot say
+which ones it was *asked*: an mjai `none` is the same three bytes for "I
+weighed this call and decline it" and "this was never mine to answer". The
+distinction matters to anything that acts on replies — autoplay pressed a
+pass button for a filler `none` once, and the real `hora` behind it arrived
+to find its decision window already spent.
+
+The riichi engine knows the difference, so `BotManager` asks it rather than
+the bot. `GameTracker` computes `can_act` for our seat the instant it applies
+an event and ships it with that event on the `PostTrackerBus`
+(`event_bus::TrackedEvent`); the manager gates the flush on it.
+
+Computing it *there* is the point. One server frame can carry several seats'
+actions, and the tracker digests all of them in microseconds while the
+manager is still waiting on inference for the first — so a manager that
+looked the answer up on arrival would be asking about a state several events
+old. Riding along with the event is what makes the answer belong to it.
+
+`can_act` is `None` when the engine has no opinion — no game in progress, no
+seat tagged (observer / replay). That is not "cannot act": the manager falls
+back to the event shape alone, so a stream the tracker cannot follow costs
+wasted round-trips rather than a silent bot.
+
+The rule the engine applies is the same one `native::is_decision_point` uses
+on its own candidate set: a legal set that is empty, or that holds nothing
+but `Pass`, is not a decision (riichienv hands a `Pass` to every seat while
+it is in its response phase, including the seats with nothing to claim).
 
 ## The `meta.show` card (built-in bot)
 

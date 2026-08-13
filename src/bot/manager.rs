@@ -1,15 +1,22 @@
 //! Lifecycle + decision-point batching for the active bot.
 //!
 //! `BotManager` owns one `Box<dyn BotRunner>`, subscribes to the
-//! `MjaiBus`, accumulates events between decision points, and broadcasts
-//! every `BotResponse` (including `MjaiEvent::None`) onto a
+//! post-tracker bus, accumulates events between decision points, and
+//! broadcasts every `BotResponse` (including `MjaiEvent::None`) onto a
 //! `BotResponseBus` for downstream consumers (HUD, storage, external WS).
 //!
-//! Decision-point policy intentionally errs wide: any event where the
-//! bot *might* be allowed to act flushes the pending batch. The bot
-//! itself returns `MjaiEvent::None` when no action is owed, so we can't
-//! be wrong about "allowed to act" — only about whether the round-trip
-//! to the bot is worth the latency. Currently we accept that latency.
+//! A decision point is an event where the riichi engine says our seat
+//! owes the game an answer. The event's shape narrows the candidates —
+//! only some kinds of event can open a decision for us — and the engine's
+//! `can_act`, computed by the tracker at the instant it applied that same
+//! event, settles it.
+//!
+//! Asking the engine matters because a bot cannot tell us. It is fed every
+//! event and answers every event, so an mjai `none` reads identically for
+//! "I weighed this call and decline it" and "this was never mine to
+//! answer" — and a consumer that acts on replies (autoplay) has to know
+//! which. Not asking also spends a full inference round-trip, and on the
+//! cloud path a paid API call, on events with no decision in them.
 //!
 //! ## Status & notification emission
 //!
@@ -31,7 +38,7 @@ use crate::bot::runner::{BotRunner, SubprocessBot};
 use crate::bot::runtime::PythonRuntime;
 use crate::bot::sync_guard::SyncGuard;
 use crate::config::AppConfig;
-use crate::event_bus::{BotResponseBus, BotStatusBus, NotifyBus};
+use crate::event_bus::{BotResponseBus, BotStatusBus, NotifyBus, TrackedEvent};
 use crate::inspector::InspectorWriter;
 use crate::schema::{BotReaction, BotStatus, InspectorEntry, LoadStage, MjaiEvent, Notification};
 use anyhow::{bail, Context, Result};
@@ -119,21 +126,26 @@ impl BotManager {
         &self.out_tx
     }
 
-    /// Block on the MJAI receiver, dispatching every event through `handle`.
-    /// Returns when the channel is closed (all senders dropped).
+    /// Block on the post-tracker receiver, dispatching every event through
+    /// `handle_tracked`. Returns when the channel is closed (all senders
+    /// dropped).
     ///
-    /// Caller subscribes via `mjai.subscribe()` rather than passing the
-    /// `Sender` so the manager doesn't keep the channel alive itself —
-    /// makes shutdown deterministic when the proxy stops producing.
-    pub async fn run(mut self, mut rx: broadcast::Receiver<MjaiEvent>) -> Result<()> {
-        info!("bot manager subscribed to MJAI bus; waiting for start_game (active bot is read from config at each start_game)");
+    /// The post-tracker bus rather than the raw MJAI bus, because a decision
+    /// point is a fact about the engine state an event produced, and only
+    /// that bus carries it (see [`TrackedEvent`]).
+    ///
+    /// Caller subscribes rather than passing the `Sender` so the manager
+    /// doesn't keep the channel alive itself — makes shutdown deterministic
+    /// when the proxy stops producing.
+    pub async fn run(mut self, mut rx: broadcast::Receiver<TrackedEvent>) -> Result<()> {
+        info!("bot manager subscribed to post-tracker bus; waiting for start_game (active bot is read from config at each start_game)");
         // Surface the initial state to any IPC consumer that subscribes
         // late. Send is no-op when no subscribers exist yet.
         self.emit_status(BotStatus::Idle);
         loop {
             match rx.recv().await {
                 Ok(ev) => {
-                    if let Err(e) = self.handle(ev).await {
+                    if let Err(e) = self.handle_tracked(ev).await {
                         error!("bot manager: {e:#}");
                         // Tear the runner down; next start_game will respawn.
                         self.runner = None;
@@ -141,18 +153,31 @@ impl BotManager {
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("bot manager lagged behind MJAI bus by {n} events");
+                    warn!("bot manager lagged behind the post-tracker bus by {n} events");
                 }
                 Err(broadcast::error::RecvError::Closed) => {
-                    info!("MJAI bus closed; bot manager exiting");
+                    info!("post-tracker bus closed; bot manager exiting");
                     return Ok(());
                 }
             }
         }
     }
 
-    /// Drive one event through the manager. Public for unit tests.
+    /// Drive one event through the manager with no engine opinion attached,
+    /// so the event's own shape decides whether it is a decision point.
+    /// Public for unit tests and for callers driving the manager off a bare
+    /// event stream.
     pub async fn handle(&mut self, event: MjaiEvent) -> Result<()> {
+        self.handle_tracked(TrackedEvent {
+            event,
+            can_act: None,
+        })
+        .await
+    }
+
+    /// Drive one tracked event through the manager.
+    pub async fn handle_tracked(&mut self, tracked: TrackedEvent) -> Result<()> {
+        let TrackedEvent { event, can_act } = tracked;
         // Spawn the runner the moment we see the bot's seat in start_game.
         if let MjaiEvent::StartGame {
             id: Some(seat),
@@ -196,7 +221,7 @@ impl BotManager {
 
         self.pending.push(event.clone());
 
-        if !self.is_decision_point(&event) {
+        if !self.is_decision_point(&event, can_act) {
             return Ok(());
         }
 
@@ -524,9 +549,56 @@ impl BotManager {
         let _ = self.notify_tx.send(n);
     }
 
-    /// Conservative: every event that *might* be a decision point flushes
-    /// the pending batch. Bot returns `MjaiEvent::None` when not its turn.
-    fn is_decision_point(&self, e: &MjaiEvent) -> bool {
+    /// Does this event flush the pending batch to the bot?
+    ///
+    /// Two filters, and an action has to pass both.
+    ///
+    /// [`Self::opens_a_window`] is the event's shape: which kinds of event
+    /// can put a decision in front of our seat at all. It is a necessary
+    /// condition, never a sufficient one — an opponent discards on every
+    /// turn of the game and almost none of them are ours to answer.
+    ///
+    /// `can_act` is the engine's answer for the state *this* event produced
+    /// (see [`TrackedEvent`]). `Some(false)` means our seat is offered
+    /// nothing to choose, so the only reply the bot could give is "nothing
+    /// to say" — a reply indistinguishable on the wire from a considered
+    /// pass, which is how a real Hora once lost its window to a stray pass
+    /// press. `None` means the engine has no opinion (no game, observer
+    /// mode, replay); fall back to the shape alone rather than going silent.
+    ///
+    /// Round and game boundaries are outside both filters. They open no
+    /// decision — the reply is always `none` — but they are how the bot
+    /// learns the hand is over, and `EndGame` is where the runner is torn
+    /// down. They are also once per hand, so flushing them costs nothing.
+    ///
+    /// So is another seat's kakan, for a different reason: riichienv does not
+    /// model the chankan window on the path the tracker drives. It applies a
+    /// kakan by moving straight to `WaitAct` for the caller, so our legal set
+    /// comes back empty whether we could rob the kan or not. That is the
+    /// engine having nothing to say rather than saying no, and a robbed kan
+    /// is too expensive to lose to the difference. Kakan is rare enough that
+    /// always asking costs nothing measurable.
+    fn is_decision_point(&self, e: &MjaiEvent, can_act: Option<bool>) -> bool {
+        if self.actor_id.is_none() {
+            return false;
+        }
+        match e {
+            // reach_accepted merely closes the preceding response window and
+            // must be applied with the next real decision instead of queried
+            // on its own, so it is not here.
+            MjaiEvent::Hora { .. }
+            | MjaiEvent::Ryukyoku { .. }
+            | MjaiEvent::EndKyoku
+            | MjaiEvent::EndGame { .. } => true,
+            MjaiEvent::Kakan { .. } => self.opens_a_window(e),
+            _ => self.opens_a_window(e) && can_act != Some(false),
+        }
+    }
+
+    /// Could this event have opened a decision for our seat?
+    ///
+    /// Shape only — whether one actually opened is the engine's to say.
+    fn opens_a_window(&self, e: &MjaiEvent) -> bool {
         let Some(me) = self.actor_id else {
             return false;
         };
@@ -540,14 +612,6 @@ impl BotManager {
             // draw from the dead wall first, so daiminkan stays buffered with
             // ankan/kakan until the replacement Tsumo arrives.
             MjaiEvent::Chi { actor, .. } | MjaiEvent::Pon { actor, .. } => *actor == me,
-            // Round / game boundaries: bot may want to flush state.
-            // reach_accepted merely closes the preceding response window and
-            // must be applied with the next real decision instead of queried
-            // on its own.
-            MjaiEvent::Hora { .. }
-            | MjaiEvent::Ryukyoku { .. }
-            | MjaiEvent::EndKyoku
-            | MjaiEvent::EndGame { .. } => true,
             // Everything else (start_game/start_kyoku, our own dahai,
             // ankan/kakan, dora reveal, reach declaration) accumulates
             // without bothering the bot — its state catches up the next
@@ -747,6 +811,122 @@ mod tests {
         assert_eq!(calls[0].len(), 2, "batch carries the buffered + trigger");
         assert!(matches!(calls[0][0], MjaiEvent::Dora { .. }));
         assert!(matches!(calls[0][1], MjaiEvent::Dahai { actor: 0, .. }));
+    }
+
+    fn tracked(event: MjaiEvent, can_act: Option<bool>) -> TrackedEvent {
+        TrackedEvent { event, can_act }
+    }
+
+    /// Regression (Hora answered with a pass press): an opponent's discard we
+    /// hold no claim on is not a decision, and asking the bot about it
+    /// produces a reply that reads on the wire exactly like a considered
+    /// decline. One frame can carry three seats' discards, so those replies
+    /// arrive *before* the one for the discard we can actually ron — and the
+    /// first reply to reach autoplay is the one that claims the window.
+    /// The engine knows the difference, so never ask.
+    #[tokio::test]
+    async fn an_opponent_discard_we_cannot_claim_never_reaches_the_bot() {
+        let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
+
+        mgr.handle_tracked(tracked(dahai(0), Some(false)))
+            .await
+            .unwrap();
+        mgr.handle_tracked(tracked(dahai(1), Some(false)))
+            .await
+            .unwrap();
+
+        assert!(
+            calls.lock().await.is_empty(),
+            "the engine offered our seat nothing — no react call"
+        );
+        assert_eq!(mgr.pending.len(), 2, "the events are still buffered");
+    }
+
+    /// The other half of the same regression: the discard we *can* claim is
+    /// asked, and it arrives carrying every event buffered behind the ones
+    /// that were skipped, so the bot's own state is still complete.
+    #[tokio::test]
+    async fn the_discard_we_can_claim_is_asked_with_the_skipped_ones_behind_it() {
+        let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
+
+        mgr.handle_tracked(tracked(dahai(0), Some(false)))
+            .await
+            .unwrap();
+        mgr.handle_tracked(tracked(dahai(1), Some(true)))
+            .await
+            .unwrap();
+
+        let calls = calls.lock().await;
+        assert_eq!(calls.len(), 1, "exactly one react call");
+        assert_eq!(
+            calls[0].len(),
+            2,
+            "the skipped discard rides along in the batch"
+        );
+        assert!(matches!(calls[0][0], MjaiEvent::Dahai { actor: 0, .. }));
+        assert!(matches!(calls[0][1], MjaiEvent::Dahai { actor: 1, .. }));
+    }
+
+    /// `can_act` narrows the event-shape policy; it never widens it. Our own
+    /// discard is not a decision whatever the engine says about the state it
+    /// produced (the response window it opens belongs to the other seats).
+    #[tokio::test]
+    async fn can_act_cannot_promote_an_event_that_is_not_ours() {
+        let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
+        mgr.handle_tracked(tracked(dahai(2), Some(true)))
+            .await
+            .unwrap();
+        assert!(
+            calls.lock().await.is_empty(),
+            "our own discard is not ours to answer"
+        );
+    }
+
+    /// No engine opinion — no game tracked, observer mode, or a manager
+    /// driven off a bare event stream — falls back to the event shape rather
+    /// than going silent.
+    #[tokio::test]
+    async fn no_engine_opinion_falls_back_to_the_event_shape() {
+        let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
+        mgr.handle_tracked(tracked(dahai(0), None)).await.unwrap();
+        assert_eq!(calls.lock().await.len(), 1, "shape alone decides");
+    }
+
+    /// A robbed kan must still be offered to the bot. riichienv's replay path
+    /// applies a kakan by handing the turn straight back to the caller, so it
+    /// reports `can_act = false` for our seat whether or not we could rob it —
+    /// an engine gap, not an answer, and one that would silently cost a
+    /// chankan.
+    #[tokio::test]
+    async fn another_seats_kakan_is_asked_despite_the_engines_missing_window() {
+        let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
+        mgr.handle_tracked(tracked(
+            MjaiEvent::Kakan {
+                actor: 0,
+                pai: "1m".into(),
+                consumed: ["1m".into(), "1m".into(), "1m".into()],
+            },
+            Some(false),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            calls.lock().await.len(),
+            1,
+            "chankan is still the bot's call"
+        );
+    }
+
+    /// Round and game boundaries flush regardless: they open no decision, but
+    /// they are how the bot hears that the hand ended, and `end_game` is where
+    /// the runner is torn down.
+    #[tokio::test]
+    async fn boundaries_flush_even_though_nothing_can_be_acted_on() {
+        let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
+        mgr.handle_tracked(tracked(MjaiEvent::EndKyoku, Some(false)))
+            .await
+            .unwrap();
+        assert_eq!(calls.lock().await.len(), 1, "end_kyoku still flushes");
     }
 
     #[tokio::test]
@@ -1281,8 +1461,8 @@ mod tests {
     async fn run_returns_ok_when_bus_closes() {
         // Subscribe outside the task so the task holds only the Receiver.
         // Dropping the Sender outside causes a clean Closed → Ok(()) exit.
-        let mjai = crate::event_bus::mjai_bus();
-        let rx = mjai.subscribe();
+        let events = crate::event_bus::post_tracker_bus();
+        let rx = events.subscribe();
 
         let bot_bus = bot_response_bus();
         let status = bot_status_bus();
@@ -1302,7 +1482,7 @@ mod tests {
         mgr.runner = Some(Box::new(mock));
 
         let handle = tokio::spawn(async move { mgr.run(rx).await });
-        drop(mjai); // last sender → channel closes
+        drop(events); // last sender → channel closes
         tokio::time::timeout(std::time::Duration::from_secs(1), handle)
             .await
             .expect("manager exited")

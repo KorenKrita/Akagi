@@ -26,13 +26,16 @@
 //! layer is intentionally not wired in this round — the tracker is
 //! ready to be exposed when the frontend needs it.
 
+use crate::event_bus::TrackedEvent;
 use crate::game_state::convert;
 use crate::game_state::score::{evaluate_hora_3p, evaluate_hora_4p};
 use crate::game_state::snapshot::GameStateSnapshot;
 use crate::schema::{HoraScoreInfo, MjaiEvent as AkagiEvent};
 use anyhow::Result;
 use riichienv_core::rule::GameRule;
+use riichienv_core::state::legal_actions::GameStateLegalActions;
 use riichienv_core::state::GameState;
+use riichienv_core::state_3p::legal_actions::GameState3PLegalActions;
 use riichienv_core::state_3p::GameState3P;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
@@ -236,6 +239,44 @@ impl GameTracker {
             _ => None,
         }
     }
+
+    /// Does the engine owe our seat a decision right now?
+    ///
+    /// This is the question everything downstream of the bot is really
+    /// asking. A bot is fed every event and answers every event, so its
+    /// replies alone cannot say which ones it was *asked* — an mjai `none`
+    /// means both "I decline this call" and "this was never mine to answer".
+    /// The engine can tell them apart, so ask it here, once, at the point
+    /// where the state matches the event.
+    ///
+    /// `None` when there is nothing to ask: no game in progress, or no seat
+    /// tagged (observer / replay mode).
+    pub fn our_seat_can_act(&self) -> Option<bool> {
+        let seat = self.our_seat?;
+        let legals = match &self.state {
+            Some(TrackedGame::Four(s)) => s._get_legal_actions_internal(seat),
+            Some(TrackedGame::Three(s)) => s._get_legal_actions_internal(seat),
+            None => return None,
+        };
+        Some(is_decision(&legals))
+    }
+}
+
+/// Whether a legal-action set is a choice our seat has to make.
+///
+/// Two sets are not. An empty one, obviously — the turn belongs to someone
+/// else. And exactly `[Pass]`: the engine hands a `Pass` to every seat while
+/// it is in its response phase, including the seats with nothing to claim,
+/// so a lone pass is the engine saying "not yours" rather than offering a
+/// decline.
+///
+/// Same rule the native bot applies to its own candidate set before it
+/// touches the HUD card (`bot::native::is_decision_point`); the two are
+/// deliberately the same test asked of the same engine at different points.
+fn is_decision(legals: &[riichienv_core::action::Action]) -> bool {
+    legals
+        .iter()
+        .any(|a| a.action_type != riichienv_core::action::ActionType::Pass)
 }
 
 impl Default for GameTracker {
@@ -348,12 +389,14 @@ pub fn spawn(rx: broadcast::Receiver<AkagiEvent>) -> Arc<Mutex<GameTracker>> {
     spawn_with_post(rx, None)
 }
 
-/// Like [`spawn`] but also re-emits each consumed `AkagiEvent` on `post`
-/// **after** the tracker has applied it. Subscribers to `post` can rely on
-/// the tracker snapshot being current when they receive an event.
+/// Like [`spawn`] but also re-emits each consumed event on `post` **after**
+/// the tracker has applied it, as a [`TrackedEvent`]. Subscribers to `post`
+/// can rely on the tracker snapshot being current when they receive an
+/// event, and on `can_act` describing *that* event rather than whatever the
+/// tracker has reached by the time they get round to it.
 pub fn spawn_with_post(
     rx: broadcast::Receiver<AkagiEvent>,
-    post: Option<broadcast::Sender<AkagiEvent>>,
+    post: Option<broadcast::Sender<TrackedEvent>>,
 ) -> Arc<Mutex<GameTracker>> {
     let tracker = new_handle();
     let cloned = tracker.clone();
@@ -367,7 +410,7 @@ pub fn spawn_with_post(
 pub async fn drive_loop(
     tracker: Arc<Mutex<GameTracker>>,
     rx: broadcast::Receiver<AkagiEvent>,
-    post: Option<broadcast::Sender<AkagiEvent>>,
+    post: Option<broadcast::Sender<TrackedEvent>>,
 ) {
     run(tracker, rx, post).await
 }
@@ -375,21 +418,27 @@ pub async fn drive_loop(
 async fn run(
     tracker: Arc<Mutex<GameTracker>>,
     mut rx: broadcast::Receiver<AkagiEvent>,
-    post: Option<broadcast::Sender<AkagiEvent>>,
+    post: Option<broadcast::Sender<TrackedEvent>>,
 ) {
     info!("game tracker subscribed to MJAI bus");
     loop {
         match rx.recv().await {
             Ok(ev) => {
-                {
+                // Read `can_act` under the same lock that applied the event,
+                // so it describes the state this event produced and not a
+                // later one. A burst of events from one frame is applied in
+                // microseconds; anything that asks afterwards has already
+                // missed the state it meant to ask about.
+                let can_act = {
                     let mut t = tracker.lock().await;
                     if let Err(e) = t.handle(&ev) {
                         warn!("game tracker: handle error: {e:#}");
                     }
-                }
+                    t.our_seat_can_act()
+                };
                 if let Some(p) = &post {
                     // Receiver may have lagged or no-one subscribed yet — ignore.
-                    let _ = p.send(ev);
+                    let _ = p.send(TrackedEvent { event: ev, can_act });
                 }
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -440,11 +489,130 @@ mod tests {
         }
     }
 
+    /// Seat 0 holds a real hand — two 1m to pon with, and a 3m4m run — while
+    /// the other three are the `?` the bridge feeds for hands we cannot see.
+    fn start_kyoku_with_our_hand() -> AkagiEvent {
+        let ours: Vec<String> = [
+            "1m", "1m", "3m", "4m", "7m", "8m", "9m", "1p", "2p", "3p", "E", "E", "S",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let hidden: Vec<String> = (0..13).map(|_| "?".into()).collect();
+        AkagiEvent::StartKyoku {
+            bakaze: "E".into(),
+            dora_marker: "2m".into(),
+            kyoku: 1,
+            honba: 0,
+            kyotaku: 0,
+            oya: 0,
+            scores: vec![25_000, 25_000, 25_000, 25_000],
+            tehais: vec![ours, hidden.clone(), hidden.clone(), hidden],
+            num_players: 4,
+        }
+    }
+
+    fn dahai(actor: u8, pai: &str) -> AkagiEvent {
+        AkagiEvent::Dahai {
+            actor,
+            pai: pai.into(),
+            tsumogiri: false,
+        }
+    }
+
     #[test]
     fn tracker_starts_empty() {
         let t = GameTracker::new();
         assert!(t.snapshot().is_none());
         assert!(t.state().is_none());
+    }
+
+    /// With no game and no seat the engine has nothing to say, and saying so
+    /// matters: consumers fall back to their own policy on `None` rather than
+    /// treating it as "cannot act" and going quiet for the whole session.
+    #[test]
+    fn can_act_has_no_opinion_before_a_game() {
+        assert_eq!(GameTracker::new().our_seat_can_act(), None);
+
+        let mut t = GameTracker::new();
+        t.handle(&AkagiEvent::StartGame {
+            names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            kyoku_first: None,
+            aka_flag: None,
+            id: None, // observer / replay: no seat of ours
+            num_players: 4,
+            majsoul_meta: None,
+        })
+        .unwrap();
+        assert_eq!(t.our_seat_can_act(), None, "no seat, no opinion");
+    }
+
+    /// Our own draw is a decision — there is at minimum a discard to choose.
+    #[test]
+    fn can_act_on_our_own_draw() {
+        let mut t = GameTracker::new();
+        t.handle(&start_game()).unwrap();
+        t.handle(&start_kyoku_with_our_hand()).unwrap();
+        t.handle(&AkagiEvent::Tsumo {
+            actor: 0,
+            pai: "5s".into(),
+        })
+        .unwrap();
+        assert_eq!(t.our_seat_can_act(), Some(true));
+    }
+
+    /// Regression (Hora answered with a pass press): a discard we hold no
+    /// claim on is not ours to answer. The engine may still be in its
+    /// response phase — another seat's claim puts it there, and it hands
+    /// every seat a `Pass` while it is — so "the legal set is non-empty" is
+    /// not the test; having something other than that pass is.
+    #[test]
+    fn cannot_act_on_an_opponent_discard_we_have_no_claim_on() {
+        let mut t = GameTracker::new();
+        t.handle(&start_game()).unwrap();
+        t.handle(&start_kyoku_with_our_hand()).unwrap();
+        t.handle(&AkagiEvent::Tsumo {
+            actor: 1,
+            pai: "9p".into(),
+        })
+        .unwrap();
+        t.handle(&dahai(1, "9p")).unwrap();
+        assert_eq!(
+            t.our_seat_can_act(),
+            Some(false),
+            "no chi from toimen, no pon, no ron"
+        );
+    }
+
+    /// The other half: a discard we *can* pon is a decision, so the bot is
+    /// asked about that one and only that one.
+    #[test]
+    fn can_act_on_a_discard_we_can_claim() {
+        let mut t = GameTracker::new();
+        t.handle(&start_game()).unwrap();
+        t.handle(&start_kyoku_with_our_hand()).unwrap();
+        t.handle(&AkagiEvent::Tsumo {
+            actor: 1,
+            pai: "1m".into(),
+        })
+        .unwrap();
+        t.handle(&dahai(1, "1m")).unwrap();
+        assert_eq!(t.our_seat_can_act(), Some(true), "two 1m in hand — pon");
+    }
+
+    /// Our own discard hands the window to everyone else.
+    #[test]
+    fn cannot_act_on_our_own_discard() {
+        let mut t = GameTracker::new();
+        t.handle(&start_game()).unwrap();
+        t.handle(&start_kyoku_with_our_hand()).unwrap();
+        t.handle(&AkagiEvent::Tsumo {
+            actor: 0,
+            pai: "5s".into(),
+        })
+        .unwrap();
+        t.handle(&dahai(0, "5s")).unwrap();
+        assert_eq!(t.our_seat_can_act(), Some(false));
     }
 
     #[test]

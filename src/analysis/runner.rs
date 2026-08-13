@@ -14,9 +14,8 @@ use tracing::{debug, info, warn};
 
 use super::result::AnalysisResult;
 use super::snapshot_adapter::to_player_info;
-use crate::event_bus::AnalysisBus;
+use crate::event_bus::{AnalysisBus, TrackedEvent};
 use crate::game_state::tracker::GameTracker;
-use crate::schema::MjaiEvent;
 
 /// Cache of the latest analysis output. The IPC `get_analysis` command reads
 /// this for one-shot queries; new tabs / panes opened mid-game can pull the
@@ -26,7 +25,7 @@ pub type AnalysisCache = Arc<RwLock<Option<AnalysisResult>>>;
 /// Spawn the analysis runner task. Must be called from within a Tokio
 /// runtime context.
 pub fn spawn(
-    mut rx: broadcast::Receiver<MjaiEvent>,
+    mut rx: broadcast::Receiver<TrackedEvent>,
     tracker: Arc<Mutex<GameTracker>>,
     bus: AnalysisBus,
     cache: AnalysisCache,
@@ -40,7 +39,7 @@ pub fn spawn(
 /// post-tracker bus closes. Use this when you want to spawn the loop on
 /// a runtime that isn't accessible at construction time.
 pub async fn drive_loop(
-    mut rx: broadcast::Receiver<MjaiEvent>,
+    mut rx: broadcast::Receiver<TrackedEvent>,
     tracker: Arc<Mutex<GameTracker>>,
     bus: AnalysisBus,
     cache: AnalysisCache,
@@ -49,7 +48,7 @@ pub async fn drive_loop(
 }
 
 async fn run(
-    rx: &mut broadcast::Receiver<MjaiEvent>,
+    rx: &mut broadcast::Receiver<TrackedEvent>,
     tracker: Arc<Mutex<GameTracker>>,
     bus: AnalysisBus,
     cache: AnalysisCache,
