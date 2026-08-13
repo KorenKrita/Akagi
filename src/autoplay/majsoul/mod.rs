@@ -13,7 +13,7 @@
 pub mod coords;
 
 use crate::autoplay::delay::{self, DecisionKind, DelayInput};
-use crate::autoplay::platform::{ActionContext, PlanResult, PlatformAutoplay, ReachState, Step};
+use crate::autoplay::platform::{ActionContext, PlanResult, PlatformAutoplay, Step};
 use crate::bridge::majsoul::tile::compare_pai;
 use crate::schema::MjaiEvent;
 #[cfg(test)]
@@ -41,9 +41,10 @@ impl PlatformAutoplay for MajsoulAutoplay {
         match ctx.action {
             // ----- Dahai (打牌) ---------------------------------------------
             MjaiEvent::Dahai { actor, pai, .. } if *actor == ctx.our_seat => {
-                // While in riichi, Majsoul auto-discards. Suppress unless
-                // this dahai is the riichi-declaring tile (Path B follow-up).
-                if ctx.self_riichi_accepted && ctx.reach_state != ReachState::AwaitingDahai {
+                // While in riichi, Majsoul auto-discards, so ours would be a
+                // second one. (The riichi-declaring tile goes out inside the
+                // Reach plan below, before acceptance, so it is unaffected.)
+                if ctx.self_riichi_accepted {
                     // …with one exception: the auto-discard is held back
                     // while an own-draw operation prompt is open — kita on
                     // a drawn North (sanma), a riichi-legal ankan, or a
@@ -73,16 +74,21 @@ impl PlatformAutoplay for MajsoulAutoplay {
                 }
             }
 
-            // ----- Reach (立直) — two paths -------------------------------
+            // ----- Reach (立直) — declaration + tile in one plan ----------
             MjaiEvent::Reach { actor, pai } if *actor == ctx.our_seat => {
-                // Path A clicks the riichi tile right after the button, so
-                // reserve one extra click of overhead.
-                push_pre_delay(
-                    &mut result.steps,
-                    ctx,
-                    DecisionKind::Reach,
-                    u32::from(pai.is_some()),
-                );
+                // Majsoul fuses declaring + discarding into one action, so the
+                // tile must be known up front. It normally is — the bot fills
+                // `Reach.pai` (natively or via the manager's autoplay reach
+                // follow-up, #257, which logs when it cannot). A bare reach
+                // here means that resolution failed; declare nothing rather
+                // than press the button and leave the client sitting on an
+                // owed discard until timeout.
+                let Some(tile) = pai else {
+                    return PlanResult::default();
+                };
+                // Clicks the riichi tile right after the button, so reserve
+                // one extra click of overhead.
+                push_pre_delay(&mut result.steps, ctx, DecisionKind::Reach, 1);
                 if let Some(button) = action_button_for(MajsoulOpType::Reach, ctx) {
                     result.steps.push(Step::Click {
                         x_norm: button.0,
@@ -92,23 +98,11 @@ impl PlatformAutoplay for MajsoulAutoplay {
                     // Reach not in legal_actions — bridge desync; bail.
                     return PlanResult::default();
                 }
-
-                match pai {
-                    // Path A: bot pre-filled the riichi tile.
-                    Some(tile) => {
-                        result.steps.push(Step::Sleep {
-                            duration_ms: ctx.cfg.inter_click_delay_ms,
-                        });
-                        if let Some(click) = plan_dahai_click(tile, ctx) {
-                            result.steps.push(click);
-                        }
-                    }
-                    // Path B: bot needs a synthetic Reach event before it
-                    // emits the riichi-declaring dahai. Manager will inject.
-                    None => {
-                        result.inject_reach_for_followup = true;
-                        result.awaiting_riichi_dahai = true;
-                    }
+                result.steps.push(Step::Sleep {
+                    duration_ms: ctx.cfg.inter_click_delay_ms,
+                });
+                if let Some(click) = plan_dahai_click(tile, ctx) {
+                    result.steps.push(click);
                 }
             }
 
@@ -341,40 +335,19 @@ fn push_pre_delay(
         .and_then(|s| s.try_decide(&input))
         .unwrap_or_else(|| delay::decide(&input, &mut rand::rng()));
 
-    // The Path-B riichi follow-up dahai is a *second* plan inside the
-    // same (still open) decision window: the reach-stage pre-delay and
-    // click already consumed the think time the model targeted for the
-    // whole riichi action (the calibration source measures declaration
-    // plus tile as ONE server-observed interval). Sleeping a full fresh
-    // target here would roughly double the human riichi median, so the
-    // follow-up gets only the residual of its target — usually zero —
-    // floored at the tile-click UI-readiness pause (`min_delay_ms`,
-    // on a clock that restarts at our reach click: the hand re-renders
-    // highlighted before the tile exists to click), and still clamped
-    // so the window total never exceeds the budget cap. Floor last —
-    // losing the click is worse than shaving budget headroom.
-    let follow_up = kind == DecisionKind::Dahai && ctx.reach_state == ReachState::AwaitingDahai;
-
     // Convert target total time to a sleep: subtract what the window has
     // already consumed AND what the click sequence itself will take —
     // the target is the server-observed total, and hover/hold/candidate
     // clicks all land after this sleep. Without a budget there is no
-    // window clock — only the click overhead is deducted.
+    // window clock — only the click overhead is deducted. A riichi's
+    // declaration and tile go out in one plan, so the whole action is
+    // budgeted here as a single interval (the calibration source measures
+    // declaration plus tile as one server-observed interval).
     let sleep = match ctx.budget {
-        Some(b) if follow_up => {
-            let residual = decision
-                .total_target_ms
-                .saturating_sub(b.elapsed_ms)
-                .saturating_sub(click_overhead_ms);
-            let remaining =
-                delay::budget_cap(&input, decision.allow_bank).saturating_sub(b.elapsed_ms);
-            residual.min(remaining).max(delay_cfg.min_delay_ms)
-        }
         Some(b) => decision
             .total_target_ms
             .saturating_sub(b.elapsed_ms)
             .saturating_sub(click_overhead_ms),
-        None if follow_up => delay_cfg.min_delay_ms,
         None => decision.total_target_ms.saturating_sub(click_overhead_ms),
     };
     // The overhead deduction must not undercut UI readiness: the first
@@ -844,7 +817,6 @@ mod tests {
         last_kawa: Option<&'a str>,
         last_tsumo: Option<&'a str>,
         riichi_accepted: bool,
-        reach_state: ReachState,
         cfg_ref: &'a MajsoulAutoplayConfig,
     ) -> ActionContext<'a> {
         ActionContext {
@@ -855,7 +827,6 @@ mod tests {
             last_kawa_tile: last_kawa,
             last_self_tsumo: last_tsumo,
             self_riichi_accepted: riichi_accepted,
-            reach_state,
             num_players: snapshot.num_players,
             cfg: cfg_ref,
             delay_cfg: crate::config::DelayModelConfig::default(),
@@ -891,7 +862,6 @@ mod tests {
             Some("1m"),
             Some("5p"),
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -931,7 +901,6 @@ mod tests {
             Some("1m"),
             Some("5p"),
             true,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -974,7 +943,6 @@ mod tests {
             Some("1z"),
             Some("N"),
             true,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1022,7 +990,6 @@ mod tests {
             Some("1z"),
             Some("5p"),
             true,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1061,7 +1028,6 @@ mod tests {
             Some("1z"),
             Some("1m"),
             true,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1073,39 +1039,6 @@ mod tests {
             }
             _ => panic!("expected a click on the X button"),
         }
-    }
-
-    #[test]
-    fn dahai_under_riichi_awaiting_riichi_dahai_clicks() {
-        // Path B follow-up: even though manager has self_riichi_accepted=false
-        // (it only flips on ReachAccepted from server), reach_state being
-        // AwaitingDahai means we should click. self_riichi_accepted is
-        // expected to be false here too, but the suppression check is
-        // ANDed with reach_state — verify both false-cases:
-        let snap = snapshot_with_hand(0, vec!["1m", "2m", "3m"]);
-        let act = MjaiEvent::Dahai {
-            actor: 0,
-            pai: "3m".into(),
-            tsumogiri: false,
-        };
-        let cfg_ref = cfg();
-        // Hand of 3 tiles is unusual but the Path B click should not be
-        // suppressed even when self_riichi_accepted=true happens to be set.
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            None,
-            true,
-            ReachState::AwaitingDahai,
-            &cfg_ref,
-        );
-        let result = MajsoulAutoplay::new().plan(&ctx);
-        assert!(
-            !result.steps.is_empty(),
-            "Path B follow-up dahai must click"
-        );
     }
 
     /// Regression: `is_post_call` was derived from `hand_len % 3 == 1`,
@@ -1158,7 +1091,6 @@ mod tests {
             Some("1m"),
             None,
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         ctx.delay_script = Some(&script);
@@ -1182,7 +1114,6 @@ mod tests {
             Some("1m"),
             None,
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         ctx.delay_script = Some(&script);
@@ -1193,69 +1124,6 @@ mod tests {
                 Some(Step::Sleep { duration_ms: 3456 })
             ),
             "script must see post_call=false: {:?}",
-            result.steps.first()
-        );
-    }
-
-    /// Regression: the Path-B riichi follow-up dahai used to sleep a
-    /// full fresh target on top of the reach-stage delay, roughly
-    /// doubling the human riichi median. The follow-up gets only the
-    /// residual of its target (usually zero) floored at the tile-click
-    /// UI-readiness pause.
-    #[test]
-    fn follow_up_riichi_dahai_sleeps_only_the_ui_floor() {
-        let script = crate::autoplay::delay::DelayScript::compile(
-            "function decide_delay(ctx) return { delay_ms = 2000 } end",
-            "test",
-        )
-        .unwrap();
-        let snap = snapshot_with_hand(0, vec!["1m", "2m", "3m"]);
-        let act = MjaiEvent::Dahai {
-            actor: 0,
-            pai: "3m".into(),
-            tsumogiri: false,
-        };
-        let cfg_ref = cfg();
-        let mut ctx = ctx_for(
-            &act,
-            &snap,
-            &[],
-            Some("1m"),
-            None,
-            false,
-            ReachState::AwaitingDahai,
-            &cfg_ref,
-        );
-        ctx.delay_script = Some(&script);
-        let floor = ctx.delay_cfg.min_delay_ms;
-
-        // With a budget clock: the reach stage already consumed more
-        // than the 2000ms target — only the UI floor remains.
-        ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
-            fixed_ms: 20_000,
-            add_ms: 0,
-            elapsed_ms: 10_000,
-        });
-        let result = MajsoulAutoplay::new().plan(&ctx);
-        assert!(
-            matches!(
-                result.steps.first(),
-                Some(Step::Sleep { duration_ms }) if *duration_ms == floor
-            ),
-            "budgeted follow-up must sleep exactly the UI floor: {:?}",
-            result.steps.first()
-        );
-
-        // Without a budget clock there is nothing to subtract from —
-        // the follow-up still must not sleep a second full target.
-        ctx.budget = None;
-        let result = MajsoulAutoplay::new().plan(&ctx);
-        assert!(
-            matches!(
-                result.steps.first(),
-                Some(Step::Sleep { duration_ms }) if *duration_ms == floor
-            ),
-            "unbudgeted follow-up must sleep exactly the UI floor: {:?}",
             result.steps.first()
         );
     }
@@ -1287,7 +1155,6 @@ mod tests {
             Some("1m"),
             None,
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         ctx.delay_script = Some(&script);
@@ -1345,7 +1212,6 @@ mod tests {
             Some("1m"),
             None,
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         ctx.delay_script = Some(&script);
@@ -1384,7 +1250,6 @@ mod tests {
             Some("1m"),
             Some("5p"),
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1392,11 +1257,13 @@ mod tests {
         assert_eq!(result.steps.len(), 4);
         assert!(matches!(result.steps[1], Step::Click { .. }));
         assert!(matches!(result.steps[3], Step::Click { .. }));
-        assert!(!result.inject_reach_for_followup);
     }
 
+    /// A reach that still names no tile (the manager's follow-up failed to
+    /// resolve it, #257) declares nothing — pressing the button alone would
+    /// leave the client owing a discard until timeout.
     #[test]
-    fn reach_path_b_signals_inject() {
+    fn reach_without_pai_declines() {
         let snap = snapshot_with_hand(0, vec!["1m"]);
         let act = MjaiEvent::Reach {
             actor: 0,
@@ -1404,21 +1271,12 @@ mod tests {
         };
         let cfg_ref = cfg();
         let legal = vec![Action::new(ActionType::Riichi, None, vec![], Some(0))];
-        let ctx = ctx_for(
-            &act,
-            &snap,
-            &legal,
-            Some("1m"),
-            None,
-            false,
-            ReachState::Idle,
-            &cfg_ref,
-        );
+        let ctx = ctx_for(&act, &snap, &legal, Some("1m"), None, false, &cfg_ref);
         let result = MajsoulAutoplay::new().plan(&ctx);
-        // sleep + reach btn click only
-        assert_eq!(result.steps.len(), 2);
-        assert!(result.inject_reach_for_followup);
-        assert!(result.awaiting_riichi_dahai);
+        assert!(
+            result.steps.is_empty(),
+            "a tile-less reach must not press anything"
+        );
     }
 
     #[test]
@@ -1440,7 +1298,6 @@ mod tests {
             Some("1m"),
             None,
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1470,7 +1327,6 @@ mod tests {
             Some("1m"),
             None,
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1498,7 +1354,6 @@ mod tests {
             Some("1m"),
             Some("1m"),
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1536,7 +1391,6 @@ mod tests {
             None,
             Some("5p"),
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1574,7 +1428,6 @@ mod tests {
             None,
             None,
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1621,7 +1474,6 @@ mod tests {
             Some("9m"),
             Some("5p"),
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1660,7 +1512,6 @@ mod tests {
             None,
             Some("5p"),
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1698,7 +1549,6 @@ mod tests {
                 Some("1m"),
                 Some("5p"),
                 false,
-                ReachState::Idle,
                 &cfg_ref,
             );
             ctx.delay_cfg = crate::config::DelayModelConfig {
@@ -1723,69 +1573,6 @@ mod tests {
     }
 
     /// The Path-B riichi follow-up dahai runs inside the same still-open
-    /// window whose elapsed already contains the reach-button stage — the
-    /// stage that consumed the think time targeted for the whole riichi
-    /// action. It sleeps only the residual of its own target (usually
-    /// zero), floored at the tile-click UI pause. (Regression both ways:
-    /// plain `target - elapsed` saturates to 0 and snaps the tile before
-    /// the UI re-renders; a full fresh target doubles the human riichi
-    /// median.)
-    #[test]
-    fn riichi_followup_dahai_sleeps_residual_with_ui_floor() {
-        let snap = snapshot_with_oya(
-            0,
-            1,
-            vec![
-                "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "4p", "5p",
-            ],
-        );
-        let act = MjaiEvent::Dahai {
-            actor: 0,
-            pai: "5p".into(),
-            tsumogiri: false,
-        };
-        let mut cfg_ref = cfg();
-        cfg_ref.pre_click_delay_min_ms = 1000;
-        cfg_ref.pre_click_delay_max_ms = 1000;
-
-        let sleep_for = |fixed_ms: u32, elapsed_ms: u32| {
-            let mut ctx = ctx_for(
-                &act,
-                &snap,
-                &[],
-                Some("1m"),
-                Some("5p"),
-                false,
-                ReachState::AwaitingDahai,
-                &cfg_ref,
-            );
-            ctx.delay_cfg = crate::config::DelayModelConfig {
-                distribution: crate::config::DelayDistribution::Uniform,
-                // Lower than the 1s target so the floor and the residual
-                // are distinguishable in the assertions below.
-                min_delay_ms: 200,
-                ..Default::default()
-            };
-            ctx.budget = Some(crate::autoplay::delay::BudgetSnapshot {
-                fixed_ms,
-                add_ms: 0,
-                elapsed_ms,
-            });
-            let result = MajsoulAutoplay::new().plan(&ctx);
-            match result.steps[0] {
-                Step::Sleep { duration_ms } => duration_ms,
-                _ => panic!("expected leading sleep"),
-            }
-        };
-
-        // The reach stage (2.5s) already consumed the whole 1s target:
-        // only the UI-readiness floor remains — not a second full
-        // target, and not a raw 0 that would click into the re-render.
-        assert_eq!(sleep_for(10_000, 2500), 200);
-        // A target not yet fully consumed sleeps its residual.
-        assert_eq!(sleep_for(10_000, 400), 600);
-    }
-
     /// Legacy mode must reproduce the historical fixed model even when
     /// the config still carries log-normal parameters: the distribution
     /// is forced to uniform and the sleep is exactly min==max.
@@ -1813,7 +1600,6 @@ mod tests {
             Some("1m"),
             Some("5p"),
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         // Config keeps LogNormal + calibrated table, but mode is legacy.
@@ -1908,7 +1694,6 @@ mod tests {
             None,       // opening turn: no kawa tile yet
             Some("1m"), // rinshan replacement is the live tsumohai
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -1967,7 +1752,6 @@ mod tests {
             Some(pai),
             None,
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);
@@ -2076,7 +1860,6 @@ mod tests {
             Some("5p"),
             None,
             false,
-            ReachState::Idle,
             &cfg_ref,
         );
         let result = MajsoulAutoplay::new().plan(&ctx);

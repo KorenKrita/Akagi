@@ -6,7 +6,7 @@
 //! - One long-lived `tokio::select!` loop over `BotResponseBus` and
 //!   `MjaiBus`. Bot responses drive clicks; mjai events update local
 //!   per-game tracking state (`last_kawa_tile`, `last_self_tsumo`,
-//!   `self_riichi_accepted`, `reach_state`).
+//!   `self_riichi_accepted`).
 //!
 //! Failure modes are silent-by-design: if the page handle is missing
 //! (chromium backend not running) or the canvas-rect query fails, the
@@ -16,7 +16,7 @@
 use crate::autoplay::cdp_input::{dispatch_click_shaped, evaluate_canvas_rect};
 use crate::autoplay::context::{AutoplayContext, CanvasRect};
 use crate::autoplay::majsoul::MajsoulAutoplay;
-use crate::autoplay::platform::{ActionContext, PlatformAutoplay, ReachState, Step};
+use crate::autoplay::platform::{ActionContext, PlatformAutoplay, Step};
 use crate::autoplay::tenhou::TenhouAutoplay;
 use crate::autoplay::verify::InputTicket;
 use crate::bot::BotResponse;
@@ -63,7 +63,6 @@ struct ManagerState {
     last_kawa_tile: Option<String>,
     last_self_tsumo: Option<String>,
     self_riichi_accepted: bool,
-    reach_state: ReachState,
     canvas_rect_at: Option<Instant>,
     /// Decisions in a row where the client accepted nothing we pressed.
     /// Reset by any input the client does accept.
@@ -211,7 +210,6 @@ impl AutoplayManager {
             last_kawa_tile: self.state.last_kawa_tile.as_deref(),
             last_self_tsumo: self.state.last_self_tsumo.as_deref(),
             self_riichi_accepted: self.state.self_riichi_accepted,
-            reach_state: self.state.reach_state,
             num_players,
             cfg: &cfg,
             delay_cfg,
@@ -239,16 +237,14 @@ impl AutoplayManager {
         }
 
         let plan = platform.plan(&action_ctx);
-        if plan.steps.is_empty() && !plan.inject_reach_for_followup {
+        if plan.steps.is_empty() {
             return;
         }
 
         debug!(
-            "autoplay: action={:?} steps={} inject_reach={} await_riichi_dahai={}",
+            "autoplay: action={:?} steps={}",
             resp.action,
             plan.steps.len(),
-            plan.inject_reach_for_followup,
-            plan.awaiting_riichi_dahai
         );
 
         // Only a click needs to know where the canvas is. A plan built of
@@ -278,11 +274,10 @@ impl AutoplayManager {
         // the previous decision cannot be mistaken for this one landing.
         let ticket = self.ctx.input_watch.ticket();
 
-        // Whether this plan declares riichi — either Path A (button then
-        // tile in one plan) or the Path B follow-up discard, which the
-        // client only sends as a declaration if the button press landed.
-        let declares_reach = matches!(resp.action, MjaiEvent::Reach { .. })
-            || matches!(self.state.reach_state, ReachState::AwaitingDahai);
+        // Whether this plan declares riichi: the reach declaration and its
+        // tile go out in one plan (the declaring discard is pre-resolved onto
+        // `Reach.pai`), so the reach action alone identifies it.
+        let declares_reach = matches!(resp.action, MjaiEvent::Reach { .. });
 
         if let Some(w) = planned_window {
             self.state.acted_window = Some(w.opened_at);
@@ -440,17 +435,12 @@ impl AutoplayManager {
         // Did the client accept any of that? A swallowed click reports
         // success like any other — the page dispatched the events and the
         // engine ignored them — so the proof has to come from the client's
-        // own uplink. Skipped for a plan that deliberately stops mid-action
-        // (Path B presses Reach and waits for the bot's follow-up dahai;
-        // Mahjong Soul sends nothing until that tile is chosen).
+        // own uplink.
         // Only canvas clicks need proving. The Tenhou steps run the client's
         // own handlers — a DOM press or its discard call either resolved or
         // reported that it did not, with no swallowed-input case in between —
         // and `rect` is `None` for a plan built of those, which skips this.
-        if let (true, Some(rect)) = (
-            cfg.verify_input_ms > 0 && !plan.inject_reach_for_followup,
-            rect,
-        ) {
+        if let (true, Some(rect)) = (cfg.verify_input_ms > 0, rect) {
             // What counts as proof. A discard plan is proven by any input.
             // Every other plan pressed action buttons, and for those a
             // plain discard can only be the client's own turn-timeout
@@ -501,7 +491,10 @@ impl AutoplayManager {
             // discard, which the presence check happily accepts. The wire
             // tells them apart, so check, and say so — the tile is gone
             // either way, but the player is now in a hand they did not
-            // choose and nothing else would tell them.
+            // choose and nothing else would tell them. It is also the one
+            // window where the bot's own view can drift: if the declaring
+            // tile came from an autoplay reach follow-up (#257), the bot was
+            // fed a reach that then did not happen, so flag that too.
             if declares_reach
                 && self.ctx.input_watch.sent_since(ticket)
                 && !self.ctx.input_watch.reach_since(ticket)
@@ -512,47 +505,9 @@ impl AutoplayManager {
                 );
                 let _ = self.notify.send(
                     crate::schema::Notification::error("Riichi did not go through").body(
-                        "The declaration press was lost and the tile was discarded without it. This hand is not in riichi.",
+                        "The declaration press was lost and the tile was discarded without it. This hand is not in riichi — and the bot may still believe it declared, so its reads for the rest of this hand can be off.",
                     ),
                 );
-            }
-        }
-
-        // A plan that declared riichi without throwing the tile is owed one,
-        // and the next dahai from our seat is it. Both platforms normally
-        // take the tile straight off the bot's `Reach { pai }` and do it in
-        // the same plan; this is the fallback for a bot that names no tile,
-        // where Majsoul manufactures a decision (Path B below) and Tenhou
-        // has nothing to manufacture one with.
-        if plan.awaiting_riichi_dahai {
-            self.state.reach_state = ReachState::AwaitingDahai;
-        }
-
-        // Path-B side effect: inject synthetic Reach so the bot will
-        // emit the riichi-declaring dahai we need to click next.
-        if plan.inject_reach_for_followup {
-            self.state.reach_state = ReachState::AwaitingDahai;
-            let synthetic = MjaiEvent::Reach {
-                actor: our_seat,
-                pai: None,
-            };
-            if let Err(e) = self.mjai_bus.send(synthetic) {
-                // No subscribers (e.g. bot disabled) — nothing to do, but
-                // log for visibility because Path B without a downstream
-                // bot would soft-hang autoplay until reach_state resets.
-                debug!("autoplay: synthetic Reach send had no subscribers: {e:?}");
-            } else {
-                info!("autoplay: injected synthetic Reach (Path B) for seat {our_seat}");
-            }
-        }
-
-        // After a successful Path-B follow-up dahai, return to Idle.
-        // The check is conservative: only flip on Dahai by our seat.
-        if matches!(self.state.reach_state, ReachState::AwaitingDahai) {
-            if let MjaiEvent::Dahai { actor, .. } = &resp.action {
-                if *actor == our_seat {
-                    self.state.reach_state = ReachState::Idle;
-                }
             }
         }
     }

@@ -35,7 +35,7 @@
 
 use crate::autoplay::cdp_input::{self, menu};
 use crate::autoplay::delay::{BudgetSnapshot, DecisionKind, DelayInput};
-use crate::autoplay::platform::{ActionContext, PlanResult, PlatformAutoplay, ReachState, Step};
+use crate::autoplay::platform::{ActionContext, PlanResult, PlatformAutoplay, Step};
 use crate::autoplay::tenhou_state;
 use crate::schema::MjaiEvent;
 use tracing::{debug, warn};
@@ -373,11 +373,8 @@ impl PlatformAutoplay for TenhouAutoplay {
         // Once riichi is accepted the client discards for itself, so ours
         // would be a second one. Claims that survive riichi (ankan, hora) are
         // still ours. The riichi tile arrives before acceptance and so is
-        // unaffected, but check `reach_state` anyway.
-        if kind == DecisionKind::Dahai
-            && ctx.self_riichi_accepted
-            && ctx.reach_state != ReachState::AwaitingDahai
-        {
+        // unaffected.
+        if kind == DecisionKind::Dahai && ctx.self_riichi_accepted {
             debug!(target: LOG, "riichi accepted; leaving the discard to the client");
             return result;
         }
@@ -447,19 +444,14 @@ impl PlatformAutoplay for TenhouAutoplay {
 
         // Wait for the client before thinking, not after: the delay is meant
         // to look like a human deciding, and a human cannot decide before the
-        // board has finished moving.
-        //
-        // Except after our own riichi declaration. Readiness is measured by
-        // the client's clock, and its button handler takes that clock *down*
-        // (`ec.Z(); Ub.Z(); ...`) when the declaration is pressed. Nothing
-        // raises it again: the riichi tile follows our own press, not a new
-        // frame, so there is no animation to wait out and no clock to wait
-        // for — waiting cost a declared riichi its discard.
-        if ctx.reach_state != ReachState::AwaitingDahai {
-            result.steps.push(Step::AwaitReady {
-                timeout_ms: READY_TIMEOUT_MS,
-            });
-        }
+        // board has finished moving. This wait precedes the reach button, when
+        // the client's clock is still up; the riichi tile that follows the
+        // press (below) does not wait again — the declaration takes the clock
+        // down and nothing raises it before the tile goes out in the same
+        // plan.
+        result.steps.push(Step::AwaitReady {
+            timeout_ms: READY_TIMEOUT_MS,
+        });
         push_pre_delay(&mut result.steps, ctx, kind);
         result.steps.push(step);
 
@@ -749,7 +741,6 @@ mod tests {
             last_kawa_tile: None,
             last_self_tsumo: None,
             self_riichi_accepted: false,
-            reach_state: ReachState::Idle,
             num_players: 4,
             cfg: &cfg,
             delay_cfg: crate::config::DelayModelConfig::default(),
@@ -774,10 +765,6 @@ mod tests {
             pressed < discarded,
             "declare, then discard: {:?}",
             plan.steps
-        );
-        assert!(
-            !plan.awaiting_riichi_dahai,
-            "the plan performed the discard; nothing is owed"
         );
     }
 
@@ -812,7 +799,6 @@ mod tests {
             last_kawa_tile: None,
             last_self_tsumo: None,
             self_riichi_accepted: false,
-            reach_state: ReachState::Idle,
             num_players: 4,
             cfg: &cfg,
             delay_cfg: crate::config::DelayModelConfig::default(),
@@ -858,7 +844,6 @@ mod tests {
             last_kawa_tile: None,
             last_self_tsumo: None,
             self_riichi_accepted: false,
-            reach_state: ReachState::Idle,
             num_players: 4,
             cfg: &cfg,
             delay_cfg: crate::config::DelayModelConfig::default(),
@@ -904,7 +889,6 @@ mod tests {
             last_kawa_tile: None,
             last_self_tsumo: None,
             self_riichi_accepted: false,
-            reach_state: ReachState::Idle,
             num_players: 4,
             cfg: &cfg,
             delay_cfg: crate::config::DelayModelConfig::default(),
@@ -982,7 +966,6 @@ mod tests {
             last_kawa_tile: None,
             last_self_tsumo: None,
             self_riichi_accepted: false,
-            reach_state: ReachState::Idle,
             num_players: 4,
             cfg: &cfg,
             delay_cfg: crate::config::DelayModelConfig::default(),
@@ -997,36 +980,6 @@ mod tests {
             "readiness must come first, got {:?}",
             plan.steps
         );
-
-        // ...but not for the riichi tile: pressing the declaration takes the
-        // client's clock down, and nothing raises it again.
-        let mut after_reach = ctx;
-        after_reach.reach_state = ReachState::AwaitingDahai;
-        let dahai = MjaiEvent::Dahai {
-            actor: 0,
-            pai: "1m".into(),
-            tsumogiri: false,
-        };
-        after_reach.action = &dahai;
-        let plan = TenhouAutoplay::new().plan(&after_reach);
-        assert!(
-            !plan
-                .steps
-                .iter()
-                .any(|s| matches!(s, Step::AwaitReady { .. })),
-            "the riichi discard must not wait for a clock that will not return: {:?}",
-            plan.steps
-        );
-        // ... and the press must come after the think, not before it.
-        let sleep_at = plan
-            .steps
-            .iter()
-            .position(|s| matches!(s, Step::Sleep { .. }));
-        let act_at = plan
-            .steps
-            .iter()
-            .position(|s| matches!(s, Step::DomClick { .. } | Step::Discard { .. }));
-        assert!(sleep_at < act_at, "{:?}", plan.steps);
     }
 
     /// A discard has no button — it is the one action that needs a position.
