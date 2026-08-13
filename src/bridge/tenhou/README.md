@@ -82,6 +82,12 @@ so does Akagi, via the riichi engine's legal actions. Parsing is unconditional
 even though only autoplay consumes it: it is cheap, and a stale window is worse
 than none.
 
+One more frame carries the claim bits: an opponent's kakan `N` when the kan can
+be robbed (chankan). The client builds its ron menu straight from that
+attribute — `(u=~~a.t)&&ec.Ni(u)` in its `N` handler — and the bridge opens a
+window from it the same way it does for a discard. Our own calls never open one
+off their own frame; the rinshan draw that follows does.
+
 ## Encoding actions (`encode.rs`)
 
 The inverse direction, and the only implementation of `Bridge::build` for this

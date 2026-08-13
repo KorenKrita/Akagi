@@ -27,6 +27,10 @@
 //! | 32 | riichi | — |
 //! | 64 | 九種九牌 | — |
 //!
+//! An opponent's kakan `N` frame carries the same claim bits when the kan
+//! can be robbed (chankan) — the client builds its ron menu straight from
+//! that attribute, and so does the bridge.
+//!
 //! Ankan / kakan are not in the mask; the client derives them from the hand,
 //! and so does Akagi (via the riichi engine's legal actions). A window opened
 //! by our own draw, our own call, or an accepted riichi declaration carries

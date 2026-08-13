@@ -116,6 +116,16 @@ Button presses additionally poll for their element, because the window in
 which it exists is bounded by animation on one side and resolution on the
 other.
 
+Both action steps are dropped when the decision window they were planned
+against is no longer the live one (its `opened_at` is its identity): a
+button press because the client would no longer be offering it anyway, and
+a discard because the client's handler is *not* guarded — it applies the
+tile to the local board whether or not it is our turn, so a stale call
+desyncs the board rather than merely wasting a frame. The one exemption is
+the riichi tile: the declaration press itself replaces the window (the
+server acks with `REACH step=1` and the bridge re-opens it), so for that
+plan the moved window is expected, and the tile is still owed.
+
 **Riichi** is one plan, not two: the declaration button and then the tile
 the bot named on its `Reach`. The client takes them as separate inputs and
 sits on its clock until it has both, and nothing prompts a second bot
@@ -133,10 +143,15 @@ always fills `pai` — it resolves the riichi discard before replying and
 declines the reach outright if it cannot.
 
 So today a bot that declares riichi without naming the tile cannot riichi
-under autoplay on **either** platform. Tenhou says so in the log rather
-than stalling silently. Tracked as issue #257, along with why the obvious
-repair — making our own `reach` a decision point — needs care on Mahjong
-Soul, where the bridge emits `reach` and the committing `dahai` together.
+under autoplay on **either** platform. Tenhou skips the declaration whole
+and says so in the log — pressing the button without a tile to follow is
+worse than not pressing it, because at clock expiry the *client* completes
+the riichi itself by throwing the drawn tile, committing the hand to a
+wait the bot never chose. The same refusal applies when the tracked hand
+cannot produce the tile the bot named. Tracked as issue #257, along with
+why the obvious repair — making our own `reach` a decision point — needs
+care on Mahjong Soul, where the bridge emits `reach` and the committing
+`dahai` together.
 
 ### Still to verify against a live game
 
