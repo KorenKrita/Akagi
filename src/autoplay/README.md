@@ -129,29 +129,31 @@ plan the moved window is expected, and the tile is still owed.
 **Riichi** is one plan, not two: the declaration button and then the tile
 the bot named on its `Reach`. The client takes them as separate inputs and
 sits on its clock until it has both, and nothing prompts a second bot
-decision — the `reach` the server echoes back is our own action coming
+decision here — the `reach` the server echoes back is our own action coming
 home, not a new question.
 
-`Reach.pai` is a V3 extension; mjai itself has no such field, and the
-original design took the other route — `inject_reach_for_followup` posts a
-synthetic `Reach` back onto the `MjaiBus` so the bot answers with the
-declaring dahai. **That route does not work and never has**: `BotManager`
-does not treat a `reach` as a decision point (it never has, including in
-the commit that added the injection), so the synthetic event is buffered
-and the bot is never asked. Nothing has noticed because the built-in bot
-always fills `pai` — it resolves the riichi discard before replying and
-declines the reach outright if it cannot.
+`Reach.pai` is a V3 extension; mjai itself has no such field, so a correct
+third-party mjai bot declares riichi as a bare `reach` with no tile. The
+tile is resolved **before** the plan is built, in `bot::manager`: when a
+bot's reaction is a bare `reach` and autoplay is on, the manager feeds the
+same runner a synthetic `reach` and reads back the declaring `dahai` —
+exactly the declare → echo → discard shape mjai prescribes — then fills
+`Reach.pai`. The built-in native bot does this internally already; the
+manager generalises it to any runner. The follow-up is gated on autoplay
+because it mutates a stateful bot as though riichi were declared, which is
+only safe when we then commit that declaration; in analysis mode the human
+may decline. The bridge's later own-seat `reach` echo is dropped from the
+runner's view (`drop_next_own_reach`) so a stateful bot never applies
+`reach` twice. See issue #257.
 
-So today a bot that declares riichi without naming the tile cannot riichi
-under autoplay on **either** platform. Tenhou skips the declaration whole
-and says so in the log — pressing the button without a tile to follow is
-worse than not pressing it, because at clock expiry the *client* completes
-the riichi itself by throwing the drawn tile, committing the hand to a
-wait the bot never chose. The same refusal applies when the tracked hand
-cannot produce the tile the bot named. Tracked as issue #257, along with
-why the obvious repair — making our own `reach` a decision point — needs
-care on Mahjong Soul, where the bridge emits `reach` and the committing
-`dahai` together.
+If that resolution fails (the bot answers with something other than a
+dahai, or the follow-up errors), the plan still sees a bare `reach` and
+declines the declaration whole rather than pressing the button half:
+pressing it without a tile to follow is worse than not pressing it, because
+at clock expiry the *client* completes the riichi itself by throwing the
+drawn tile, committing the hand to a wait the bot never chose. The same
+refusal applies when the tracked hand cannot produce the tile the bot
+named.
 
 ### Still to verify against a live game
 

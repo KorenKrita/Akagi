@@ -80,6 +80,17 @@ pub struct BotManager {
     pending: Vec<MjaiEvent>,
     /// Bot's seat in the current game; set on `start_game`.
     actor_id: Option<u8>,
+    /// One-shot: drop the next own-seat bridge `reach` echo before it is
+    /// fed to the runner. Set after an autoplay reach follow-up (see
+    /// [`Self::handle_tracked`]) has already fed this runner a synthetic
+    /// `reach` to resolve the declaring discard; the bridge's later real
+    /// reach echo for the same declaration would otherwise be a *second*
+    /// `reach` and desync a stateful bot. The tracker and history still see
+    /// the echo on their own bus subscriptions — only the runner's view is
+    /// deduplicated. Cleared when consumed, or on any kyoku/game boundary so
+    /// a lost declaration (whose echo never arrives) can't leak the flag
+    /// into the next hand.
+    drop_next_own_reach: bool,
     out_tx: BotResponseBus,
     status_tx: BotStatusBus,
     notify_tx: NotifyBus,
@@ -114,6 +125,7 @@ impl BotManager {
             runner: None,
             pending: Vec::new(),
             actor_id: None,
+            drop_next_own_reach: false,
             out_tx,
             status_tx,
             notify_tx,
@@ -178,6 +190,18 @@ impl BotManager {
     /// Drive one tracked event through the manager.
     pub async fn handle_tracked(&mut self, tracked: TrackedEvent) -> Result<()> {
         let TrackedEvent { event, can_act } = tracked;
+        // Kyoku/game boundaries clear the one-shot reach-echo drop: a lost
+        // declaration never produces the echo it was waiting for, so the flag
+        // must not survive into the next hand and eat a real reach there.
+        if matches!(
+            event,
+            MjaiEvent::StartGame { .. }
+                | MjaiEvent::StartKyoku { .. }
+                | MjaiEvent::EndKyoku
+                | MjaiEvent::EndGame { .. }
+        ) {
+            self.drop_next_own_reach = false;
+        }
         // Spawn the runner the moment we see the bot's seat in start_game.
         if let MjaiEvent::StartGame {
             id: Some(seat),
@@ -219,11 +243,35 @@ impl BotManager {
             return Ok(());
         }
 
+        // Deduplicate the bridge's own-seat reach echo when an autoplay
+        // follow-up already fed this runner a synthetic reach for the same
+        // declaration (see the follow-up below and #257). Only the runner's
+        // view is affected; the tracker/history saw the echo on their own
+        // subscriptions.
+        if self.drop_next_own_reach {
+            if let MjaiEvent::Reach { actor, .. } = &event {
+                if Some(*actor) == self.actor_id {
+                    self.drop_next_own_reach = false;
+                    debug!(
+                        "bot manager: dropped duplicate bridge reach echo for seat {actor} \
+                         (already resolved via autoplay follow-up)"
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         self.pending.push(event.clone());
 
         if !self.is_decision_point(&event, can_act) {
             return Ok(());
         }
+
+        // Read once, before borrowing the runner: whether autoplay is on
+        // gates the reach follow-up below. Runtime-toggled — the same flag
+        // the autoplay manager re-reads on every response.
+        let autoplay_enabled = self.config.read().await.autoplay.enabled;
+        let our_seat = self.actor_id;
 
         let runner = self
             .runner
@@ -231,7 +279,7 @@ impl BotManager {
             .expect("runner is Some — checked above");
         let batch = std::mem::take(&mut self.pending);
         let started = Instant::now();
-        let resp = match runner.react(&batch).await {
+        let mut resp = match runner.react(&batch).await {
             Ok(r) => r,
             Err(e) => {
                 let err_str = format!("{e:#}");
@@ -245,6 +293,59 @@ impl BotManager {
             }
         };
         let reaction_ms = started.elapsed().as_millis() as u64;
+
+        // Autoplay reach follow-up (#257). A bot that declares riichi as
+        // plain mjai — `reach` with no `pai` — leaves the declaring discard
+        // unresolved, and Majsoul fuses declaration + discard into one action
+        // so autoplay needs the tile up front. Ask the same runner for it now
+        // by feeding it the reach, exactly as the mjai protocol prescribes
+        // (declare → the engine echoes reach → the bot answers with the
+        // dahai). This is what the built-in native bot already does
+        // internally; here it is generalised to any runner.
+        //
+        // Gated on autoplay because the follow-up mutates a stateful bot's
+        // state as though riichi were declared. Under autoplay we commit that
+        // declaration, so it holds; in analysis mode the human may decline,
+        // and a speculative reach that never happens would desync the bot.
+        // The bridge's later real reach echo for this declaration is dropped
+        // from the runner's view (`drop_next_own_reach`) so it isn't a second
+        // reach.
+        let mut did_reach_followup = false;
+        if autoplay_enabled {
+            if let MjaiEvent::Reach { pai: None, .. } = &resp.action {
+                if let Some(seat) = our_seat {
+                    let reach_ev = MjaiEvent::Reach {
+                        actor: seat,
+                        pai: None,
+                    };
+                    match runner.react(std::slice::from_ref(&reach_ev)).await {
+                        Ok(follow) => match follow.action {
+                            MjaiEvent::Dahai { pai, .. } => {
+                                resp.action = MjaiEvent::Reach {
+                                    actor: seat,
+                                    pai: Some(pai),
+                                };
+                                did_reach_followup = true;
+                            }
+                            other => warn!(
+                                "bot manager: reach follow-up returned {other:?}, not a dahai; \
+                                 leaving the reach unresolved (autoplay will decline it)"
+                            ),
+                        },
+                        Err(e) => warn!(
+                            "bot manager: reach follow-up react failed ({e:#}); \
+                             leaving the reach unresolved"
+                        ),
+                    }
+                }
+            }
+        }
+        // The follow-up fed the runner a reach; drop the bridge's later echo
+        // of the same declaration so a stateful bot doesn't apply reach twice.
+        if did_reach_followup {
+            self.drop_next_own_reach = true;
+        }
+
         debug!(action = ?resp.action, meta = ?resp.meta, reaction_ms, "bot reacted");
         // Inspector record: pair the trigger event (the last item in the
         // batch is the one that crossed the decision-point threshold)
@@ -1488,5 +1589,173 @@ mod tests {
             .expect("manager exited")
             .expect("join")
             .expect("Ok");
+    }
+
+    // ---- #257: autoplay reach follow-up for plain-mjai bots ----------------
+
+    fn reach_none(actor: u8) -> BotResponse {
+        BotResponse {
+            action: MjaiEvent::Reach { actor, pai: None },
+            meta: None,
+        }
+    }
+
+    fn dahai_reply(actor: u8, pai: &str) -> BotResponse {
+        BotResponse {
+            action: MjaiEvent::Dahai {
+                actor,
+                pai: pai.into(),
+                tsumogiri: false,
+            },
+            meta: None,
+        }
+    }
+
+    fn our_tsumo() -> MjaiEvent {
+        MjaiEvent::Tsumo {
+            actor: 2,
+            pai: "3p".into(),
+        }
+    }
+
+    /// A stateful third-party bot declares riichi as plain mjai (`reach` with
+    /// no `pai`). Under autoplay the manager resolves the declaring discard by
+    /// feeding the runner a synthetic reach, fills `pai`, and then drops the
+    /// bridge's own-seat reach echo so the runner never sees a second reach.
+    #[tokio::test]
+    async fn autoplay_reach_followup_fills_pai_and_dedups_bridge_echo() {
+        let (mut mgr, calls, mut resp_rx, _, _) =
+            manager_with_mock(vec![reach_none(2), dahai_reply(2, "3p")]);
+        mgr.config.write().await.autoplay.enabled = true;
+
+        // Own draw → decision point → bot declares bare reach → follow-up.
+        mgr.handle(our_tsumo()).await.unwrap();
+
+        {
+            let c = calls.lock().await;
+            assert_eq!(c.len(), 2, "tsumo react + reach follow-up react");
+            assert!(matches!(c[0].as_slice(), [MjaiEvent::Tsumo { .. }]));
+            assert!(
+                matches!(
+                    c[1].as_slice(),
+                    [MjaiEvent::Reach {
+                        actor: 2,
+                        pai: None
+                    }]
+                ),
+                "follow-up feeds the runner the reach"
+            );
+        }
+
+        let emitted = resp_rx.try_recv().expect("a bot response");
+        assert!(
+            matches!(emitted.action, MjaiEvent::Reach { actor: 2, pai: Some(ref t) } if t == "3p"),
+            "the emitted reach carries the resolved riichi tile"
+        );
+        assert!(
+            mgr.drop_next_own_reach,
+            "the bridge echo is now armed to drop"
+        );
+
+        // The bridge's later reach echo for our seat must not reach the runner.
+        mgr.handle(MjaiEvent::Reach {
+            actor: 2,
+            pai: None,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            calls.lock().await.len(),
+            2,
+            "bridge reach echo dropped — no third react call"
+        );
+        assert!(!mgr.drop_next_own_reach, "drop flag consumed by the echo");
+    }
+
+    /// Analysis mode (autoplay off): the bare reach is forwarded unchanged and
+    /// the bridge echo is NOT dropped — mutating a stateful bot with a
+    /// speculative reach the human may decline is exactly what we must avoid.
+    #[tokio::test]
+    async fn analysis_mode_leaves_bare_reach_and_forwards_bridge_echo() {
+        let (mut mgr, calls, mut resp_rx, _, _) = manager_with_mock(vec![reach_none(2)]);
+        // autoplay.enabled stays false (default).
+
+        mgr.handle(our_tsumo()).await.unwrap();
+        assert_eq!(
+            calls.lock().await.len(),
+            1,
+            "no reach follow-up when autoplay is off"
+        );
+        let emitted = resp_rx.try_recv().expect("a bot response");
+        assert!(
+            matches!(
+                emitted.action,
+                MjaiEvent::Reach {
+                    actor: 2,
+                    pai: None
+                }
+            ),
+            "bare reach forwarded unchanged"
+        );
+        assert!(!mgr.drop_next_own_reach);
+
+        // Bridge reach echo is buffered for the runner, not eaten.
+        mgr.handle(MjaiEvent::Reach {
+            actor: 2,
+            pai: None,
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls.lock().await.len(), 1, "reach is not a decision point");
+        assert!(
+            mgr.pending
+                .iter()
+                .any(|e| matches!(e, MjaiEvent::Reach { actor: 2, .. })),
+            "echo buffered for the next flush, not dropped"
+        );
+    }
+
+    /// A bot that pre-fills `pai` (the built-in native bot, or a V3-aware
+    /// bot) needs no follow-up even under autoplay, and arms no echo drop.
+    #[tokio::test]
+    async fn autoplay_prefilled_reach_pai_skips_followup() {
+        let prefilled = BotResponse {
+            action: MjaiEvent::Reach {
+                actor: 2,
+                pai: Some("3p".into()),
+            },
+            meta: None,
+        };
+        let (mut mgr, calls, mut resp_rx, _, _) = manager_with_mock(vec![prefilled]);
+        mgr.config.write().await.autoplay.enabled = true;
+
+        mgr.handle(our_tsumo()).await.unwrap();
+        assert_eq!(
+            calls.lock().await.len(),
+            1,
+            "pre-filled pai needs no follow-up"
+        );
+        let emitted = resp_rx.try_recv().expect("a bot response");
+        assert!(
+            matches!(emitted.action, MjaiEvent::Reach { actor: 2, pai: Some(ref t) } if t == "3p")
+        );
+        assert!(
+            !mgr.drop_next_own_reach,
+            "no follow-up ran, so the bridge echo must still reach the runner"
+        );
+    }
+
+    /// Leak guard: a declaration whose reach press is lost never produces the
+    /// echo the drop flag waits for, so a kyoku/game boundary must clear it or
+    /// it would eat the next hand's real reach.
+    #[tokio::test]
+    async fn stale_reach_drop_flag_clears_on_kyoku_boundary() {
+        let (mut mgr, _calls, _, _, _) = manager_with_mock(vec![]);
+        mgr.drop_next_own_reach = true;
+        mgr.handle(MjaiEvent::EndKyoku).await.unwrap();
+        assert!(
+            !mgr.drop_next_own_reach,
+            "a kyoku boundary clears a stale drop flag"
+        );
     }
 }

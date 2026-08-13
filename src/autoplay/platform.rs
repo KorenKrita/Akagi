@@ -56,21 +56,6 @@ pub enum Step {
     Discard { tile_index: u32 },
 }
 
-/// State machine for handling Majsoul's fused reach+discard: the platform
-/// emits one reach action that combines the declaration and the discard,
-/// so we click reach first, await the bot's follow-up `Dahai`, then click
-/// the discard tile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ReachState {
-    #[default]
-    Idle,
-    /// Path B: we clicked the reach button and injected a synthetic
-    /// `Reach` event into MjaiBus. The next `Dahai` from the bot is the
-    /// riichi tile and must be clicked even though the bot didn't pre-fill
-    /// `Reach.pai`.
-    AwaitingDahai,
-}
-
 /// Everything the platform impl needs to translate one bot decision
 /// into a concrete click sequence.
 pub struct ActionContext<'a> {
@@ -99,8 +84,6 @@ pub struct ActionContext<'a> {
     /// kyoku ends. While set, dahai clicks are suppressed (Majsoul auto-
     /// discards in riichi mode).
     pub self_riichi_accepted: bool,
-    /// Reach two-step state (see [`ReachState`]).
-    pub reach_state: ReachState,
     /// 3 (sanma) or 4 (yonma).
     pub num_players: u8,
     /// Per-platform config knobs (delays, mouse-move emission, ...).
@@ -124,25 +107,16 @@ pub struct ActionContext<'a> {
     pub tenhou: Option<&'a crate::autoplay::tenhou_state::TenhouState>,
 }
 
-/// Output of `PlatformAutoplay::plan`. Captures both the click sequence
-/// and the side-effect signal the manager needs to fulfil Path B reach
-/// (inject a synthetic `Reach` event back to MjaiBus so the bot emits
-/// the follow-up dahai).
+/// Output of `PlatformAutoplay::plan`: the click sequence to execute.
+///
+/// The riichi declaring discard is always resolved before the plan is
+/// built — the bot fills `Reach.pai` (natively or via the manager's
+/// autoplay reach follow-up, see `bot::manager` and #257) — so both
+/// platforms declare and discard in a single plan; there is no
+/// bus-injection follow-up path.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PlanResult {
     pub steps: Vec<Step>,
-    /// When `true`, the manager should send a synthetic
-    /// `MjaiEvent::Reach { actor: our_seat, pai: None }` onto MjaiBus
-    /// after the steps run, and transition `ReachState` to
-    /// `AwaitingDahai`. Set only when the bot's `Reach` event omits
-    /// `pai` and the platform needs a follow-up dahai.
-    pub inject_reach_for_followup: bool,
-    /// When `true`, the plan declared riichi without throwing the tile, so
-    /// the next bot Dahai for our seat is that tile and should be performed
-    /// even though the manager has flipped its `self_riichi_accepted` gate.
-    /// Only reached when the bot's `Reach` names no `pai` — with one, both
-    /// platforms declare and discard in a single plan.
-    pub awaiting_riichi_dahai: bool,
 }
 
 pub trait PlatformAutoplay: Send + Sync {
