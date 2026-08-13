@@ -408,6 +408,17 @@ async fn rewrite_paused_script(
             match FulfillRequestParams::builder()
                 .request_id(request_id.clone())
                 .response_code(200)
+                // A fulfilled response carries none of the original headers.
+                // Today the browser sniffs the missing type and executes
+                // anyway, but one `X-Content-Type-Options: nosniff` on
+                // tenhou.net's side would turn that into a blocked script —
+                // so say what it is.
+                .response_header(
+                    chromiumoxide::cdp::browser_protocol::fetch::HeaderEntry::new(
+                        "Content-Type",
+                        "text/javascript",
+                    ),
+                )
                 .body(encoded)
                 .build()
             {
@@ -453,6 +464,15 @@ async fn attach_page(
     page.execute(NetworkEnableParams::default())
         .await
         .context("Network.enable")?;
+    // The pause listener has to exist before `Fetch.enable` arms the
+    // interceptor: a request paused with no listener yet is a request nobody
+    // ever continues, and the page hangs on it. The stream buffers
+    // (unbounded) until the routing task below starts polling, so
+    // subscribing early costs nothing.
+    let mut on_paused = page
+        .event_listener::<chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused>()
+        .await
+        .context("subscribe requestPaused")?;
     // Instrument the Tenhou client on its way in. Scoped to that one script
     // so nothing else on the page is paused; a failure to enable is logged
     // and the session continues without a discard path.
@@ -488,10 +508,6 @@ async fn attach_page(
         .event_listener::<EventResponseReceived>()
         .await
         .context("subscribe responseReceived")?;
-    let mut on_paused = page
-        .event_listener::<chromiumoxide::cdp::browser_protocol::fetch::EventRequestPaused>()
-        .await
-        .context("subscribe requestPaused")?;
 
     let handle = tokio::spawn(async move {
         loop {
