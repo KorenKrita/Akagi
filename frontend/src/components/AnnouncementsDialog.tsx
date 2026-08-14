@@ -15,7 +15,6 @@ import { cn } from '@/lib/utils'
 import { type AnnouncementEntry } from '@/announcements/entries'
 import { useAnnouncementStore } from '@/stores/announcementStore'
 import { AKAGI_GITHUB_URL, openExternal } from '@/lib/external'
-import { getAppVersion } from '@/lib/appVersion'
 
 // Delay so the announcements don't pop over the very first paint; keeps
 // them clear of the UpdateNotifier toast (3s), which stacks fine next to
@@ -44,19 +43,11 @@ export function AnnouncementsDialog() {
   useEffect(() => {
     if (fired.current) return
     fired.current = true
-    let timer: number | undefined
-    let cancelled = false
-    getAppVersion().then((version) => {
-      if (cancelled) return
-      if (!useAnnouncementStore.getState().prepareLaunch(version)) return
-      timer = window.setTimeout(() => {
-        useAnnouncementStore.getState().showLaunch()
-      }, OPEN_DELAY_MS)
-    })
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
+    if (!useAnnouncementStore.getState().prepareLaunch()) return
+    const timer = window.setTimeout(() => {
+      useAnnouncementStore.getState().showLaunch()
+    }, OPEN_DELAY_MS)
+    return () => window.clearTimeout(timer)
   }, [])
 
   return (

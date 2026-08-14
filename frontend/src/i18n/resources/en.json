@@ -170,7 +170,8 @@
     "expand": "Expand sidebar",
     "pin": "Pin sidebar",
     "openMenu": "Open navigation",
-    "closeMenu": "Close navigation"
+    "closeMenu": "Close navigation",
+    "announcements": "Announcements"
   },
   "tile": {
     "header": "Game",
@@ -768,12 +769,18 @@
       "settings_button": "Announcements"
     },
     "entries": {
+      "v3_6_0": {
+        "title": "Tenhou autoplay & selectable update sources",
+        "tenhou_autoplay_title": "Tenhou autoplay",
+        "tenhou_autoplay_desc": "Let Akagi play your turns on Tenhou automatically — discards, calls and riichi, all hands-free.",
+        "update_source_title": "Choose your update source",
+        "update_source_desc": "The auto-updater now lets you pick where downloads come from, with a mirror option for faster, more reliable updates where GitHub is slow."
+      },
       "v3_5_0": {
-        "title": "In-app purchases: Alipay, Apple Pay, Google Pay & MJOT branding",
-        "mjot_title": "MJOT cloud AI",
-        "mjot_desc": "The online inference service is now MJOT, with a fresh look and clearer status across the app.",
+        "title": "In-app purchases: Alipay, Apple Pay, Google Pay",
+        "image_alt": "The MJOT cloud AI logo",
         "checkout_title": "In-app checkout",
-        "checkout_desc": "Buy or renew MJOT time without leaving the app — card, Google Pay, Apple Pay and Alipay, with PayPal still available.",
+        "checkout_desc": "Buy or renew MJOT time without leaving the app — card, Google Pay, Apple Pay and Alipay.",
         "health_title": "Smarter renewals & health checks",
         "health_desc": "Renewals extend your current key by default, and the service health check now reports queue depth and degraded states."
       },

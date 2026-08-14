@@ -4,10 +4,11 @@ Bundled announcement entries shown by `<AnnouncementsDialog />` as a
 collapsible list (one row per entry with a one-line title; the newest row
 starts expanded). Two kinds of entry share the list:
 
-- **Release announcements** — carry a `version`; hidden while the running
-  build is older than that version.
-- **Product news** — no `version` (e.g. the AkagiMS launch); always
-  eligible.
+- **Release announcements** — carry a `version`, shown as a badge on the
+  row. The version is cosmetic and does **not** gate visibility: entries
+  are bundled into the build, so a client that can see an entry is already
+  on the matching release (or newer) — there is nothing to hide.
+- **Product news** — no `version` (e.g. the AkagiMS launch).
 
 On launch the dialog compares the entry dates against the persisted
 `akagi.announcement.lastSeen` baseline and shows every entry newer than

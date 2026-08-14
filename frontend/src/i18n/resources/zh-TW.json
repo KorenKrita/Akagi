@@ -170,7 +170,8 @@
     "expand": "展開側欄",
     "pin": "釘選側欄",
     "openMenu": "開啟導覽",
-    "closeMenu": "關閉導覽"
+    "closeMenu": "關閉導覽",
+    "announcements": "公告"
   },
   "tile": {
     "header": "對局",
@@ -768,12 +769,18 @@
       "settings_button": "公告"
     },
     "entries": {
+      "v3_6_0": {
+        "title": "天鳳自動打牌,更新來源可選擇",
+        "tenhou_autoplay_title": "天鳳自動打牌",
+        "tenhou_autoplay_desc": "讓 Akagi 在天鳳自動幫你出牌、鳴牌與立直,全程免動手。",
+        "update_source_title": "更新來源可選擇",
+        "update_source_desc": "自動更新現在可以選擇下載來源,並提供鏡像選項,在 GitHub 較慢的地區也能更快、更穩定地更新。"
+      },
       "v3_5_0": {
-        "title": "內購更新:支援支付寶、Apple Pay、Google Pay,MJOT 全新識別",
-        "mjot_title": "MJOT 雲端 AI",
-        "mjot_desc": "線上推理服務正式命名為 MJOT,全新品牌識別,狀態顯示更清楚。",
+        "title": "內購更新:支援支付寶、Apple Pay、Google Pay",
+        "image_alt": "MJOT 雲端 AI 標誌",
         "checkout_title": "應用程式內購買",
-        "checkout_desc": "不用離開應用程式即可購買或續期 MJOT 時數——支援信用卡、Google Pay、Apple Pay 與支付寶,PayPal 仍可使用。",
+        "checkout_desc": "不用離開應用程式即可購買或續期 MJOT 時數——支援信用卡、Google Pay、Apple Pay 與支付寶。",
         "health_title": "更聰明的續期與健康檢查",
         "health_desc": "續期預設加到目前的金鑰上,服務健康檢查現在會回報佇列深度與降載狀態。"
       },

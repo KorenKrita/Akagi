@@ -170,7 +170,8 @@
     "expand": "サイドバーを開く",
     "pin": "サイドバーを固定",
     "openMenu": "ナビゲーションを開く",
-    "closeMenu": "ナビゲーションを閉じる"
+    "closeMenu": "ナビゲーションを閉じる",
+    "announcements": "お知らせ"
   },
   "tile": {
     "header": "対局",
@@ -768,12 +769,18 @@
       "settings_button": "お知らせ"
     },
     "entries": {
+      "v3_6_0": {
+        "title": "天鳳の自動打牌と、アップデート取得元の選択",
+        "tenhou_autoplay_title": "天鳳の自動打牌",
+        "tenhou_autoplay_desc": "天鳳での打牌・鳴き・立直を Akagi が自動で行います。手を離していても対局が進みます。",
+        "update_source_title": "アップデート取得元の選択",
+        "update_source_desc": "自動アップデートのダウンロード元を選べるようになりました。GitHub が遅い地域向けのミラーも利用でき、より速く安定して更新できます。"
+      },
       "v3_5_0": {
-        "title": "アプリ内購入:Alipay・Apple Pay・Google Pay 対応、MJOT ブランド刷新",
-        "mjot_title": "MJOT クラウド AI",
-        "mjot_desc": "オンライン推論サービスは MJOT になり、表示や状態がアプリ全体で分かりやすくなりました。",
+        "title": "アプリ内購入:Alipay・Apple Pay・Google Pay 対応",
+        "image_alt": "MJOT クラウド AI のロゴ",
         "checkout_title": "アプリ内購入",
-        "checkout_desc": "アプリ内で MJOT の利用時間を購入・延長できます。カード / Google Pay / Apple Pay / Alipay に対応し、PayPal も引き続き利用できます。",
+        "checkout_desc": "アプリ内で MJOT の利用時間を購入・延長できます。カード / Google Pay / Apple Pay / Alipay に対応します。",
         "health_title": "更新とヘルスチェックの改善",
         "health_desc": "延長は既定で現在のキーに加算され、ヘルスチェックはキュー状況や性能低下を報告するようになりました。"
       },

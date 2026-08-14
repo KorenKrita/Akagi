@@ -1,8 +1,9 @@
 import type { LucideIcon } from 'lucide-react'
-import { AppWindow, Bot, CloudCog, CreditCard, Gamepad2, Sparkles, Zap } from 'lucide-react'
+import { AppWindow, Bot, CloudCog, CreditCard, Download, Gamepad2, Zap } from 'lucide-react'
 
 import { AKAGIMS_DOWNLOAD_URL } from '@/lib/external'
 import akagimsScreenshot from '@/assets/akagims-fullauto.jpg'
+import mjotlogodarkbg from '@/assets/mjot-logo-dark-bg.png'
 
 /** One feature highlight inside an announcement's expanded view. */
 export type AnnouncementFeature = {
@@ -24,10 +25,11 @@ export type AnnouncementEntry = {
    */
   date: string
   /**
-   * For release announcements: the exact Cargo.toml package version.
-   * Entries whose version is newer than the running build are hidden
-   * (an entry authored ahead of an upcoming release stays invisible
-   * until that build ships). Product news entries omit this.
+   * For release announcements: the exact Cargo.toml package version,
+   * rendered as a badge on the row. Product news entries omit this.
+   * Purely cosmetic — it does not gate visibility. Entries are bundled
+   * into the build, so a client that can see an entry is already on the
+   * matching release (or newer); there is nothing to hide.
    */
   version?: string
   /** Optional bundled image shown expanded; requires `<id>.image_alt`. */
@@ -45,11 +47,20 @@ export type AnnouncementEntry = {
  */
 export const ANNOUNCEMENTS: AnnouncementEntry[] = [
   {
+    id: 'v3_6_0',
+    date: '2026-08-14',
+    version: '3.6.0',
+    features: [
+      { icon: Bot, key: 'tenhou_autoplay' },
+      { icon: Download, key: 'update_source' },
+    ],
+  },
+  {
     id: 'v3_5_0',
     date: '2026-08-12',
     version: '3.5.0',
+    image: mjotlogodarkbg,
     features: [
-      { icon: Sparkles, key: 'mjot' },
       { icon: CreditCard, key: 'checkout' },
       { icon: CloudCog, key: 'health' },
     ],

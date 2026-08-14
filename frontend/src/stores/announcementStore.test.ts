@@ -46,7 +46,7 @@ describe('announcementStore', () => {
     localStorage.setItem(LAST_SEEN_KEY, '2026-08-12')
     const store = await freshStore([V360, V350, NEWS])
 
-    expect(store.getState().prepareLaunch('3.6.0')).toBe(true)
+    expect(store.getState().prepareLaunch()).toBe(true)
     expect(store.getState().launchShowPending).toBe(true)
     expect(store.getState().open).toBe(false)
     expect(store.getState().entries.map((e) => e.id)).toEqual(['v3_6_0'])
@@ -59,7 +59,7 @@ describe('announcementStore', () => {
     localStorage.setItem(LAST_SEEN_KEY, '2026-08-01')
     const store = await freshStore([V360, V350, NEWS])
 
-    store.getState().prepareLaunch('3.6.0')
+    store.getState().prepareLaunch()
     expect(store.getState().entries.map((e) => e.id)).toEqual([
       'v3_6_0',
       'v3_5_0',
@@ -71,7 +71,7 @@ describe('announcementStore', () => {
     localStorage.setItem(LAST_SEEN_KEY, '2026-09-01')
     const store = await freshStore([V360, V350, NEWS])
 
-    expect(store.getState().prepareLaunch('3.6.0')).toBe(false)
+    expect(store.getState().prepareLaunch()).toBe(false)
     expect(store.getState().launchShowPending).toBe(false)
     store.getState().showLaunch()
     expect(store.getState().open).toBe(false)
@@ -79,7 +79,7 @@ describe('announcementStore', () => {
 
   it('records the newest shown entry as seen on close, across restarts', async () => {
     const store = await freshStore([V360, V350, NEWS])
-    store.getState().prepareLaunch('3.6.0')
+    store.getState().prepareLaunch()
     store.getState().showLaunch()
     store.getState().close()
 
@@ -91,26 +91,31 @@ describe('announcementStore', () => {
     // decide there is nothing left to show.
     const restarted = await freshStore([V360, V350, NEWS])
     expect(restarted.getState().lastSeenDate).toBe('2026-09-01')
-    expect(restarted.getState().prepareLaunch('3.6.0')).toBe(false)
+    expect(restarted.getState().prepareLaunch()).toBe(false)
   })
 
-  it('never moves the baseline backwards on a downgraded build', async () => {
-    localStorage.setItem(LAST_SEEN_KEY, '2026-09-01')
+  it('never moves the baseline backwards on close', async () => {
+    // Baseline sits ahead of every bundled entry (e.g. a future-dated
+    // manual override). Opening history shows the full list, but closing
+    // it must not drag the baseline back to the newest entry's date.
+    localStorage.setItem(LAST_SEEN_KEY, '2099-01-01')
     const store = await freshStore([V360, V350, NEWS])
 
-    // Running 3.5.0 after having seen everything on 3.6.0: history shows
-    // the older eligible entries, but closing must not regress the baseline.
-    expect(store.getState().prepareLaunch('3.5.0')).toBe(false)
+    expect(store.getState().prepareLaunch()).toBe(false)
     store.getState().openHistory()
-    expect(store.getState().entries.map((e) => e.id)).toEqual(['v3_5_0', 'news'])
+    expect(store.getState().entries.map((e) => e.id)).toEqual([
+      'v3_6_0',
+      'v3_5_0',
+      'news',
+    ])
     store.getState().close()
-    expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('2026-09-01')
+    expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('2099-01-01')
   })
 
-  it('history mode shows everything eligible, launch state untouched', async () => {
+  it('history mode shows every entry, launch state untouched', async () => {
     localStorage.setItem(LAST_SEEN_KEY, '2026-09-01')
     const store = await freshStore([V360, V350, NEWS])
-    store.getState().prepareLaunch('3.6.0')
+    store.getState().prepareLaunch()
 
     store.getState().openHistory()
     expect(store.getState().open).toBe(true)

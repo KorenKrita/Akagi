@@ -170,7 +170,8 @@
     "expand": "展开侧栏",
     "pin": "钉住侧栏",
     "openMenu": "打开导航",
-    "closeMenu": "关闭导航"
+    "closeMenu": "关闭导航",
+    "announcements": "公告"
   },
   "tile": {
     "header": "对局",
@@ -768,12 +769,18 @@
       "settings_button": "公告"
     },
     "entries": {
+      "v3_6_0": {
+        "title": "天凤自动打牌,更新来源可选择",
+        "tenhou_autoplay_title": "天凤自动打牌",
+        "tenhou_autoplay_desc": "让 Akagi 在天凤自动帮你出牌、鸣牌与立直,全程免动手。",
+        "update_source_title": "更新来源可选择",
+        "update_source_desc": "自动更新现在可以选择下载来源,并提供镜像选项,在 GitHub 较慢的地区也能更快、更稳定地更新。"
+      },
       "v3_5_0": {
-        "title": "内购更新:支持支付宝、Apple Pay、Google Pay,MJOT 全新标识",
-        "mjot_title": "MJOT 云端 AI",
-        "mjot_desc": "在线推理服务正式命名为 MJOT,全新品牌标识,状态显示更清晰。",
+        "title": "内购更新:支持支付宝、Apple Pay、Google Pay",
+        "image_alt": "MJOT 云端 AI 标识",
         "checkout_title": "应用内购买",
-        "checkout_desc": "无需离开应用即可购买或续期 MJOT 时长——支持银行卡、Google Pay、Apple Pay 和支付宝,PayPal 仍然可用。",
+        "checkout_desc": "无需离开应用即可购买或续期 MJOT 时长——支持支付宝、银行卡、Apple Pay和Google Pay。",
         "health_title": "更聪明的续期与健康检查",
         "health_desc": "续期默认累加到当前密钥上,服务健康检查现在会报告队列深度和降级状态。"
       },
