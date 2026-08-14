@@ -97,6 +97,7 @@ async fn loopback_connect_is_refused_without_blocking() {
         addr: format!("127.0.0.1:{port}"),
         ca_dir: tmp.path().join("ca"),
         rewrite_certificate_report: true,
+        block_telemetry: true,
     };
 
     let notify = notify_bus();

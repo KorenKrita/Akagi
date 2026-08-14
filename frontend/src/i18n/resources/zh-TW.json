@@ -301,6 +301,8 @@
     "capture_chromium_option": "Chromium 瀏覽器(實驗性)",
     "capture_mitm_only": "此平台沒有網頁用戶端 — 僅支援 MITM 擷取。",
     "proxy_enabled": "啟用代理",
+    "block_telemetry": "封鎖遊戲遙測",
+    "block_telemetry_hint": "丟棄遊戲送往阿里雲的分析遙測封包而不轉發,讓登入統計、裝置與帳號識別碼完全不離開你的電腦。許多廣告攔截器本來就會封鎖這個主機,因此缺少遙測封包並不代表使用了工具。預設開啟。",
     "ca_dir_hint": "CA 根憑證／金鑰寫入的目錄。",
     "browser_executable": "瀏覽器執行檔",
     "browser_executable_hint": "留空以自動偵測。",

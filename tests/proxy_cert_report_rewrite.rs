@@ -203,6 +203,9 @@ async fn the_report_that_leaves_describes_the_origin_not_akagi() {
             addr: format!("127.0.0.1:{proxy_port}"),
             ca_dir: tmp.path().join("ca"),
             rewrite_certificate_report: true,
+            // This test exercises the rewrite path, which only runs when the
+            // beacon is actually forwarded — so blocking must be off here.
+            block_telemetry: false,
         },
         HttpCaptureConfig::default(),
         Platform::Majsoul,

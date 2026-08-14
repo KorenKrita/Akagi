@@ -44,6 +44,7 @@ Lives under `[proxy]` in `config.toml`:
 enabled = true
 addr = "127.0.0.1:23410"
 ca_dir = "./ca"
+block_telemetry = true
 ```
 
 ## HTTP capture
@@ -118,6 +119,36 @@ the correction is still complete after a client update. MITM-only; a
 browser cannot report peer certificates at all, so the chromium backend
 has nothing to correct. Covered by `tests/proxy_cert_report_rewrite.rs`,
 which stands up a real TLS origin and asserts on what left the machine.
+
+## Telemetry beacons are blocked
+
+The game clients report on themselves through Aliyun SLS **web-tracking**
+beacons — fire-and-forget requests to `*.log.aliyuncs.com/logstores/<store>/track`
+carrying login stats, game status, and device / account identifiers (the
+`certificate_info` beacon above is one of these). `handle_request` drops
+every one the recognizer matches instead of forwarding it, answering the
+client with the same empty `200` the real endpoint returns —
+`handler.rs::block_telemetry_beacon`.
+
+We used to forward them on the theory that a *missing* beacon might itself
+be a signal. It is not: many ad blockers already block that host, so a
+missing beacon is indistinguishable from an ad-blocked one. Dropping them
+keeps that data from leaving the machine at all.
+
+Blocking takes precedence over the certificate-report correction above:
+when it is on, the `certificate_info` beacon is dropped along with every
+other beacon, so there is nothing left to rewrite — and nothing that could
+leak Akagi's CA in the window before the genuine upstream certificate has
+been observed. The drop is still recorded on the timeline (`akagi_blocked`
+plus the beacon's own `sls_beacon` annotation): an announced gap is not a
+blind spot.
+
+Switched by `[proxy] block_telemetry` (default **on**). Turn it off to
+forward the beacons — the certificate report is then corrected instead of
+dropped. MITM-only; the chromium backend intercepts nothing to drop.
+Covered by `tests/proxy_telemetry_block.rs`, which asserts a beacon is
+answered locally and never reaches the upstream while ordinary traffic
+still forwards.
 
 ## Adding traffic interception
 

@@ -23,9 +23,12 @@ annotation from its `kind` / `summary` / `data` without knowing what produced it
 
 When the proxy declines to intercept something, that decision is recorded as an
 annotation on the CONNECT (`akagi_bypass`), and a response we could not attribute
-to a request is marked too (`akagi_unpaired`). A blind spot that announces itself
-is not a blind spot — a timeline that silently omits what we could not see is
-indistinguishable from one where the game never sent it.
+to a request is marked too (`akagi_unpaired`). When the proxy *drops* a request
+instead of forwarding it — an Aliyun SLS telemetry beacon, when `block_telemetry`
+is on — that too is recorded (`akagi_blocked`), alongside the beacon's own
+`sls_beacon` annotation so the timeline still shows what was dropped. A blind spot
+that announces itself is not a blind spot — a timeline that silently omits what we
+could not see is indistinguishable from one where the game never sent it.
 
 ## Adding a recognizer
 

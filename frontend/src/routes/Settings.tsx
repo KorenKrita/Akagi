@@ -1178,6 +1178,14 @@ function CaptureCard({
                 onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, ca_dir: e.target.value } })}
               />
             </Field>
+            <Toggle
+              label={t('settings.block_telemetry')}
+              value={draft.proxy.block_telemetry}
+              onChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, block_telemetry: v } })}
+            />
+            <span className="text-xs text-muted-foreground">
+              {t('settings.block_telemetry_hint')}
+            </span>
           </>
         )}
 
