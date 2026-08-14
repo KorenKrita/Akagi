@@ -153,6 +153,12 @@ pub struct Harness {
 
 impl Harness {
     pub async fn start(http_cfg: HttpCaptureConfig) -> Self {
+        // Existing capture tests want beacons forwarded and recorded, so the
+        // default harness leaves blocking off. `start_with` opts in.
+        Self::start_with(http_cfg, false).await
+    }
+
+    pub async fn start_with(http_cfg: HttpCaptureConfig, block_telemetry: bool) -> Self {
         let tmp = TempDir::new().expect("tempdir");
         let session = Arc::new(
             Session::init(&tmp.path().join("logs"), "info", "info", &[]).expect("session"),
@@ -165,6 +171,7 @@ impl Harness {
             addr: format!("127.0.0.1:{proxy_port}"),
             ca_dir: tmp.path().join("ca"),
             rewrite_certificate_report: true,
+            block_telemetry,
         };
         let (stop, stop_rx) = oneshot::channel::<()>();
         let task = tokio::spawn(start_proxy(

@@ -86,6 +86,9 @@ pub struct ProxyHandler {
     /// Whether to correct the client's certificate report. See
     /// `rewrite::majsoul_cert`.
     rewrite_cert_report: bool,
+    /// Whether to drop the game's Aliyun SLS telemetry beacons instead of
+    /// forwarding them. See `block_telemetry_beacon`.
+    block_telemetry: bool,
 }
 
 impl ProxyHandler {
@@ -102,6 +105,7 @@ impl ProxyHandler {
         http_policy: HttpCapturePolicy,
         certs: Arc<CertStore>,
         rewrite_cert_report: bool,
+        block_telemetry: bool,
     ) -> anyhow::Result<Self> {
         let binary = session.binary_logger("proxy")?;
         let inspector = session.inspector();
@@ -121,6 +125,7 @@ impl ProxyHandler {
             pairing: Arc::new(ExchangePairing::default()),
             certs,
             rewrite_cert_report,
+            block_telemetry,
         })
     }
 
@@ -184,6 +189,83 @@ impl ProxyHandler {
             source: CaptureSource::Mitm,
             exchange,
         });
+    }
+
+    /// Drop an Aliyun SLS web-tracking beacon instead of forwarding it, and
+    /// record the drop on the timeline.
+    ///
+    /// Returns the synthetic response to answer the client with when `req`
+    /// is such a beacon, or `None` for ordinary traffic that must be
+    /// forwarded unchanged. The recognizer is the same path-based one the
+    /// annotator uses, so anything the timeline would label `sls_beacon` is
+    /// exactly what gets blocked.
+    ///
+    /// The genuine endpoint answers `200` with an empty body, so that is
+    /// what we return — indistinguishable from an ad blocker or the real
+    /// server, and the client fires these fire-and-forget so it never reads
+    /// the reply anyway. The drop is still recorded (with the beacon's own
+    /// annotation plus an `akagi_blocked` marker): an annotated gap is not a
+    /// gap, exactly as with the raw-tunnel bypass in `should_intercept`.
+    fn block_telemetry_beacon(&self, req: &Request<Body>) -> Option<Response<Body>> {
+        annotate::sls::parse_uri(req.uri())?;
+
+        let method = req.method().to_string();
+        let url = req.uri().to_string();
+        let host = req
+            .uri()
+            .host()
+            .map(str::to_string)
+            .or_else(|| {
+                req.headers()
+                    .get(hyper::header::HOST)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|h| h.split(':').next().unwrap_or(h).to_string())
+            })
+            .unwrap_or_default();
+        let headers = httpcap::headers_of(req.headers());
+
+        // Keep the beacon's own annotation so the timeline still shows what
+        // it was (logstore, log_category, params), then mark that Akagi
+        // dropped it rather than forwarded it.
+        let mut annotations =
+            annotate::annotate_request(&RequestView::new(&method, &url, &headers));
+        annotations.push(HttpAnnotation {
+            kind: "akagi_blocked".to_string(),
+            summary: "telemetry blocked — not forwarded".to_string(),
+            data: serde_json::json!({
+                "reason": "Aliyun SLS web-tracking beacon dropped before it left the machine; \
+                           many ad blockers block this host too, so a missing beacon is not a signal",
+            }),
+        });
+
+        info!(
+            target: "akagi::proxy::http",
+            "blocked telemetry beacon on {host}: {url}",
+        );
+
+        self.inspector.record(InspectorEntry::Http {
+            ts_ms: Local::now().timestamp_millis(),
+            source: CaptureSource::Mitm,
+            exchange: HttpExchange {
+                exchange_id: None,
+                phase: HttpPhase::Request,
+                method,
+                url,
+                host,
+                version: format!("{:?}", req.version()),
+                status: None,
+                headers,
+                body: None,
+                annotations,
+            },
+        });
+
+        Some(
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::empty())
+                .expect("static telemetry-block response must build"),
+        )
     }
 
     /// Substitute the genuine upstream certificates into a Mahjong Soul
@@ -404,6 +486,15 @@ impl HttpHandler for ProxyHandler {
                 .body(Body::empty())
                 .expect("Failed to build loopback CONNECT refusal")
                 .into();
+        }
+
+        // Telemetry blocking comes first: a dropped beacon is never
+        // forwarded, so there is nothing left for the rewrite below to
+        // correct. See `block_telemetry_beacon`.
+        if self.block_telemetry {
+            if let Some(resp) = self.block_telemetry_beacon(&req) {
+                return resp.into();
+            }
         }
 
         // The one place Akagi deliberately changes what it forwards: the

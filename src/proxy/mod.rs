@@ -58,6 +58,7 @@ where
         http_cfg.policy(),
         certs.clone(),
         config.rewrite_certificate_report,
+        config.block_telemetry,
     )?;
 
     info!("Starting proxy on {addr}");

@@ -15,7 +15,7 @@ function makeConfig(over: {
     },
     logging: { dir: '', level: 'info', all_level: 'warn' },
     platform: { kind: over.platform ?? 'Majsoul' },
-    proxy: { enabled: true, addr: '127.0.0.1:23410', ca_dir: '' },
+    proxy: { enabled: true, addr: '127.0.0.1:23410', ca_dir: '', block_telemetry: true },
     bot: {
       enabled: true,
       active_4p: 'akagi-native',
