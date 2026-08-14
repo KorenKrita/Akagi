@@ -170,7 +170,8 @@
     "expand": "Expand sidebar",
     "pin": "Pin sidebar",
     "openMenu": "Open navigation",
-    "closeMenu": "Close navigation"
+    "closeMenu": "Close navigation",
+    "announcements": "Announcements"
   },
   "tile": {
     "header": "Game",
@@ -754,22 +755,48 @@
   },
   "announcements": {
     "akagims": {
-      "title": "Meet AkagiMS — built for Mahjong Soul",
-      "intro": "A new sibling app from the Akagi project is out now.",
-      "screenshot_alt": "AkagiMS playing a ranked match by itself in full-auto mode",
-      "feature_majsoul_title": "Made for Mahjong Soul",
-      "feature_majsoul_desc": "Purpose-built for one game, with everything tuned around it.",
-      "feature_embedded_title": "Built-in game client",
-      "feature_embedded_desc": "Mahjong Soul opens inside the app window — no proxy, no certificate, no second browser.",
-      "feature_fullauto_title": "Full-auto play",
-      "feature_fullauto_desc": "Queues ranked matches, plays them out, closes the results and queues the next one.",
-      "feature_zero_setup_title": "Zero setup",
-      "feature_zero_setup_desc": "Download, unzip, run. The AI ships inside the binary.",
-      "view_download": "Download",
-      "got_it": "Got it",
       "card_title": "AkagiMS — the standalone app for Mahjong Soul",
       "card_desc": "Embedded game client, full-auto play, zero setup. Download, unzip, run.",
-      "card_dismiss": "Dismiss"
+      "card_dismiss": "Dismiss",
+      "screenshot_alt": "AkagiMS playing a ranked match by itself in full-auto mode",
+      "view_download": "Download"
+    },
+    "dialog": {
+      "title": "Announcements",
+      "intro": "Release highlights and news from the Akagi project.",
+      "got_it": "Got it",
+      "all_releases": "All release notes",
+      "settings_button": "Announcements"
+    },
+    "entries": {
+      "v3_6_0": {
+        "title": "Tenhou autoplay & selectable update sources",
+        "tenhou_autoplay_title": "Tenhou autoplay",
+        "tenhou_autoplay_desc": "Let Akagi play your turns on Tenhou automatically — discards, calls and riichi, all hands-free.",
+        "update_source_title": "Choose your update source",
+        "update_source_desc": "The auto-updater now lets you pick where downloads come from, with a mirror option for faster, more reliable updates where GitHub is slow."
+      },
+      "v3_5_0": {
+        "title": "In-app purchases: Alipay, Apple Pay, Google Pay",
+        "image_alt": "The MJOT cloud AI logo",
+        "checkout_title": "In-app checkout",
+        "checkout_desc": "Buy or renew MJOT time without leaving the app — card, Google Pay, Apple Pay and Alipay.",
+        "health_title": "Smarter renewals & health checks",
+        "health_desc": "Renewals extend your current key by default, and the service health check now reports queue depth and degraded states."
+      },
+      "akagims": {
+        "title": "AkagiMS: a standalone app built for Mahjong Soul",
+        "majsoul_title": "Made for Mahjong Soul",
+        "majsoul_desc": "Purpose-built for one game, with everything tuned around it.",
+        "embedded_title": "Built-in game client",
+        "embedded_desc": "Mahjong Soul opens inside the app window — no proxy, no certificate, no second browser.",
+        "fullauto_title": "Full-auto play",
+        "fullauto_desc": "Queues ranked matches, plays them out, closes the results and queues the next one.",
+        "zero_setup_title": "Zero setup",
+        "zero_setup_desc": "Download, unzip, run. The AI ships inside the binary.",
+        "image_alt": "AkagiMS playing a ranked match by itself in full-auto mode",
+        "link_label": "Download"
+      }
     }
   },
   "install_overlay": {

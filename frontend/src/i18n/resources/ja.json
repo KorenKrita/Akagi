@@ -170,7 +170,8 @@
     "expand": "サイドバーを開く",
     "pin": "サイドバーを固定",
     "openMenu": "ナビゲーションを開く",
-    "closeMenu": "ナビゲーションを閉じる"
+    "closeMenu": "ナビゲーションを閉じる",
+    "announcements": "お知らせ"
   },
   "tile": {
     "header": "対局",
@@ -754,22 +755,48 @@
   },
   "announcements": {
     "akagims": {
-      "title": "AkagiMS のご紹介 — 雀魂のために",
-      "intro": "Akagi プロジェクトの新しい姉妹アプリが公開されました。",
-      "screenshot_alt": "AkagiMS が全自動モードで段位戦をプレイ中",
-      "feature_majsoul_title": "雀魂専用設計",
-      "feature_majsoul_desc": "ひとつのゲームのために作られ、すべてがそのために調整されています。",
-      "feature_embedded_title": "ゲームクライアント内蔵",
-      "feature_embedded_desc": "雀魂がアプリのウィンドウ内で開きます — プロキシも証明書も別のブラウザも不要。",
-      "feature_fullauto_title": "全自動プレイ",
-      "feature_fullauto_desc": "段位戦の予約から対局、結果画面を閉じて次の対局まで自動で行います。",
-      "feature_zero_setup_title": "すぐに使える",
-      "feature_zero_setup_desc": "ダウンロードして解凍、実行するだけ。AI はバイナリに同梱。",
-      "view_download": "ダウンロード",
-      "got_it": "OK",
       "card_title": "AkagiMS — 雀魂専用のスタンドアロン版",
       "card_desc": "ゲームクライアント内蔵、全自動プレイ、セットアップ不要。ダウンロードして解凍、実行するだけ。",
-      "card_dismiss": "閉じる"
+      "card_dismiss": "閉じる",
+      "screenshot_alt": "AkagiMS が全自動モードで段位戦をプレイ中",
+      "view_download": "ダウンロード"
+    },
+    "dialog": {
+      "title": "お知らせ",
+      "intro": "リリースのハイライトとプロジェクトからのお知らせです。",
+      "got_it": "OK",
+      "all_releases": "リリースノート一覧",
+      "settings_button": "お知らせ"
+    },
+    "entries": {
+      "v3_6_0": {
+        "title": "天鳳の自動打牌と、アップデート取得元の選択",
+        "tenhou_autoplay_title": "天鳳の自動打牌",
+        "tenhou_autoplay_desc": "天鳳での打牌・鳴き・立直を Akagi が自動で行います。手を離していても対局が進みます。",
+        "update_source_title": "アップデート取得元の選択",
+        "update_source_desc": "自動アップデートのダウンロード元を選べるようになりました。GitHub が遅い地域向けのミラーも利用でき、より速く安定して更新できます。"
+      },
+      "v3_5_0": {
+        "title": "アプリ内購入:Alipay・Apple Pay・Google Pay 対応",
+        "image_alt": "MJOT クラウド AI のロゴ",
+        "checkout_title": "アプリ内購入",
+        "checkout_desc": "アプリ内で MJOT の利用時間を購入・延長できます。カード / Google Pay / Apple Pay / Alipay に対応します。",
+        "health_title": "更新とヘルスチェックの改善",
+        "health_desc": "延長は既定で現在のキーに加算され、ヘルスチェックはキュー状況や性能低下を報告するようになりました。"
+      },
+      "akagims": {
+        "title": "AkagiMS 登場:雀魂専用のスタンドアロンアプリ",
+        "majsoul_title": "雀魂専用設計",
+        "majsoul_desc": "ひとつのゲームのために作られ、すべてがそのために調整されています。",
+        "embedded_title": "ゲームクライアント内蔵",
+        "embedded_desc": "雀魂がアプリのウィンドウ内で開きます — プロキシも証明書も別のブラウザも不要。",
+        "fullauto_title": "全自動プレイ",
+        "fullauto_desc": "段位戦の予約から対局、結果画面を閉じて次の対局まで自動で行います。",
+        "zero_setup_title": "すぐに使える",
+        "zero_setup_desc": "ダウンロードして解凍、実行するだけ。AI はバイナリに同梱。",
+        "image_alt": "AkagiMS が全自動モードで段位戦をプレイ中",
+        "link_label": "ダウンロード"
+      }
     }
   },
   "install_overlay": {
