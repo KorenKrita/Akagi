@@ -5,7 +5,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 //   * `mode`    — light / dark / system (toggles the `.dark` class on <html>)
 //   * `palette` — color palette (sets `data-theme` on <html>)
 //
-// For named palettes (default / crimson / slate) the full CSS variable set
+// For named palettes (default / crimson / slate / flya) the full CSS variable set
 // lives in `src/index.css`. For `custom`, this store generates a stylesheet
 // at runtime from the user-edited base colors (background / foreground /
 // primary / primary-foreground / border) and derives the rest via CSS
@@ -16,10 +16,10 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 // palettes) before this module loads.
 
 export type ThemeMode = 'light' | 'dark' | 'system'
-export type ThemePalette = 'default' | 'crimson' | 'slate' | 'custom'
+export type ThemePalette = 'default' | 'crimson' | 'slate' | 'flya' | 'custom'
 
 export const THEME_MODES: readonly ThemeMode[] = ['light', 'dark', 'system']
-export const THEME_PALETTES: readonly ThemePalette[] = ['default', 'crimson', 'slate', 'custom']
+export const THEME_PALETTES: readonly ThemePalette[] = ['default', 'crimson', 'slate', 'flya', 'custom']
 
 export const THEME_MODE_DEFAULT: ThemeMode = 'system'
 export const THEME_PALETTE_DEFAULT: ThemePalette = 'default'

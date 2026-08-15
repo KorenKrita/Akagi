@@ -345,6 +345,7 @@
     "theme_default": "Akagi",
     "theme_crimson": "緋紅",
     "theme_slate": "石板",
+    "theme_flya": "FlyA",
     "theme_custom": "自訂",
     "custom_hint": "每個模式選五個基礎顏色，其餘配色會透過 color-mix 自動推導。",
     "custom_light": "淺色模式",
