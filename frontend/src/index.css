@@ -55,7 +55,7 @@
  * light (`:root[...]`) and dark (`.dark[...]`). The base `:root` / `.dark`
  * blocks below are the default theme ("Zen Inspired" — a neutral
  * monochrome palette with cool-blue chart accents); named themes
- * (`crimson`, `slate`) layer over them via the `data-theme` attribute
+ * (`crimson`, `slate`, `flya`) layer over them via the `data-theme` attribute
  * on <html>.
  *
  * Variable inventory follows ui.shadcn.com/docs/theming — adding a new
@@ -309,6 +309,84 @@
     --sidebar-accent-foreground: oklch(0.96 0.008 250);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.78 0.10 250);
+}
+
+/* ---------------- FlyA — light ---------------- */
+:root[data-theme="flya"] {
+    --background: #fff9fc;
+    --foreground: #1a1a2e;
+    --card: #ffffff;
+    --card-foreground: #1a1a2e;
+    --popover: #ffffff;
+    --popover-foreground: #1a1a2e;
+    --primary: #ec4899;
+    --primary-foreground: #ffffff;
+    --secondary: #fff0f6;
+    --secondary-foreground: #7f284f;
+    --muted: #f8f1f5;
+    --muted-foreground: #686473;
+    --accent: #fde2ee;
+    --accent-foreground: #9f315f;
+    --destructive: #dc3b4f;
+    --border: #ead7e1;
+    --input: #e8d5df;
+    --ring: #d1567f;
+    --chart-1: #ec4899;
+    --chart-2: #42a879;
+    --chart-3: #a66bd4;
+    --chart-4: #e78a4e;
+    --chart-5: #5b8fd9;
+    --bot-glyph-neutral: #2b2430;
+    --bot-glyph-muted: #6f6470;
+    --bot-glyph-filter: drop-shadow(0 1px 2px rgba(91, 37, 64, 0.18));
+    --sidebar: #fff5fa;
+    --sidebar-foreground: #3e4052;
+    --sidebar-primary: #ec4899;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #fde2ee;
+    --sidebar-accent-foreground: #9f315f;
+    --sidebar-border: #ebd9e2;
+    --sidebar-ring: #d1567f;
+}
+
+/* ---------------- FlyA — dark ---------------- */
+.dark[data-theme="flya"] {
+    --background: #0a0e1a;
+    --foreground: rgba(255, 255, 255, 0.92);
+    --card: #171a26;
+    --card-foreground: rgba(255, 255, 255, 0.92);
+    --popover: #202331;
+    --popover-foreground: rgba(255, 255, 255, 0.92);
+    --primary: #ec4899;
+    --primary-foreground: #ffffff;
+    --secondary: #292332;
+    --secondary-foreground: rgba(255, 255, 255, 0.88);
+    --muted: #24232e;
+    --muted-foreground: rgba(255, 255, 255, 0.62);
+    --accent: #3c2333;
+    --accent-foreground: #f8d5e5;
+    --destructive: #f06475;
+    --border: rgba(218, 130, 175, 0.16);
+    --input: rgba(218, 130, 175, 0.22);
+    --ring: #d979a5;
+    --chart-1: #ec4899;
+    --chart-2: #54c795;
+    --chart-3: #bd86e4;
+    --chart-4: #f0a16b;
+    --chart-5: #75a7e8;
+    --bot-glyph-neutral: #ffffff;
+    --bot-glyph-muted: #d3d3d7;
+    --bot-glyph-filter:
+        drop-shadow(0 0 10px rgba(236, 72, 153, 0.35))
+        drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
+    --sidebar: #171a26;
+    --sidebar-foreground: rgba(242, 242, 243, 0.93);
+    --sidebar-primary: #ec4899;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #3c2333;
+    --sidebar-accent-foreground: #f8d5e5;
+    --sidebar-border: rgba(218, 130, 175, 0.12);
+    --sidebar-ring: #d979a5;
 }
 
 @layer base {

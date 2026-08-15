@@ -345,6 +345,7 @@
     "theme_default": "Akagi",
     "theme_crimson": "Crimson",
     "theme_slate": "Slate",
+    "theme_flya": "FlyA",
     "theme_custom": "Custom",
     "custom_hint": "Pick five base colors per mode — the rest of the palette is derived automatically via color-mix.",
     "custom_light": "Light mode",
