@@ -30,6 +30,7 @@ function makeConfig(over: {
         model_3p: '',
         proxy_enabled: false,
         proxy: '',
+        react_timeout_ms: 3000,
       },
     },
     capture: {

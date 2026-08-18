@@ -162,6 +162,9 @@ export type NativeApiConfig = {
   /** Proxy for all inference-server traffic: http://, https://, socks5:// or
    *  socks5h:// URL. Applied only when `proxy_enabled`; empty = direct. */
   proxy: string
+  /** Per-decision timeout for POST /v3/react, in milliseconds. Clamped to
+   *  500–10000ms on the backend before use. Default 3000. */
+  react_timeout_ms: number
 }
 
 /** The always-on-top suggestion overlay. Mirrors `crate::config::OverlayConfig`. */

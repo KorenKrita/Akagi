@@ -381,6 +381,24 @@ export function NativeApiFields({
         </div>
 
         <div className="grid gap-1.5">
+          <Label>{t('bots.api.react_timeout')}</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={500}
+              max={10000}
+              step={500}
+              className="max-w-[10rem]"
+              value={value.react_timeout_ms}
+              onChange={(e) => set({ react_timeout_ms: Number(e.target.value || 0) })}
+            />
+            <span className="text-sm text-muted-foreground">{t('bots.api.react_timeout_unit')}</span>
+          </div>
+          <span className="text-xs text-muted-foreground">{t('bots.api.react_timeout_hint')}</span>
+        </div>
+
+        <div className="grid gap-1.5">
           <Label>{t('bots.api.key')}</Label>
           <div className="flex gap-2">
             <Input

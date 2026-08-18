@@ -173,6 +173,9 @@ struct ApiSession {
     proxy: String,
     /// Model id to request; empty ⇒ let the server pick its game default.
     model: String,
+    /// Raw `react_timeout_ms` the client's react timeout was built from; part
+    /// of the rebuild key so editing the timeout re-applies on the next move.
+    react_timeout_ms: u32,
 }
 
 pub struct NativeBot {
@@ -253,8 +256,15 @@ impl NativeBot {
         // `proxy_enabled` alone changes this and rebuilds the client.
         let proxy = cfg.effective_proxy();
         let model = cfg.model_for(self.num_players).trim().to_string();
+        // Raw ms is the rebuild key (round-trips the user's exact value); the
+        // clamped Duration is what the client is actually built with.
+        let react_timeout_ms = cfg.react_timeout_ms;
         let unchanged = self.api.as_ref().is_some_and(|s| {
-            s.base_url == base_url && s.key == key && s.proxy == proxy && s.model == model
+            s.base_url == base_url
+                && s.key == key
+                && s.proxy == proxy
+                && s.model == model
+                && s.react_timeout_ms == react_timeout_ms
         });
         if unchanged {
             return;
@@ -275,11 +285,12 @@ impl NativeBot {
             Ok(client) => {
                 self.api_failed = None;
                 self.api = Some(ApiSession {
-                    client,
+                    client: client.with_react_timeout(cfg.effective_react_timeout()),
                     base_url: base_url.to_string(),
                     key: key.to_string(),
                     proxy: proxy.to_string(),
                     model: model.clone(),
+                    react_timeout_ms,
                 });
                 self.breaker.reset();
                 let body = if model.is_empty() {
@@ -1040,10 +1051,7 @@ mod tests {
             enabled: true,
             base_url: base_url.to_string(),
             key: key.to_string(),
-            model_4p: String::new(),
-            model_3p: String::new(),
-            proxy_enabled: false,
-            proxy: String::new(),
+            ..NativeApiConfig::default()
         }
     }
 
@@ -1760,6 +1768,30 @@ mod tests {
             "socks5://127.0.0.1:1080",
             "toggle on ⇒ rebuilt with the effective proxy"
         );
+    }
+
+    /// Editing the react timeout rebuilds the session so the new value applies
+    /// on the next move, while re-applying the same timeout stays a no-op.
+    /// Regression for the configurable `react_timeout_ms` (issue #264).
+    #[tokio::test]
+    async fn changing_the_react_timeout_rebuilds_the_session() {
+        let notify = crate::event_bus::notify_bus();
+        let default_ms = NativeApiConfig::default().react_timeout_ms;
+        let mut bot = bot_with(cfg_api(UNREACHABLE_BASE_URL), notify).await;
+        // Seeded from the default.
+        assert_eq!(bot.api.as_ref().unwrap().react_timeout_ms, default_ms);
+
+        // Same config again ⇒ no rebuild (the timeout is part of the key, but
+        // it hasn't changed).
+        let same = api_on(UNREACHABLE_BASE_URL, &"k".repeat(32));
+        bot.apply_api_config(&same, Announce::Silently);
+        assert_eq!(bot.api.as_ref().unwrap().react_timeout_ms, default_ms);
+
+        // Bump the timeout ⇒ the session carries the new raw value.
+        let mut slower = same.clone();
+        slower.react_timeout_ms = 5_000;
+        bot.apply_api_config(&slower, Announce::Silently);
+        assert_eq!(bot.api.as_ref().unwrap().react_timeout_ms, 5_000);
     }
 
     /// Switching the model id keeps the same server but re-requests under the new
