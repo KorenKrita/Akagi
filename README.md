@@ -246,6 +246,15 @@ Three ways:
   already hold.
 - Ask in the [Discord server](https://discord.gg/Z2wjXUK8bN).
 
+#### Request timeout
+
+Each move is fetched from the server with a **request timeout** (default
+**3000 ms**, adjustable in the cloud-inference settings, bounded to 500–10000 ms).
+If a response doesn't arrive in time, that turn falls back to the offline local
+model. Raise it to tolerate a slower server or connection; lower it to give up
+sooner. Note that a riichi costs two requests (declare, then discard) within one
+turn, so very high values risk overrunning the game's turn timer.
+
 ### Per-mode bots
 
 `bot.active_4p` and `bot.active_3p` are independent. Akagi picks the

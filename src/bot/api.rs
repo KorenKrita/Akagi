@@ -25,14 +25,18 @@ use std::time::Duration;
 /// to wait out a slow server.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// Timeout for [`ApiClient::react`], which sits on a live game's critical path.
-/// Majsoul's turn timer is ~5s plus a shared time bank, and a reach costs two
-/// react calls (declare, then discard), so the whole two-step has to fit inside
-/// one turn. Keep this tight: a hung server falls back to the local model
-/// promptly instead of making the bot miss its turn. Repeated failures are then
-/// suppressed by the caller's circuit breaker, so only the first turn of an
-/// outage pays this cost.
-pub const REACT_TIMEOUT: Duration = Duration::from_millis(2_000);
+/// Default timeout for [`ApiClient::react`], which sits on a live game's
+/// critical path. Majsoul's turn timer is ~5s plus a shared time bank, and a
+/// reach costs two react calls (declare, then discard), so the whole two-step
+/// has to fit inside one turn. Keep this tight: a hung server falls back to the
+/// local model promptly instead of making the bot miss its turn. Repeated
+/// failures are then suppressed by the caller's circuit breaker, so only the
+/// first turn of an outage pays this cost.
+///
+/// This is only the fallback for clients built without an explicit timeout
+/// (e.g. the management-endpoint helpers). The built-in bot overrides it per
+/// session from `bot.api.react_timeout_ms` via [`ApiClient::with_react_timeout`].
+pub const REACT_TIMEOUT: Duration = Duration::from_millis(3_000);
 
 /// Response from `POST /v3/react`.
 #[derive(Debug, Clone, Deserialize)]
@@ -175,25 +179,39 @@ pub struct ApiClient {
     base: String,
     key: String,
     http: reqwest::Client,
+    /// Per-call timeout for [`Self::react`]. Defaults to [`REACT_TIMEOUT`];
+    /// overridden per session via [`Self::with_react_timeout`].
+    react_timeout: Duration,
 }
 
 impl ApiClient {
     /// Build a client for `base_url` authenticating with `key`, optionally
     /// routing through `proxy` (see [`http_client`]; empty ⇒ direct). A
-    /// trailing slash on the URL is tolerated.
+    /// trailing slash on the URL is tolerated. The react timeout starts at the
+    /// [`REACT_TIMEOUT`] default; use [`Self::with_react_timeout`] to override.
     pub fn new(base_url: &str, key: &str, proxy: &str) -> Result<Self> {
         Ok(Self {
             base: normalize_base(base_url),
             key: key.trim().to_string(),
             http: http_client(REQUEST_TIMEOUT, proxy)?,
+            react_timeout: REACT_TIMEOUT,
         })
+    }
+
+    /// Override the per-call timeout applied to [`Self::react`]. The built-in
+    /// bot sets this from `bot.api.react_timeout_ms` (already clamped by
+    /// `NativeApiConfig::effective_react_timeout`). Builder-style so existing
+    /// non-react callers (redeem/key/models) keep the default unchanged.
+    pub fn with_react_timeout(mut self, timeout: Duration) -> Self {
+        self.react_timeout = timeout;
+        self
     }
 
     /// `POST /v3/react` — the move for the final event of `events`. `model`
     /// `None`/empty lets the server pick its game default.
     ///
-    /// Bounded by [`REACT_TIMEOUT`] rather than the client-wide
-    /// [`REQUEST_TIMEOUT`]: this one blocks the bot's turn.
+    /// Bounded by [`Self::react_timeout`] (the configured react timeout) rather
+    /// than the client-wide [`REQUEST_TIMEOUT`]: this one blocks the bot's turn.
     pub async fn react(
         &self,
         model: Option<&str>,
@@ -209,7 +227,7 @@ impl ApiClient {
         let resp = self
             .http
             .post(&url)
-            .timeout(REACT_TIMEOUT)
+            .timeout(self.react_timeout)
             .bearer_auth(&self.key)
             .json(&body)
             .send()
@@ -586,6 +604,63 @@ mod tests {
         );
         assert!(r.contains(r#""player_id":2"#), "{r}");
         assert!(r.contains(r#""model":"4p-x""#), "{r}");
+    }
+
+    /// The react timeout is honored per client: a server that answers slower
+    /// than the configured timeout produces a transport error (which the caller
+    /// turns into a local-model fallback), while a generous timeout lets the
+    /// same slow response through. Regression for the configurable
+    /// `react_timeout_ms` (issue #264).
+    #[tokio::test]
+    async fn react_honors_the_configured_timeout() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        // A one-shot server that stalls `delay` before replying 200 OK.
+        fn slow_server(delay: Duration) -> String {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            std::thread::spawn(move || {
+                if let Ok((mut sock, _)) = listener.accept() {
+                    // Drain the request head so the client's send() completes;
+                    // the small body fits the socket buffer, so we needn't read
+                    // it all before stalling.
+                    let mut buf = [0u8; 2048];
+                    let _ = sock.read(&mut buf);
+                    std::thread::sleep(delay);
+                    let body = r#"{"reaction":{"type":"none"}}"#;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len(),
+                    );
+                    let _ = sock.write_all(resp.as_bytes());
+                }
+            });
+            format!("http://{addr}")
+        }
+
+        let events = || vec![serde_json::json!({"type": "start_game"})];
+
+        // Timeout well under the server's delay ⇒ the react errors out.
+        let base = slow_server(Duration::from_millis(400));
+        let tight = ApiClient::new(&base, "K", "")
+            .unwrap()
+            .with_react_timeout(Duration::from_millis(80));
+        assert!(
+            tight.react(None, 0, events()).await.is_err(),
+            "a react slower than the timeout must error"
+        );
+
+        // Same delay, timeout comfortably over it ⇒ the react succeeds.
+        let base = slow_server(Duration::from_millis(400));
+        let generous = ApiClient::new(&base, "K", "")
+            .unwrap()
+            .with_react_timeout(Duration::from_millis(3_000));
+        assert!(
+            generous.react(None, 0, events()).await.is_ok(),
+            "a react within the timeout must succeed"
+        );
     }
 
     #[tokio::test]
