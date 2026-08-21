@@ -193,6 +193,7 @@ impl AutoplayManager {
     async fn schedule_next_queue(&self) {
         let rc = self.cfg.read().await.autoplay.riichi_city.clone();
         let delay = crate::autoplay::session::inter_game_delay(rc.inter_game_delay_ms);
+        info!("autoplay session: queueing the next match in {delay:?}");
         let cfg = self.cfg.clone();
         let inject = self.ctx.inject.clone();
         let session = self.ctx.session.clone();

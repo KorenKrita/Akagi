@@ -61,6 +61,7 @@ export function FullAutoDialog() {
   }, [open, rc])
 
   // Session status polling (also while closed, so the header stays honest).
+  // 1s while a session runs so the queue timer ticks every second; 3s idle.
   useEffect(() => {
     let alive = true
     const poll = async () => {
@@ -72,12 +73,12 @@ export function FullAutoDialog() {
       }
     }
     poll()
-    const timer = window.setInterval(poll, 3000)
+    const timer = window.setInterval(poll, status?.active ? 1000 : 3000)
     return () => {
       alive = false
       window.clearInterval(timer)
     }
-  }, [])
+  }, [status?.active])
 
   const patch = (p: Partial<AutoplayConfig['riichi_city']>) =>
     setDraft((d) => (d ? { ...d, ...p } : d))
