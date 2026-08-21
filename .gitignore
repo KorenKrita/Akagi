@@ -57,3 +57,9 @@ scripts/tag_release.sh
 # Training-data shards written by native_bot's extractor (see native_bot/train/README.md).
 # Tens of GB of intermediate binaries; the trained weights are what gets committed.
 native_bot/out/
+
+# Mimosa security-scan history (see ~/.mimosa fallback when absent)
+.mimosa
+
+# ZCode session artifacts
+.zcode/

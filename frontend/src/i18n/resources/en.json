@@ -354,11 +354,15 @@
     "unsaved_title": "Unsaved changes",
     "unsaved_desc": "You have unsaved settings changes. Save them before leaving, discard them, or stay on this page.",
     "save_and_leave": "Save & leave",
+    "fullauto": {
+      "title": "Full Auto (Riichi City)",
+      "description": "Queue matches automatically after each game ends: pick the room and game length, how long to wait between games, and how patiently to wait for a table. Requires autoplay above to be enabled; the match-queueing side is still in development."
+    },
     "autoplay": {
       "title": "Autoplay",
       "enable": "Enable autoplay",
-      "enable_help": "When enabled, Akagi performs the bot's chosen action for you. Requires the Chromium capture mode and a running game tab. On Mahjong Soul the action is clicked on the board; on Tenhou it is sent directly over the game connection.",
-      "platform_note": "These click-timing knobs apply to Mahjong Soul only. Tenhou autoplay sends the action over the game connection and does not click, so it uses the thinking-time model below but none of the settings above.",
+      "enable_help": "When enabled, Akagi performs the bot's chosen action for you. Requires the Chromium capture mode and a running game tab. On Mahjong Soul the action is clicked on the board; on Tenhou it is sent directly over the game connection; on Riichi City it is injected as the client's own protocol frames through the MITM proxy (no Chromium needed).",
+      "platform_note": "These click-timing knobs apply to Mahjong Soul only. Tenhou and Riichi City autoplay send the action over the game connection and do not click, so they use the thinking-time model below but none of the settings above.",
       "requires_chromium": "Autoplay requires the Chromium capture mode.",
       "pre_click_delay_min": "Pre-click delay (min, ms)",
       "pre_click_delay_max": "Pre-click delay (max, ms)",
@@ -381,7 +385,23 @@
       "min_delay": "Minimum delay (ms)",
       "min_delay_hint": "Safety floor for every action: Mahjong Soul needs time to render the UI, and a click issued too early is silently lost. Applies in both modes and cannot be undercut by the script.",
       "min_button_delay": "Minimum button delay (ms)",
-      "min_button_delay_hint": "Higher floor for chi/pon/kan/ron/skip/riichi buttons — they appear only after the discard animation plus their own pop-in, later than hand tiles. Raise this if buttons are still missing clicks."
+      "min_button_delay_hint": "Higher floor for chi/pon/kan/ron/skip/riichi buttons — they appear only after the discard animation plus their own pop-in, later than hand tiles. Raise this if buttons are still missing clicks.",
+      "inter_game_delay": "Inter-game delay (ms)",
+      "inter_game_delay_hint": "Riichi City auto-queue: wait after a game ends before queueing the next (randomized within [x/2, x]).",
+      "queue_room": "Room",
+      "queue_room_hint": "Riichi City auto-queue: the ranked room matches are queued in (Star < Moon < Sun < Galaxy).",
+      "queue_game_type": "Game length",
+      "queue_game_type_hint": "Riichi City auto-queue: east-only games finish in roughly half the time of a hanchan.",
+      "queue_game_type_east_only": "East only (tonpuusen)",
+      "queue_game_type_hanchan": "Hanchan (full game)",
+      "queue_fallback_sun": "Find a Sun table after 2 minutes",
+      "session_games_placeholder": "Games (∞ if empty)",
+      "session_start": "Start session",
+      "session_stop": "Stop",
+      "session_started": "Autoplay session started",
+      "session_running": "Session running — games played: {{count}}",
+      "session_stopped": "Session stopped",
+      "session_idle": "Riichi City auto-queue: play N games back to back (leave empty for endless), with the next match queued automatically after each game."
     },
     "overlay": "Suggestion overlay",
     "overlay_enabled": "Show overlay window",
@@ -636,6 +656,10 @@
   "game": {
     "bot_disabled_title": "Bot is disabled",
     "bot_disabled_desc": "Enable bots in Settings to receive recommendations.",
+    "fullauto_button": "Start full auto session",
+    "fullauto_running": "Full auto ({{count}})",
+    "fullauto_queued": "in queue {{time}}",
+    "fullauto_title": "Full-auto session",
     "onboarding": {
       "title": "Customize your board",
       "intro": "Every panel is a movable tile. Here's how to arrange them the way you like.",

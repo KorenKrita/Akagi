@@ -71,6 +71,12 @@ function makeConfig(over: {
         bank_max_single_ms: 0,
         no_budget_cap_ms: 0,
       },
+      riichi_city: {
+        room: 'star',
+        game_type: 'east_only',
+        galaxy_fallback_sun: false,
+        inter_game_delay_ms: 0,
+      },
     },
     overlay: { enabled: true, top_n: 3, opacity: 1, always_on_top: true },
     network: { github_mirror_mode: 'auto', github_custom_mirror: '' },

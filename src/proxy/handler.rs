@@ -89,6 +89,11 @@ pub struct ProxyHandler {
     /// Whether to drop the game's Aliyun SLS telemetry beacons instead of
     /// forwarding them. See `block_telemetry_beacon`.
     block_telemetry: bool,
+    /// Frame injection channel for Riichi City autoplay: the client→server
+    /// relay forwards what arrives here to the game server (gated on the
+    /// bridge's `in_game` flag). `None` in "log only" mode / tests.
+    /// See `autoplay::inject`.
+    inject: Option<crate::autoplay::inject::SharedInjectBus>,
 }
 
 impl ProxyHandler {
@@ -106,6 +111,7 @@ impl ProxyHandler {
         certs: Arc<CertStore>,
         rewrite_cert_report: bool,
         block_telemetry: bool,
+        inject: Option<crate::autoplay::inject::SharedInjectBus>,
     ) -> anyhow::Result<Self> {
         let binary = session.binary_logger("proxy")?;
         let inspector = session.inspector();
@@ -126,6 +132,7 @@ impl ProxyHandler {
             certs,
             rewrite_cert_report,
             block_telemetry,
+            inject,
         })
     }
 
@@ -191,14 +198,18 @@ impl ProxyHandler {
         });
     }
 
-    /// Drop an Aliyun SLS web-tracking beacon instead of forwarding it, and
-    /// record the drop on the timeline.
+    /// Drop a telemetry request instead of forwarding it, and record the
+    /// drop on the timeline. Two shapes match: Aliyun SLS web-tracking
+    /// beacons (the annotator's path-based recognizer) and Riichi City's
+    /// plain-HTTP `/game_manager/TslogServlet` tracking endpoint.
     ///
     /// Returns the synthetic response to answer the client with when `req`
-    /// is such a beacon, or `None` for ordinary traffic that must be
-    /// forwarded unchanged. The recognizer is the same path-based one the
-    /// annotator uses, so anything the timeline would label `sls_beacon` is
-    /// exactly what gets blocked.
+    /// is such a request, or `None` for ordinary traffic that must be
+    /// forwarded unchanged. The SLS recognizer is the same one the timeline
+    /// annotator uses, so anything it would label `sls_beacon` is exactly
+    /// what gets blocked. TLS-riding beacons that never reach this layer
+    /// are refused earlier, at CONNECT time — see the telemetry CONNECT
+    /// refusal in `handle_request`.
     ///
     /// The genuine endpoint answers `200` with an empty body, so that is
     /// what we return — indistinguishable from an ad blocker or the real
@@ -207,7 +218,16 @@ impl ProxyHandler {
     /// annotation plus an `akagi_blocked` marker): an annotated gap is not a
     /// gap, exactly as with the raw-tunnel bypass in `should_intercept`.
     fn block_telemetry_beacon(&self, req: &Request<Body>) -> Option<Response<Body>> {
-        annotate::sls::parse_uri(req.uri())?;
+        // Riichi City's plain-HTTP telemetry endpoint rides ordinary
+        // forwarded requests (no tunnel), so it is blocked here alongside
+        // the SLS beacons.
+        if is_riichi_city_telemetry_path(req.uri().path())
+            || annotate::sls::parse_uri(req.uri()).is_some()
+        {
+            // fall through to the shared block below
+        } else {
+            return None;
+        }
 
         let method = req.method().to_string();
         let url = req.uri().to_string();
@@ -390,13 +410,23 @@ impl ProxyHandler {
                         }
                     };
                 // No time-budget slot and no input watch: the MITM path
-                // has no `Page` handle, so autoplay (the only consumer)
-                // can never click here.
+                // has no `Page` handle, so click-based autoplay can never
+                // run here. The one slot the MITM path DOES wire is Riichi
+                // City's frame-injection gate — its autoplay transmits
+                // protocol frames rather than clicking a page.
+                let hooks = bridge::BridgeHooks {
+                    riichi_inject: if self.platform == Platform::RiichiCity {
+                        self.inject.clone()
+                    } else {
+                        None
+                    },
+                    ..bridge::BridgeHooks::default()
+                };
                 Arc::new(StdMutex::new(bridge::for_platform(
                     self.platform,
                     flow_log,
                     Some(self.session.clone()),
-                    bridge::BridgeHooks::default(),
+                    hooks,
                 )))
             })
             .clone()
@@ -485,6 +515,48 @@ impl HttpHandler for ProxyHandler {
                 .status(StatusCode::FORBIDDEN)
                 .body(Body::empty())
                 .expect("Failed to build loopback CONNECT refusal")
+                .into();
+        }
+
+        // Refuse telemetry CONNECTs outright: Riichi City pins the
+        // telemetry host's TLS, so its beacons never reach the
+        // request-level block below — refusing the tunnel keeps them off
+        // the wire deterministically, pinning or not.
+        if self.block_telemetry && is_telemetry_connect(req.method(), req.uri()) {
+            info!(
+                target: "akagi::proxy::forward",
+                "refusing telemetry CONNECT to {} — blocked before a tunnel opens",
+                req.uri(),
+            );
+            // An annotated gap is not a gap: record the refusal.
+            self.inspector.record(InspectorEntry::Http {
+                ts_ms: Local::now().timestamp_millis(),
+                source: CaptureSource::Mitm,
+                exchange: HttpExchange {
+                    exchange_id: None,
+                    phase: HttpPhase::Request,
+                    method: "CONNECT".to_string(),
+                    url: req.uri().to_string(),
+                    host: req.uri().host().unwrap_or_default().to_string(),
+                    version: format!("{:?}", req.version()),
+                    status: None,
+                    headers: httpcap::headers_of(req.headers()),
+                    body: None,
+                    annotations: vec![HttpAnnotation {
+                        kind: "akagi_blocked".to_string(),
+                        summary: "telemetry CONNECT refused — tunnel never opened".to_string(),
+                        data: serde_json::json!({
+                            "reason": "Aliyun SLS web-tracking host refused at the proxy; \
+                                       the beacon cannot leave the machine regardless of \
+                                       certificate pinning",
+                        }),
+                    }],
+                },
+            });
+            return Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Body::empty())
+                .expect("static telemetry CONNECT refusal must build")
                 .into();
         }
 
@@ -775,6 +847,16 @@ impl WebSocketHandler for ProxyHandler {
         let bridge = self.acquire_bridge(client, &server_uri);
         let force_close = self.force_close.clone();
 
+        // Riichi City autoplay injects on the client→server leg only — that
+        // sink leads to the game server. The bridge's `in_game` gate keeps
+        // frames off the client's non-gameplay sockets (the client keeps
+        // several flows open; only the one carrying a game should ever see
+        // an injected command).
+        let mut inject_rx = match (&ctx, &self.inject) {
+            (WebSocketContext::ClientToServer { .. }, Some(bus)) => Some(bus.subscribe()),
+            _ => None,
+        };
+
         loop {
             tokio::select! {
                 biased;
@@ -782,6 +864,39 @@ impl WebSocketHandler for ProxyHandler {
                     info!("force-closing WS flow for {client}");
                     let _ = sink.send(Message::Close(None)).await;
                     break;
+                }
+                frame = async {
+                    match inject_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let frame = match frame {
+                        Ok(f) => f,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("inject bus lagged by {n}; dropped frames");
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    };
+                    let in_game = self
+                        .inject
+                        .as_ref()
+                        .is_some_and(|bus| bus.in_game());
+                    if frame.gameplay && !in_game {
+                        debug!("inject: not in a game on {client}; dropping injected gameplay frame");
+                        continue;
+                    }
+                    info!("inject: forwarding injected frame to {server_uri}");
+                    match sink.send(Message::Binary(frame.bytes.into())).await {
+                        Ok(()) => {}
+                        Err(tungstenite::Error::ConnectionClosed)
+                        | Err(tungstenite::Error::AlreadyClosed) => break,
+                        Err(e) => {
+                            error!("inject: WebSocket send error: {e}");
+                            break;
+                        }
+                    }
                 }
                 next = stream.next() => {
                     let Some(message) = next else { break };
@@ -1029,14 +1144,70 @@ fn is_loopback_connect(method: &Method, uri: &Uri) -> bool {
     method == Method::CONNECT && uri.host().is_some_and(is_loopback_host)
 }
 
+/// `true` for a `CONNECT` to the Aliyun SLS web-tracking service — the
+/// telemetry vendor both Mahjong Soul and Riichi City report through. Any
+/// `<project>.<region>.log.aliyuncs.com` host serves nothing but beacons,
+/// so the whole service domain is matched, current and future projects
+/// alike.
+fn is_telemetry_connect(method: &Method, uri: &Uri) -> bool {
+    fn is_sls_host(host: &str) -> bool {
+        host == "log.aliyuncs.com" || host.ends_with(".log.aliyuncs.com")
+    }
+    method == Method::CONNECT && uri.host().is_some_and(is_sls_host)
+}
+
+/// `true` for Riichi City's plain-HTTP telemetry endpoint (login /
+/// resource-download tracking in the shipped Lua, `GameDotHelper`). These
+/// arrive as ordinary forwarded requests — no tunnel — so they are blocked
+/// at the request level alongside the SLS beacons.
+fn is_riichi_city_telemetry_path(path: &str) -> bool {
+    path == "/game_manager/TslogServlet"
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        is_ip_literal_host, is_loopback_connect, is_loopback_host, should_raw_tunnel,
-        will_be_answered_by_handle_response,
+        is_ip_literal_host, is_loopback_connect, is_loopback_host, is_riichi_city_telemetry_path,
+        is_telemetry_connect, should_raw_tunnel, will_be_answered_by_handle_response,
     };
     use crate::config::Platform;
     use hudsucker::hyper::{Method, Request, Uri};
+
+    /// The telemetry CONNECT refusal must catch both games' Aliyun SLS
+    /// hosts (current regions and future ones) while leaving every other
+    /// tunnel alone — including hosts that merely contain "aliyun" or the
+    /// game's own API hosts.
+    #[test]
+    fn telemetry_connects_are_recognized_by_host() {
+        let connect = |authority: &str| {
+            is_telemetry_connect(
+                &Method::CONNECT,
+                &authority.parse::<Uri>().expect("valid authority"),
+            )
+        };
+        assert!(connect("hwmaj-client.ap-northeast-1.log.aliyuncs.com:443"),
+            "Riichi City's flow-log host");
+        assert!(connect("example-client.cn-hongkong.log.aliyuncs.com:443"),
+            "a Mahjong Soul project");
+        assert!(connect("log.aliyuncs.com:443"));
+        // Not telemetry.
+        assert!(!connect("aga-alb.mahjong-jp.net:443"));
+        assert!(!connect("aliyun.example.com:443"));
+        assert!(!connect("log.aliyuncs.com.evil.example.com:443"));
+        // Plain (non-CONNECT) requests never match, even to the host.
+        let uri: Uri = "https://hwmaj-client.ap-northeast-1.log.aliyuncs.com/x"
+            .parse()
+            .unwrap();
+        assert!(!is_telemetry_connect(&Method::GET, &uri));
+    }
+
+    #[test]
+    fn riichi_city_plain_http_telemetry_path_is_recognized() {
+        assert!(is_riichi_city_telemetry_path("/game_manager/TslogServlet"));
+        // The lobby API shares the host — only the telemetry path blocks.
+        assert!(!is_riichi_city_telemetry_path("/lobbys/startStage"));
+        assert!(!is_riichi_city_telemetry_path("/game_manager/Other"));
+    }
 
     /// Regression: only requests hudsucker answers through
     /// `handle_response` may join the pairing queue.

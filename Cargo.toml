@@ -6,6 +6,14 @@ edition = "2021"
 [lib]
 name = "akagi"
 
+[features]
+# Without this, Tauri builds in dev mode and the window loads the Vite
+# dev server (`devUrl`) instead of the embedded `frontendDist` — a plain
+# `cargo build --release` then shows "localhost refused to connect".
+# `cargo tauri build` passes it automatically; plain cargo builds must say
+# `--features custom-protocol`.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 prost-build = "0.14"
@@ -69,6 +77,14 @@ opener = { version = "0.8.5", default-features = false }
 rand_distr = "0.5"
 mlua = { version = "0.12.0", features = ["lua54", "vendored", "send", "error-send"] }
 minisign-verify = "0.2.5"
+# Riichi City round advance: sight the settlement OK button in the client
+# window (`autoplay::riichi_city::vision`). xcap captures the window, image
+# decodes the labeled-screenshot fixtures the detector is tested against.
+xcap = "0.4.1"
+image = "0.25"
+# Riichi City lobby API: `analysis_data` payloads are AES-256 encrypted
+# with a key recovered from the shipped Lua (see bridge::riichi_city::lobby).
+aes = "0.8"
 
 # Windows-only: find + terminate a surviving controlled Chromium by its command
 # line when reopening (Chrome writes no SingletonLock file on Windows, so the

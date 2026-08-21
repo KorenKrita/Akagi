@@ -1453,10 +1453,13 @@ mod tests {
         std::fs::write(bot.join("bot.py"), b"").unwrap();
         std::fs::write(bot.join("pyproject.toml"), b"[project]\nname='x'\n").unwrap();
         // Moved-venv state: interpreter file present, but pyvenv.cfg `home`
-        // points at a directory that no longer exists.
+        // points at a directory that no longer exists. The interpreter must
+        // sit at the platform's venv layout (`Scripts\python.exe` on
+        // Windows, `bin/python` on Unix) or the alive-check never fires.
         let venv = bot.join(".akagi").join("venv");
-        std::fs::create_dir_all(venv.join("bin")).unwrap();
-        std::fs::write(venv.join("bin").join("python"), b"").unwrap();
+        let interp = crate::bot::runtime::venv_python(&venv);
+        std::fs::create_dir_all(interp.parent().unwrap()).unwrap();
+        std::fs::write(&interp, b"").unwrap();
         std::fs::write(
             venv.join("pyvenv.cfg"),
             b"home = /vanished/old/runtime/bin\n",

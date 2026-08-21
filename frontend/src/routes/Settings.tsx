@@ -59,6 +59,7 @@ import {
 } from '@/types'
 import type {
   AppConfig,
+  AutoplayConfig,
   CaptureMode,
   DelayMode,
   DelayModelConfig,
@@ -809,9 +810,13 @@ function AutoplayCard({
       dealer_first_discard_extra_delay_ms: 2000,
     },
     delay: defaultDelayModel(),
+    riichi_city: defaultRiichiCityAutoplay(),
   }
   const delay = ap.delay ?? defaultDelayModel()
   const captureIsChromium = draft.capture?.mode === 'chromium'
+  // Riichi City autoplay runs through the MITM proxy (frame injection), so
+  // the Chromium-mode requirement only applies to the click platforms.
+  const platformIsRiichiCity = draft.platform?.kind === 'RiichiCity'
   const setApField = (patch: Partial<typeof ap>) =>
     setDraft({ ...draft, autoplay: { ...ap, ...patch } })
   const setMajsoulField = (patch: Partial<typeof ap.majsoul>) =>
@@ -838,7 +843,7 @@ function AutoplayCard({
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.enable_help')}
         </p>
-        {ap.enabled && !captureIsChromium && (
+        {ap.enabled && !captureIsChromium && !platformIsRiichiCity && (
           <p className="text-xs text-amber-500">
             {t('settings.autoplay.requires_chromium')}
           </p>
@@ -1044,6 +1049,19 @@ function AutoplayCard({
       </CardContent>
     </Card>
   )
+}
+
+/** Full-auto moved to the Game tab: the `FullAutoDialog` component there
+ *  owns the session start/stop flow and the queue options. */
+
+/** Mirror of `RiichiCityAutoplayConfig::default()` on the Rust side. */
+function defaultRiichiCityAutoplay(): AutoplayConfig['riichi_city'] {
+  return {
+    room: 'galaxy',
+    game_type: 'east_only',
+    galaxy_fallback_sun: false,
+    inter_game_delay_ms: 8000,
+  }
 }
 
 /** Mirror of `DelayModelConfig::default()` on the Rust side. */

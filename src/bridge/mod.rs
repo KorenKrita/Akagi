@@ -74,9 +74,10 @@ pub trait Bridge: Send {
 
 /// Slots the autoplay layer shares with a bridge.
 ///
-/// Every field is optional and platform-specific: only the chromium capture
-/// path wires them at all (the MITM path has no `Page` handle, so nothing
-/// consumes them), and each bridge fills in the subset its own autoplay needs.
+/// Every field is optional and platform-specific: the chromium capture path
+/// wires the browser-page slots (the MITM path has no `Page` handle), the
+/// MITM path wires the frame-injection slot, and each bridge fills in the
+/// subset its own autoplay needs.
 /// Bundled into one struct so adding a platform's slot doesn't grow the
 /// argument list of every constructor along the way.
 #[derive(Clone, Default)]
@@ -90,6 +91,9 @@ pub struct BridgeHooks {
     /// Tenhou: hand at Tenhou tile-index resolution plus the current decision
     /// window, needed to encode a client frame (see `autoplay::tenhou_state`).
     pub tenhou_state: Option<crate::autoplay::tenhou_state::SharedTenhouState>,
+    /// Riichi City: frame-injection gate, maintained by the bridge between
+    /// `cmd_enter_room` and `cmd_room_end` (see `autoplay::inject`).
+    pub riichi_inject: Option<crate::autoplay::inject::SharedInjectBus>,
 }
 
 /// Construct a bridge for the given platform.
@@ -113,6 +117,8 @@ pub fn for_platform(
         crate::config::Platform::Tenhou => {
             Box::new(TenhouBridge::new(flow_log, session).with_shared_state(hooks.tenhou_state))
         }
-        crate::config::Platform::RiichiCity => Box::new(RiichiCityBridge::new(flow_log, session)),
+        crate::config::Platform::RiichiCity => Box::new(
+            RiichiCityBridge::new(flow_log, session).with_inject(hooks.riichi_inject),
+        ),
     }
 }

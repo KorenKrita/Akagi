@@ -21,12 +21,16 @@
 
 #[cfg(windows)]
 use crate::util::NoConsoleWindow;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
+#[cfg(unix)]
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 #[cfg(windows)]
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-use tracing::{debug, info, warn};
+#[cfg(unix)]
+use tracing::debug;
+use tracing::{info, warn};
 
 /// How long to wait for a polite SIGTERM/`taskkill` to take effect before
 /// escalating to SIGKILL/`taskkill /F`.

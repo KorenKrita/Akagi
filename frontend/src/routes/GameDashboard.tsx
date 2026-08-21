@@ -29,6 +29,7 @@ import { renderTile } from '@/tiles/registry'
 import { AddTileMenu } from '@/components/AddTileMenu'
 import { DashboardOnboardingDialog } from '@/components/DashboardOnboardingDialog'
 import { OverlayToggle } from '@/components/OverlayToggle'
+import { FullAutoDialog } from '@/components/FullAutoDialog'
 
 const BOT_DISABLED_TOAST_ID = 'bot-disabled-warning'
 
@@ -42,6 +43,7 @@ export function GameDashboard() {
   const reset = useLayoutStore((s) => s.reset)
   const numPlayers = useNumPlayers()
   const botEnabled = useConfigStore((s) => s.config?.bot.enabled)
+  const platformKind = useConfigStore((s) => s.config?.platform.kind)
   const markOnboarded = useUiPrefsStore((s) => s.markDashboardOnboarded)
   const { width, containerRef, mounted } = useContainerWidth()
   // Auto-open once on the very first visit. Derived from the persisted flag at
@@ -94,6 +96,7 @@ export function GameDashboard() {
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-muted/20">
         <h1 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">{t('nav.game')}</h1>
         <div className="ml-auto flex items-center gap-2">
+          {platformKind === 'RiichiCity' && <FullAutoDialog />}
           <OverlayToggle />
           <AddTileMenu bp={bp} />
           <Button variant="ghost" size="sm" onClick={reset} className="text-xs">

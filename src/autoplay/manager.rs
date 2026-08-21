@@ -15,8 +15,10 @@
 
 use crate::autoplay::cdp_input::{dispatch_click_shaped, evaluate_canvas_rect};
 use crate::autoplay::context::{AutoplayContext, CanvasRect};
+use crate::autoplay::inject::InjectFrame;
 use crate::autoplay::majsoul::MajsoulAutoplay;
 use crate::autoplay::platform::{ActionContext, PlatformAutoplay, Step};
+use crate::autoplay::riichi_city::RiichiCityAutoplay;
 use crate::autoplay::tenhou::TenhouAutoplay;
 use crate::autoplay::verify::InputTicket;
 use crate::bot::BotResponse;
@@ -31,6 +33,7 @@ use riichienv_core::state_3p::legal_actions::GameState3PLegalActions;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast::error::RecvError, Mutex, RwLock};
+use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 
 /// How long before a cached `CanvasRect` is treated as stale and re-queried.
@@ -49,6 +52,9 @@ pub struct AutoplayManager {
     /// Majsoul synthesises clicks; Tenhou encodes a client frame.
     majsoul: MajsoulAutoplay,
     tenhou: TenhouAutoplay,
+    /// Riichi City: no page to click — plans a protocol frame the proxy
+    /// transmits (see `autoplay::inject`).
+    riichi: RiichiCityAutoplay,
     state: ManagerState,
     /// User Lua delay policy (hot-reloaded from disk; see
     /// `autoplay::delay::script`).
@@ -60,6 +66,13 @@ pub struct AutoplayManager {
 
 #[derive(Default)]
 struct ManagerState {
+    /// When the most recent mjai event arrived. The decision-window wait
+    /// anchors to this, NOT to when the bot response is handled: responses
+    /// queue behind earlier plans, and a handle-time anchor can land AFTER
+    /// the window already opened — the wait would then block on a condition
+    /// that can never become true and burn its full 15s bound (the round-
+    /// opening freezes of 2026-08-20).
+    last_event_at: Option<Instant>,
     last_kawa_tile: Option<String>,
     last_self_tsumo: Option<String>,
     self_riichi_accepted: bool,
@@ -96,6 +109,7 @@ impl AutoplayManager {
             notify,
             majsoul: MajsoulAutoplay::new(),
             tenhou: TenhouAutoplay::new(),
+            riichi: RiichiCityAutoplay::new(),
             state: ManagerState::default(),
             delay_script: crate::autoplay::delay::ScriptHost::default(),
             config_dir,
@@ -107,6 +121,15 @@ impl AutoplayManager {
         let mut bot_rx = response_bus.subscribe();
         let mut mjai_rx = self.mjai_bus.subscribe();
         info!("autoplay manager started");
+        // The round-advance watcher runs on its own subscription: at hand
+        // end the plan loop is busy draining stale plans and the OK press
+        // must not inherit that delay.
+        let advance_cfg = self.cfg.clone();
+        let advance_inject = self.ctx.inject.clone();
+        let advance_bus = self.mjai_bus.clone();
+        tauri::async_runtime::spawn(async move {
+            round_advance_watcher(advance_cfg, advance_inject, advance_bus).await;
+        });
 
         loop {
             tokio::select! {
@@ -119,7 +142,10 @@ impl AutoplayManager {
                     }
                 },
                 msg = mjai_rx.recv() => match msg {
-                    Ok(ev) => self.handle_mjai_event(&ev),
+                    Ok(ev) => {
+                        self.handle_mjai_event(&ev);
+                        self.handle_session_event(&ev).await;
+                    }
                     Err(RecvError::Lagged(n)) => warn!("autoplay: mjai bus lagged {n}"),
                     Err(RecvError::Closed) => {
                         info!("autoplay: mjai bus closed; exiting");
@@ -130,7 +156,59 @@ impl AutoplayManager {
         }
     }
 
+    /// Session advance: `StartGame` marks a queued match as landed;
+    /// `EndGame` counts it and queues the next after the inter-game
+    /// delay. (`EndKyoku` is the round-advance watcher's, not ours.)
+    async fn handle_session_event(&mut self, ev: &MjaiEvent) {
+        let session = self.ctx.session.clone();
+        match ev {
+            MjaiEvent::StartGame { .. } => session.note_game_started(),
+            MjaiEvent::EndGame { .. } => {
+                if !session.is_active() {
+                    return;
+                }
+                let status = session.status();
+                if !session.on_game_finished() {
+                    let _ = self.notify.send(
+                        crate::schema::Notification::info("Autoplay session finished").body(
+                            format!(
+                                "Played {} game(s){}; autoplay session ended.",
+                                status.games_completed + 1,
+                                status
+                                    .target_games
+                                    .map(|t| format!(" of {t}"))
+                                    .unwrap_or_default(),
+                            ),
+                        ),
+                    );
+                    return;
+                }
+                self.schedule_next_queue().await;
+            }
+            _ => {}
+        }
+    }
+
+    /// Queue the next Riichi City match after the inter-game delay.
+    async fn schedule_next_queue(&self) {
+        let rc = self.cfg.read().await.autoplay.riichi_city.clone();
+        let delay = crate::autoplay::session::inter_game_delay(rc.inter_game_delay_ms);
+        let cfg = self.cfg.clone();
+        let inject = self.ctx.inject.clone();
+        let session = self.ctx.session.clone();
+        let notify = self.notify.clone();
+        let config_dir = self.config_dir.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(delay).await;
+            run_queue_task(cfg, inject, session, notify, config_dir).await;
+        });
+    }
+
     async fn handle_bot_response(&mut self, resp: BotResponse) {
+        // The decision-window wait anchors to the triggering mjai event
+        // (see `ManagerState::last_event_at` and the SendFrame arm below).
+        // Falls back to now only if no event was ever seen.
+        let trigger_at = self.state.last_event_at.unwrap_or_else(Instant::now);
         // Re-read config every iteration so `cfg.autoplay.enabled` can be
         // toggled at runtime via the Settings UI without restarting.
         let cfg_guard = self.cfg.read().await;
@@ -139,6 +217,7 @@ impl AutoplayManager {
         }
         let cfg = cfg_guard.autoplay.majsoul.clone();
         let delay_cfg = cfg_guard.autoplay.delay.clone();
+        let delay_cap_ms = delay_cfg.no_budget_cap_ms;
         let platform_kind = cfg_guard.platform.kind;
         drop(cfg_guard);
 
@@ -221,6 +300,7 @@ impl AutoplayManager {
 
         let platform: &dyn PlatformAutoplay = match platform_kind {
             crate::config::Platform::Tenhou => &self.tenhou,
+            crate::config::Platform::RiichiCity => &self.riichi,
             _ => &self.majsoul,
         };
         // Every reply that gets here is one the engine asked for: the bot
@@ -236,9 +316,23 @@ impl AutoplayManager {
             }
         }
 
-        let plan = platform.plan(&action_ctx);
+        let mut plan = platform.plan(&action_ctx);
         if plan.steps.is_empty() {
             return;
+        }
+        // Riichi City: the delay script's fat tail has no server budget to
+        // clamp it (there is none on this platform), and a long-thought
+        // sample on a decision that queued behind earlier plans lands tens
+        // of seconds into a ~25s window — occasionally too late. Bound the
+        // total by the configured no-budget cap and credit the time already
+        // spent since the triggering event, so a late-handled response
+        // shortens its own sleep instead of stacking on top of the queue.
+        if platform_kind == crate::config::Platform::RiichiCity {
+            // Cap below the configured no-budget cap: observed Riichi City
+            // decision windows run ~15s (5 fixed + ~10), so a full 15s
+            // think after any queueing overshoots the window.
+            let elapsed_ms = trigger_at.elapsed().as_millis() as u32;
+            clamp_first_sleep(&mut plan, delay_cap_ms.min(10_000), elapsed_ms);
         }
 
         debug!(
@@ -428,6 +522,103 @@ impl AutoplayManager {
                         return;
                     }
                     drop(page_guard);
+                }
+                Step::SendFrame(bytes) => {
+                    // A gameplay frame with no game in progress is void —
+                    // typically a declined-call plan still draining from
+                    // the finished game's backlog.
+                    if !self.ctx.inject.in_game() {
+                        debug!(
+                            "autoplay: dropping frame for {:?} — no game in progress",
+                            resp.action
+                        );
+                        return;
+                    }
+                    // Wait for the decision window to open: acting before
+                    // it does is rejected (rsp code 1). State, not
+                    // timestamps — the dealer's opening window trails the
+                    // deal by seconds, and clock anchors drift when plans
+                    // queue.
+                    if !self.ctx.inject.window_is_open() {
+                        let deadline = Instant::now() + Duration::from_secs(15);
+                        while Instant::now() < deadline {
+                            if self.ctx.inject.window_is_open() {
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(150)).await;
+                        }
+                    }
+                    // Keep a minimum visible think after the timer
+                    // renders, however the sleep was clamped.
+                    const MIN_VISIBLE_THINK_MS: u64 = 2_000;
+                    if let Some(opened) = self.ctx.inject.window_opened_at() {
+                        let visible_ms = opened.elapsed().as_millis() as u64;
+                        if visible_ms < MIN_VISIBLE_THINK_MS {
+                            tokio::time::sleep(Duration::from_millis(
+                                MIN_VISIBLE_THINK_MS - visible_ms,
+                            ))
+                            .await;
+                        }
+                    }
+                    let ticket = self.ctx.inject.rsp_ticket();
+                    let mut acked = false;
+                    for attempt in 0..=cfg.click_retries {
+                        if !self.ctx.inject.send(InjectFrame {
+                            gameplay: true,
+                            bytes: bytes.clone(),
+                        }) {
+                            warn!(
+                                "autoplay: no injection relay subscribed — is capture running? \
+                                 dropping frame for {:?}",
+                                resp.action
+                            );
+                            return;
+                        }
+                        info!(
+                            "autoplay: injected frame for {:?} (attempt {attempt})",
+                            resp.action
+                        );
+                        // The server's round trip was ~100ms in the
+                        // capture; the floor keeps a short
+                        // verify_input_ms from spuriously retrying.
+                        let wait = u64::from(cfg.verify_input_ms.max(500));
+                        let deadline = Instant::now() + Duration::from_millis(wait);
+                        loop {
+                            if self.ctx.inject.rsp_since(ticket) {
+                                acked = true;
+                                break;
+                            }
+                            if Instant::now() >= deadline {
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                        }
+                        if acked {
+                            break;
+                        }
+                        warn!(
+                            "autoplay: no rsp_game_action within {wait}ms for {:?} \
+                             (attempt {attempt})",
+                            resp.action
+                        );
+                    }
+                    if acked {
+                        let code = self.ctx.inject.last_rsp_code();
+                        if code != 0 {
+                            warn!(
+                                "autoplay: the server rejected {:?} (rsp code {code})",
+                                resp.action
+                            );
+                        } else if cfg.click_retries > 0 {
+                            debug!("autoplay: rsp ok for {:?}", resp.action);
+                        }
+                    } else {
+                        warn!(
+                            "autoplay: {:?} was never answered by the server — the action \
+                             did not happen",
+                            resp.action
+                        );
+                    }
                 }
             }
         }
@@ -645,7 +836,8 @@ impl AutoplayManager {
                 Step::Sleep { .. }
                 | Step::DomClick { .. }
                 | Step::Discard { .. }
-                | Step::AwaitReady { .. } => None,
+                | Step::AwaitReady { .. }
+                | Step::SendFrame(_) => None,
             })
             .collect();
         if clicks.is_empty() {
@@ -788,18 +980,24 @@ impl AutoplayManager {
     }
 
     fn handle_mjai_event(&mut self, ev: &MjaiEvent) {
+        // Every event refreshes the decision-window anchor (see
+        // `ManagerState::last_event_at`).
+        let now = Instant::now();
+        self.state.last_event_at = Some(now);
         match ev {
             MjaiEvent::StartGame { id, .. } => {
                 // Capture our seat directly from the StartGame event rather
                 // than going through the tracker. This avoids the try_lock
-                // race entirely and makes cached_our_seat available from the
-                // very first event of the game.
+                // race entirely and makes cached_our_seat available from
+                // the very first event of the game.
                 let seat = *id;
                 self.state = ManagerState::default();
                 self.state.cached_our_seat = seat;
+                self.state.last_event_at = Some(now);
             }
             MjaiEvent::EndGame { .. } => {
                 self.state = ManagerState::default();
+                self.state.last_event_at = Some(now);
             }
             MjaiEvent::StartKyoku { .. } | MjaiEvent::EndKyoku => {
                 // Per-kyoku reset: keep last seen rect cache and cached seat,
@@ -816,6 +1014,7 @@ impl AutoplayManager {
                 self.state.canvas_rect_at = canvas_at;
                 self.state.cached_our_seat = cached_seat;
                 self.state.dead_clicks = dead_clicks;
+                self.state.last_event_at = Some(now);
             }
             MjaiEvent::Tsumo { actor, pai } => {
                 if let Some(seat) = self.our_seat_cached() {
@@ -934,6 +1133,319 @@ fn retry_slice(clicks: &[(f64, f64)], attempt: u32) -> &[(f64, f64)] {
 /// Capped so a user-configured long hold cannot escalate past 2 s.
 fn retry_hold_ms(base: u32, attempt: u32) -> u32 {
     base.saturating_mul(attempt + 2).min(2_000)
+}
+
+/// Bound a plan's opening sleep by `cap` (0 = uncapped, matching the
+/// `no_budget_cap_ms` config semantics) and credit `elapsed_ms` already
+/// spent since the decision's trigger. Only the first step is touched —
+/// it is the thinking delay; later steps are inter-action gaps.
+fn clamp_first_sleep(plan: &mut crate::autoplay::PlanResult, cap: u32, elapsed_ms: u32) {
+    let cap = if cap == 0 { u32::MAX } else { cap };
+    if let Some(Step::Sleep { duration_ms }) = plan.steps.first_mut() {
+        *duration_ms = (*duration_ms).min(cap).saturating_sub(elapsed_ms);
+    }
+}
+
+/// How long the galaxy queue may run empty before the sun fallback is
+/// added (matching the client's "find a sun table" 2-minute timer).
+const GALAXY_FALLBACK_AFTER: Duration = Duration::from_secs(120);
+
+/// How long a queue attempt waits for a table before the session gives
+/// up (finding one in the higher rooms routinely takes minutes).
+const QUEUE_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Queue the first match of a session immediately — called from the
+/// session-start IPC when no game is in progress.
+pub fn spawn_queue_task(
+    cfg: Arc<RwLock<AppConfig>>,
+    inject: crate::autoplay::inject::SharedInjectBus,
+    session: crate::autoplay::session::SharedAutoplaySession,
+    notify: NotifyBus,
+    config_dir: std::path::PathBuf,
+) {
+    tauri::async_runtime::spawn(async move {
+        run_queue_task(cfg, inject, session, notify, config_dir).await;
+    });
+}
+
+async fn run_queue_task(
+    cfg: Arc<RwLock<AppConfig>>,
+    inject: crate::autoplay::inject::SharedInjectBus,
+    session: crate::autoplay::session::SharedAutoplaySession,
+    notify: NotifyBus,
+    config_dir: std::path::PathBuf,
+) {
+    if let Err(reason) = queue_match(&cfg, &inject, &session, &notify, &config_dir).await
+    {
+        session.stop(&reason);
+        warn!("autoplay session: {reason}");
+        let _ = notify.send(
+            crate::schema::Notification::error("Autoplay session stopped").body(reason),
+        );
+    }
+}
+
+/// Book one ranked match over the lobby HTTP API and wait for the table.
+/// One attempt: on timeout the queues are left and the session stops. An
+/// `Err` stops the session with that reason; `Ok(())` means a match
+/// started (or the session was already over).
+async fn queue_match(
+    cfg: &Arc<RwLock<AppConfig>>,
+    inject: &crate::autoplay::inject::SharedInjectBus,
+    session: &crate::autoplay::session::SharedAutoplaySession,
+    notify: &NotifyBus,
+    config_dir: &std::path::Path,
+) -> Result<(), String> {
+    use crate::bridge::riichi_city::lobby;
+
+    if !session.is_active() {
+        return Ok(());
+    }
+    let rc = cfg.read().await.autoplay.riichi_city.clone();
+    let deviceid = lobby::load_or_create_device_id(config_dir)
+        .map_err(|e| format!("could not persist the lobby device id: {e:#}"))?;
+    let creds = inject.lobby_credentials().ok_or_else(|| {
+        "not connected — log into Riichi City with capture running first".to_string()
+    })?;
+    let client = lobby::LobbyClient::new(
+        rc.queue_web_base
+            .as_deref()
+            .unwrap_or(lobby::DEFAULT_WEB_BASE),
+        lobby::LobbyAuth::from_credentials(&creds, deviceid, rc.channel.clone()),
+    );
+    let classifies = client
+        .read_classifies()
+        .await
+        .map_err(|e| format!("could not read the ranked-room list: {e:#}"))?;
+    let fallback_classify = if rc.room == crate::config::RiichiRoom::Galaxy
+        && rc.galaxy_fallback_sun
+    {
+        lobby::select_classify(&classifies, crate::config::RiichiRoom::Sun, rc.game_type)
+            .cloned()
+    } else {
+        None
+    };
+
+    // The generation snapshot is the "a match started" signal: the
+    // StartGame handler bumps it when the booked table actually opens.
+    let generation = session.start_generation();
+    let classify =
+        lobby::select_classify(&classifies, rc.room, rc.game_type).ok_or_else(|| {
+            "the configured room / game length is not offered right now".to_string()
+        })?;
+    let env = client
+        .start_stage(&classify.id)
+        .await
+        .map_err(|e| format!("the queue request failed: {e:#}"))?;
+    if env.code != 0 {
+        // Never retried: the interesting refusals (identity challenge,
+        // AI-ban notice, AFK penalty) all mean a human must act.
+        return Err(format!(
+            "queueing was refused: {}",
+            lobby::start_stage_failure_reason(env.code)
+        ));
+    }
+    info!("autoplay session: queued a match");
+    session.note_queuing();
+    let _ = notify.send(
+        crate::schema::Notification::info("Autoplay session")
+            .body("Queued for a match — waiting for a table."),
+    );
+    let queued_at = Instant::now();
+    let deadline = queued_at + QUEUE_TIMEOUT;
+    let mut fell_back = false;
+    loop {
+        if session.start_generation() != generation {
+            session.clear_queue_wait();
+            let _ = notify.send(
+                crate::schema::Notification::info("Autoplay session")
+                    .body("Match found — a new game is starting."),
+            );
+            return Ok(()); // matched — the new game drives itself
+        }
+        if !session.is_active() {
+            session.clear_queue_wait();
+            leave_queue(&client, inject).await;
+            return Ok(());
+        }
+        if !fell_back {
+            if let Some(sun) = &fallback_classify {
+                if queued_at.elapsed() >= GALAXY_FALLBACK_AFTER {
+                    // Additive like the client: sun is booked alongside
+                    // galaxy — whichever table forms first wins. One
+                    // attempt; a refused add leaves the galaxy queue
+                    // running.
+                    info!(
+                        "autoplay session: no galaxy table in {}s — \
+                         also queueing sun",
+                        GALAXY_FALLBACK_AFTER.as_secs()
+                    );
+                    fell_back = true;
+                    match client.start_stage(&sun.id).await {
+                        Ok(env) if env.code == 0 => {
+                            let _ = notify.send(
+                                crate::schema::Notification::info("Autoplay session").body(
+                                    "No galaxy table in 2 minutes — now also queueing sun.",
+                                ),
+                            );
+                        }
+                        Ok(env) => warn!(
+                            "autoplay session: sun queue add refused (code {}) — \
+                             staying in the galaxy queue",
+                            env.code
+                        ),
+                        Err(e) => warn!(
+                            "autoplay session: sun queue add failed: {e:#} — \
+                             staying in the galaxy queue"
+                        ),
+                    }
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1_000)).await;
+    }
+    warn!(
+        "autoplay session: no game within {}s — stopping",
+        QUEUE_TIMEOUT.as_secs()
+    );
+    session.clear_queue_wait();
+    leave_queue(&client, inject).await;
+    Err(format!(
+        "no match was found within {} minutes — session stopped",
+        QUEUE_TIMEOUT.as_secs() / 60
+    ))
+}
+
+/// Cancel every live queue (each by its own matchID; the fallback runs
+/// two at once).
+async fn leave_queue(
+    client: &crate::bridge::riichi_city::lobby::LobbyClient,
+    inject: &crate::autoplay::inject::SharedInjectBus,
+) {
+    for (_, match_id) in inject.queue_states() {
+        match client.cancel_stage(&match_id).await {
+            Ok(env) if env.code == 0 => info!("autoplay session: left a queue"),
+            Ok(env) => warn!(
+                "autoplay session: leaving a queue was refused (code {})",
+                env.code
+            ),
+            Err(e) => warn!("autoplay session: leaving a queue failed: {e:#}"),
+        }
+    }
+    inject.clear_queue_state();
+}
+
+async fn autoplay_enabled_for_riichi(cfg: &Arc<RwLock<AppConfig>>) -> bool {
+    let guard = cfg.read().await;
+    guard.autoplay.enabled && guard.platform.kind == crate::config::Platform::RiichiCity
+}
+
+/// Dedicated round-advance loop, on its own `MjaiBus` subscription so
+/// end-of-hand plan backlogs cannot delay it. Advancing past the scoring
+/// screen is one `req_user_prepare` per `EndKyoku`, sent only after the
+/// client has actually rendered the OK button (sighted via
+/// `vision::capture_ok_button`, once a second). No timed fallback: if the
+/// button is never sighted, the server's own countdown advances the
+/// table. `EndGame` needs nothing — the client tears its end screens down
+/// when the next match's `cmd_enter_room` arrives.
+async fn round_advance_watcher(
+    cfg: Arc<RwLock<AppConfig>>,
+    inject: crate::autoplay::inject::SharedInjectBus,
+    bus: MjaiBus,
+) {
+    const POLL_INTERVAL: Duration = Duration::from_secs(1);
+    /// Give up on sighting after this long — the client's own countdown is
+    /// 59s, so anything past this means the window is gone or the detector
+    /// is broken, and we must not fire blind.
+    const SIGHTING_TIMEOUT: Duration = Duration::from_secs(90);
+
+    let mut rx = bus.subscribe();
+    loop {
+        match rx.recv().await {
+            Ok(ev) => match ev {
+                MjaiEvent::EndKyoku => {
+                    if !autoplay_enabled_for_riichi(&cfg).await {
+                        continue;
+                    }
+                    let (_, yakus) = inject.settlement();
+                    let mut ticker = tokio::time::interval(POLL_INTERVAL);
+                    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                    let deadline = tokio::time::Instant::now() + SIGHTING_TIMEOUT;
+                    let mut sighted = false;
+                    let mut aborted = false;
+                    loop {
+                        tokio::select! {
+                            _ = ticker.tick() => {
+                                if tokio::time::Instant::now() >= deadline {
+                                    break;
+                                }
+                                let hit = tauri::async_runtime::spawn_blocking(
+                                    crate::autoplay::riichi_city::vision::capture_ok_button,
+                                )
+                                .await
+                                .ok()
+                                .flatten();
+                                if let Some(sight) = hit {
+                                    debug!(
+                                        pixels = sight.pixels,
+                                        box = ?(sight.x0, sight.y0, sight.x1, sight.y1),
+                                        "autoplay: OK button sighted"
+                                    );
+                                    sighted = true;
+                                    break;
+                                }
+                            }
+                            msg = rx.recv() => match msg {
+                                // The round moved on without us (server
+                                // countdown, manual click) — void cycle.
+                                Ok(_) => {
+                                    aborted = true;
+                                    break;
+                                }
+                                Err(RecvError::Lagged(_)) => continue,
+                                Err(RecvError::Closed) => return,
+                            }
+                        }
+                    }
+                    if aborted || !sighted {
+                        if !aborted {
+                            warn!(
+                                "autoplay: OK button never sighted within {}s; \
+                                 not advancing this round",
+                                SIGHTING_TIMEOUT.as_secs()
+                            );
+                        }
+                        continue;
+                    }
+                    tokio::time::sleep(Duration::from_millis(ok_button_beat_ms(yakus))).await;
+                    info!("autoplay: sending round-advance (req_user_prepare)");
+                    if !inject.send(InjectFrame {
+                        gameplay: true,
+                        bytes: crate::bridge::riichi_city::build::user_prepare(),
+                    }) {
+                        warn!("autoplay: no injection relay for the round-advance press");
+                    }
+                }
+                MjaiEvent::EndGame { .. } => {}
+                _ => {}
+            },
+            Err(RecvError::Lagged(_)) => continue,
+            Err(RecvError::Closed) => return,
+        }
+    }
+}
+
+/// Reading beat between sighting the OK button and pressing it: the button
+/// only renders once the breakdown is up, so this is pure viewing time,
+/// scaled by the number of yaku lines in the winning hand (each line past
+/// two adds half a second). Draws count as zero yakus.
+fn ok_button_beat_ms(yakus: u32) -> u64 {
+    const BASE: u64 = 1_500;
+    const CAP: u64 = 4_000;
+    (BASE + u64::from(yakus.saturating_sub(2)) * 500).min(CAP)
 }
 
 /// Spawn point for the autoplay loop. Wired by `crate::lib::run` so the
@@ -1124,6 +1636,47 @@ mod tests {
         assert_eq!(retry_hold_ms(120, 1), 360);
         assert_eq!(retry_hold_ms(1_500, 1), 2_000, "capped at 2s");
         assert_eq!(retry_hold_ms(u32::MAX, 5), 2_000, "no overflow");
+    }
+
+    /// A fat-tailed script sample is bounded by the no-budget cap, and time
+    /// already spent since the trigger is credited — a queued decision
+    /// shortens its own sleep instead of stacking.
+    #[test]
+    fn first_sleep_is_capped_and_credits_elapsed_queue_time() {
+        use crate::autoplay::PlanResult;
+        let mk = |ms: u32| PlanResult {
+            steps: vec![Step::Sleep { duration_ms: ms }],
+        };
+        let mut p = mk(19_500);
+        clamp_first_sleep(&mut p, 15_000, 6_300);
+        assert_eq!(p.steps[0], Step::Sleep { duration_ms: 8_700 });
+
+        // Small sample, no queue: untouched.
+        let mut p = mk(2_000);
+        clamp_first_sleep(&mut p, 15_000, 300);
+        assert_eq!(p.steps[0], Step::Sleep { duration_ms: 1_700 });
+
+        // Heavily queued: sleep gone, but never negative.
+        let mut p = mk(3_000);
+        clamp_first_sleep(&mut p, 15_000, 9_000);
+        assert_eq!(p.steps[0], Step::Sleep { duration_ms: 0 });
+
+        // cap 0 = uncapped: only elapsed is credited.
+        let mut p = mk(19_500);
+        clamp_first_sleep(&mut p, 0, 500);
+        assert_eq!(p.steps[0], Step::Sleep { duration_ms: 19_000 });
+    }
+
+    /// Draws and ≤2-yaku hands get the flat base; each yaku line past two
+    /// adds half a second; capped.
+    #[test]
+    fn ok_button_beat_scales_with_yaku_count_only() {
+        assert_eq!(ok_button_beat_ms(0), 1_500, "draw");
+        assert_eq!(ok_button_beat_ms(1), 1_500, "one yaku");
+        assert_eq!(ok_button_beat_ms(2), 1_500, "two yaku lines");
+        assert_eq!(ok_button_beat_ms(3), 2_000, "one extra line");
+        assert_eq!(ok_button_beat_ms(5), 3_000, "three extra lines");
+        assert_eq!(ok_button_beat_ms(9), 4_000, "capped");
     }
 
     /// Regression (stale discard into a live board): the client's discard

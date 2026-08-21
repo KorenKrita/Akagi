@@ -354,6 +354,10 @@
     "unsaved_title": "尚未保存的更改",
     "unsaved_desc": "你有尚未保存的设置更改。请选择保存后离开、放弃更改，或留在此页继续编辑。",
     "save_and_leave": "保存并离开",
+    "fullauto": {
+      "title": "全自动（麻雀一番街）",
+      "description": "每局结束后自动排下一场：选择房间与对局长度、局间等待时间，以及匹配耐心程度。需要先启用上方的自动打牌；自动排赛部分仍在开发中。"
+    },
     "autoplay": {
       "title": "自动打牌",
       "enable": "启用自动打牌",
@@ -381,7 +385,23 @@
       "min_delay": "最小延迟（ms）",
       "min_delay_hint": "所有动作的安全下限：雀魂需要时间渲染画面，过早点击会被吃掉。两种模式均适用，脚本无法低于此值。",
       "min_button_delay": "按钮最小延迟（ms）",
-      "min_button_delay_hint": "吃/碰/杠/和/跳过/立直等按钮的更高下限——按钮要等打牌动画结束加上自身弹出动画才会出现，比手牌渲染更晚。若仍出现按钮没点到的情况请调高此值。"
+      "min_button_delay_hint": "吃/碰/杠/和/跳过/立直等按钮的更高下限——按钮要等打牌动画结束加上自身弹出动画才会出现，比手牌渲染更晚。若仍出现按钮没点到的情况请调高此值。",
+      "inter_game_delay": "局间间隔（毫秒）",
+      "inter_game_delay_hint": "麻雀一番街自动排赛：一局结束后等待多久再排下一局（在 [x/2, x] 内随机）。",
+      "queue_room": "房间",
+      "queue_room_hint": "麻雀一番街自动排赛：排位对局所在的房间（星 < 月 < 日 < 银河）。",
+      "queue_game_type": "对局长度",
+      "queue_game_type_hint": "麻雀一番街自动排赛：东风战耗时约为半庄战的一半。",
+      "queue_game_type_east_only": "东风战",
+      "queue_game_type_hanchan": "半庄战",
+      "queue_fallback_sun": "2 分钟后接受日之房间",
+      "session_games_placeholder": "局数（留空为无限）",
+      "session_start": "开始会话",
+      "session_stop": "停止",
+      "session_started": "自动对局会话已开始",
+      "session_running": "会话进行中——已完成局数：{{count}}",
+      "session_stopped": "会话已停止",
+      "session_idle": "麻雀一番街自动排赛：连续打 N 局（留空为无限），每局结束后自动排下一局。"
     },
     "overlay": "建议悬浮窗",
     "overlay_enabled": "显示悬浮窗",
@@ -636,6 +656,10 @@
   "game": {
     "bot_disabled_title": "Bot 已停用",
     "bot_disabled_desc": "请至「设置」启用 Bot 才能获得实时建议。",
+    "fullauto_button": "开始全自动会话",
+    "fullauto_running": "全自动（{{count}}）",
+    "fullauto_queued": "排赛中 {{time}}",
+    "fullauto_title": "全自动会话",
     "onboarding": {
       "title": "自定义你的面板",
       "intro": "每个面板都是可移动的区块，这里教你把它们排成喜欢的样子。",

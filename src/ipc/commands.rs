@@ -68,6 +68,75 @@ fn entry_to_info(e: &BotEntry) -> BotInfo {
 
 type CmdResult<T> = Result<T, String>;
 
+/// Start an auto-queue autoplay session (Riichi City): after each finished
+/// game the next match is queued automatically, until `games` games have
+/// been played (`None` = until stopped). Requires autoplay enabled and the
+/// Riichi City platform. Starting from the lobby (no game in progress)
+/// books the first match immediately.
+#[tauri::command]
+pub async fn autoplay_session_start(
+    games: Option<u32>,
+    state: State<'_, AppState>,
+) -> CmdResult<crate::autoplay::session::AutoplaySessionStatus> {
+    {
+        let cfg = state.config.read().await;
+        if !cfg.autoplay.enabled {
+            return Err(
+                "Enable autoplay (Settings → Autoplay) before starting a session".to_string(),
+            );
+        }
+        if cfg.platform.kind != crate::config::Platform::RiichiCity {
+            return Err(
+                "Auto-queuing is currently only supported for Riichi City".to_string(),
+            );
+        }
+    }
+    if !state.autoplay_manager_started.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(
+            "The autoplay manager is not running — toggle autoplay on and try again".to_string(),
+        );
+    }
+    state
+        .autoplay_context
+        .session
+        .start(games)
+        .map_err(|e| e.to_string())?;
+    // Full-auto from the lobby: with no game in progress, book the first
+    // match right away instead of waiting for a game to finish.
+    if !state.autoplay_context.inject.in_game() {
+        let config_dir = state
+            .config_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        crate::autoplay::manager::spawn_queue_task(
+            state.config.clone(),
+            state.autoplay_context.inject.clone(),
+            state.autoplay_context.session.clone(),
+            state.notify_bus.clone(),
+            config_dir,
+        );
+    }
+    Ok(state.autoplay_context.session.status())
+}
+
+/// The stop button: the game in progress plays out; no further match is
+/// queued.
+#[tauri::command]
+pub async fn autoplay_session_stop(
+    state: State<'_, AppState>,
+) -> CmdResult<crate::autoplay::session::AutoplaySessionStatus> {
+    state.autoplay_context.session.stop("stopped by user");
+    Ok(state.autoplay_context.session.status())
+}
+
+#[tauri::command]
+pub async fn autoplay_session_status(
+    state: State<'_, AppState>,
+) -> CmdResult<crate::autoplay::session::AutoplaySessionStatus> {
+    Ok(state.autoplay_context.session.status())
+}
+
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> CmdResult<AppConfig> {
     Ok(state.config.read().await.clone())
@@ -1617,6 +1686,9 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::sync_bot_deps,
             $crate::ipc::commands::delete_bot,
             $crate::ipc::commands::start_capture,
+            $crate::ipc::commands::autoplay_session_start,
+            $crate::ipc::commands::autoplay_session_stop,
+            $crate::ipc::commands::autoplay_session_status,
             $crate::ipc::commands::stop_capture,
             $crate::ipc::commands::restart_capture,
             $crate::ipc::commands::get_capture_status,

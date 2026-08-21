@@ -124,6 +124,9 @@ impl CaptureBackend for ChromiumBackend {
                     time_budget: Some(a.time_budget.clone()),
                     input_watch: Some(a.input_watch.clone()),
                     tenhou_state: Some(a.tenhou_state.clone()),
+                    // Chromium has no injection relay; Riichi City autoplay
+                    // only runs on the MITM path.
+                    riichi_inject: None,
                 })
                 .unwrap_or_default(),
         ));

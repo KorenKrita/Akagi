@@ -42,6 +42,14 @@ pub struct AutoplayContext {
     /// Read by the Tenhou autoplay planner, which encodes a client frame
     /// rather than synthesising clicks.
     pub tenhou_state: crate::autoplay::tenhou_state::SharedTenhouState,
+    /// Frame injection channel for platforms whose client is not a browser
+    /// page (Riichi City): the manager sends built wire frames, the MITM
+    /// proxy's client→server relay transmits them. The `in_game` gate is
+    /// maintained by the Riichi City bridge. See `autoplay::inject`.
+    pub inject: crate::autoplay::inject::SharedInjectBus,
+    /// Auto-queue session (game count / stop / status), driven by the
+    /// manager on end-of-game. See `autoplay::session`.
+    pub session: crate::autoplay::session::SharedAutoplaySession,
 }
 
 impl AutoplayContext {
