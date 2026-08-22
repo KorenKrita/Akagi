@@ -660,6 +660,7 @@
     "fullauto_running": "Full auto ({{count}})",
     "fullauto_queued": "in queue {{time}}",
     "fullauto_waiting": "waiting {{time}}",
+    "fullauto_room_auto_switched": "Switched to the highest room your rank allows",
     "fullauto_title": "Full-auto session",
     "onboarding": {
       "title": "Customize your board",

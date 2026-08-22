@@ -52,9 +52,46 @@ export function FullAutoDialog() {
   const [status, setStatus] = useState<AutoplaySessionStatus | null>(null)
   const [games, setGames] = useState('')
   const [busy, setBusy] = useState(false)
+  const [availableRooms, setAvailableRooms] = useState<string[] | null>(null)
 
   const rc = config?.autoplay.riichi_city
   const [draft, setDraft] = useState<AutoplayConfig['riichi_city'] | null>(null)
+
+  // Fetch the rooms the player can queue in when the dialog opens, and
+  // again after each completed game (a rank-up can unlock a higher room).
+  // The server's classify list already gates by rank; null = all rooms
+  // shown (not connected or fetch failed).
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    invoke<{ rooms: string[] }>('riichi_city_available_rooms')
+      .then((result) => {
+        const rooms = result.rooms
+        if (alive && rooms.length > 0) {
+          setAvailableRooms(rooms)
+          // If the configured room isn't offered, auto-select the
+          // highest available.
+          setDraft((d) => {
+            const base = d ?? rc
+            if (!base) return d
+            if (rooms.includes(base.room)) return d
+            const highest = ['galaxy', 'sun', 'moon', 'star'].find((r) =>
+              rooms.includes(r),
+            )
+            return highest
+              ? { ...base, room: highest as AutoplayConfig['riichi_city']['room'] }
+              : d
+          })
+        }
+      })
+      .catch(() => {
+        // Not connected or fetch failed — show all rooms.
+        if (alive) setAvailableRooms(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [open, rc, status?.games_completed])
 
   // The dialog body renders only when open; the draft is nil until then,
   // so the config seeds it on first render rather than in an effect.
@@ -160,9 +197,14 @@ export function FullAutoDialog() {
                 <Label>{t('settings.autoplay.queue_room')}</Label>
                 <Select
                   value={activeDraft.room}
-                  onValueChange={(v) =>
-                    patch({ room: v as AutoplayConfig['riichi_city']['room'] })
-                  }
+                  onValueChange={(v) => {
+                    const room = v as AutoplayConfig['riichi_city']['room']
+                    patch(
+                      room === 'galaxy'
+                        ? { room }
+                        : { room, galaxy_fallback_sun: false },
+                    )
+                  }}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
@@ -170,12 +212,21 @@ export function FullAutoDialog() {
                   {/* popper: item-aligned content detaches from its
                       trigger inside a portaled dialog. */}
                   <SelectContent position="popper">
-                    <SelectItem value="star">Star</SelectItem>
-                    <SelectItem value="moon">Moon</SelectItem>
-                    <SelectItem value="sun">Sun</SelectItem>
-                    <SelectItem value="galaxy">Galaxy</SelectItem>
+                    {(['star', 'moon', 'sun', 'galaxy'] as const)
+                      .filter((r) => !availableRooms || availableRooms.includes(r))
+                      .map((r) => (
+                        <SelectItem key={r} value={r}>
+                          {r.charAt(0).toUpperCase() + r.slice(1)}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
+                {availableRooms &&
+                  !availableRooms.includes(activeDraft.room) && (
+                    <p className="text-xs text-muted-foreground">
+                      {t('game.fullauto_room_auto_switched')}
+                    </p>
+                  )}
               </div>
               <div className="grid gap-1.5">
                 <Label>{t('settings.autoplay.queue_game_type')}</Label>
@@ -202,16 +253,17 @@ export function FullAutoDialog() {
               </div>
             </div>
 
-            {/* The sun-fallback option only exists in the galaxy room. */}
+            {/* The sun-fallback option only exists in the galaxy room,
+                inline with the label rather than pushed to the far right. */}
             {activeDraft.room === 'galaxy' && (
-              <div className="flex items-center justify-between gap-3">
-                <Label className="text-xs font-normal">
-                  {t('settings.autoplay.queue_fallback_sun')}
-                </Label>
+              <div className="flex items-center gap-2">
                 <Switch
                   checked={activeDraft.galaxy_fallback_sun}
                   onCheckedChange={(v) => patch({ galaxy_fallback_sun: v })}
                 />
+                <Label className="text-xs font-normal">
+                  {t('settings.autoplay.queue_fallback_sun')}
+                </Label>
               </div>
             )}
 

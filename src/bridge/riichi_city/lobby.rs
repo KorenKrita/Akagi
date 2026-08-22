@@ -68,6 +68,38 @@ pub fn select_classify(
     })
 }
 
+/// The rooms a player of the given 4-player stage level can queue in.
+/// Scale: 1-10 = kyu, 11 = 1-dan, … 17 = 7-dan, 18+ = 8-dan+.
+/// Room tiers (overlapping at boundaries): Star kyu–2dan, Moon 1–4dan,
+/// Sun 4–7dan (8dan+ only via the galaxy fallback), Galaxy 7dan+.
+pub fn rooms_for_stage_level(level: i64) -> Vec<&'static str> {
+    match level {
+        1..=10 => vec!["star"],
+        11..=12 => vec!["star", "moon"],
+        13 => vec!["moon"],
+        14 => vec!["moon", "sun"],
+        15..=16 => vec!["sun"],
+        17 => vec!["sun", "galaxy"],
+        _ => vec!["galaxy"],
+    }
+}
+
+/// Extract the player's 4-player stage level from the `userInfo` object
+/// returned alongside `readStageClassifies`. Measured wire shape:
+/// `{"3": {"stageLevel": 4, …}, "4": {"stageLevel": 18, …}}` — the
+/// player-count keys sit directly on `userInfo`.
+pub fn stage_level_from_user_info(user_info: &Value) -> Option<i64> {
+    user_info
+        .pointer("/4/stageLevel")
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            user_info
+                .pointer("/stageLevelMap/4")
+                .and_then(Value::as_i64)
+        })
+        .or_else(|| user_info.get("stageLevel").and_then(Value::as_i64))
+}
+
 /// Human-facing reason for a refused `startStage`. Non-zero codes are
 /// never retried: the interesting ones (identity-verification challenge,
 /// AI-ban notice, AFK penalty) all mean "a human must act in the client".
@@ -125,6 +157,9 @@ impl LobbyAuth {
 pub struct Envelope {
     pub code: i64,
     pub data: Value,
+    /// The `userInfo` field present on `readStageClassifies` (player rank
+    /// context; `None` on endpoints that don't carry it).
+    pub user_info: Option<Value>,
 }
 
 impl Envelope {
@@ -142,7 +177,11 @@ impl Envelope {
                 decrypt_analysis(enc)?
             }
         };
-        Ok(Envelope { code, data })
+        Ok(Envelope {
+            code,
+            data,
+            user_info: v.get("userInfo").filter(|u| !u.is_null()).cloned(),
+        })
     }
 }
 
@@ -276,6 +315,31 @@ impl LobbyClient {
             anyhow::bail!("lobby {path} -> HTTP {status}: {snippet}");
         }
         Envelope::parse(&text)
+    }
+
+    /// The ranked queue classes + the player's rank context (raw
+    /// `userInfo` from the same response).
+    pub async fn read_classifies_with_user(&self) -> Result<(Vec<Classify>, Option<Value>)> {
+        let env = self.post("/lobbys/readStageClassifies", None).await?;
+        if env.code != 0 {
+            anyhow::bail!("readStageClassifies refused (code {})", env.code);
+        }
+        let arr = env
+            .data
+            .as_array()
+            .ok_or_else(|| anyhow!("readStageClassifies returned no list"))?;
+        let classifies: Vec<Classify> = arr
+            .iter()
+            .filter_map(|c| {
+                Some(Classify {
+                    id: c.get("id")?.as_str()?.to_string(),
+                    stage_type: c.get("stageType")?.as_i64()?,
+                    round: c.get("round")?.as_i64()?,
+                    player_count: c.get("playerCount")?.as_i64()?,
+                })
+            })
+            .collect();
+        Ok((classifies, env.user_info))
     }
 
     /// The ranked queue classes currently offered.
@@ -466,6 +530,48 @@ mod tests {
         );
         // The 3p table must never match a 4p queue.
         assert!(select_classify(&classifies, RiichiRoom::Moon, RiichiGameType::EastOnly).is_none());
+    }
+
+    #[test]
+    fn rooms_for_stage_level_matches_the_room_tiers() {
+        // kyu: star only
+        assert_eq!(rooms_for_stage_level(1), vec!["star"]);
+        assert_eq!(rooms_for_stage_level(10), vec!["star"]);
+        // 1-2 dan: star + moon
+        assert_eq!(rooms_for_stage_level(11), vec!["star", "moon"]);
+        assert_eq!(rooms_for_stage_level(12), vec!["star", "moon"]);
+        // 3 dan: moon only
+        assert_eq!(rooms_for_stage_level(13), vec!["moon"]);
+        // 4 dan: moon + sun
+        assert_eq!(rooms_for_stage_level(14), vec!["moon", "sun"]);
+        // 5-6 dan: sun only
+        assert_eq!(rooms_for_stage_level(15), vec!["sun"]);
+        assert_eq!(rooms_for_stage_level(16), vec!["sun"]);
+        // 7 dan: sun + galaxy
+        assert_eq!(rooms_for_stage_level(17), vec!["sun", "galaxy"]);
+        // 8+ dan: galaxy only (sun via the fallback toggle)
+        assert_eq!(rooms_for_stage_level(18), vec!["galaxy"]);
+        assert_eq!(rooms_for_stage_level(25), vec!["galaxy"]);
+    }
+
+    #[test]
+    fn stage_level_extraction_handles_both_shapes() {
+        // Measured wire shape: player-count keys directly on userInfo.
+        let v: Value = serde_json::from_str(
+            r#"{"3": {"stageLevel": 4, "rValue": 1}, "4": {"stageLevel": 18, "rValue": 2}}"#,
+        )
+        .unwrap();
+        assert_eq!(stage_level_from_user_info(&v), Some(18));
+
+        // Fallback shapes (defensive).
+        let v: Value = serde_json::from_str(r#"{"stageLevelMap": {"4": 14}}"#).unwrap();
+        assert_eq!(stage_level_from_user_info(&v), Some(14));
+        let v: Value = serde_json::from_str(r#"{"stageLevel": 15}"#).unwrap();
+        assert_eq!(stage_level_from_user_info(&v), Some(15));
+
+        // Missing entirely.
+        let v: Value = serde_json::from_str(r#"{"other": 1}"#).unwrap();
+        assert_eq!(stage_level_from_user_info(&v), None);
     }
 
     #[test]

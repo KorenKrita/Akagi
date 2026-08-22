@@ -142,6 +142,60 @@ pub async fn autoplay_session_status(
     Ok(state.autoplay_context.session.status())
 }
 
+/// The ranked rooms + the player's raw rank context from the server.
+/// The classify list alone doesn't gate rooms (all four always appear);
+/// the player's stage level in `userInfo` is what the client's UI uses
+/// to decide which room to offer.
+#[tauri::command]
+pub async fn riichi_city_available_rooms(
+    state: State<'_, AppState>,
+) -> CmdResult<serde_json::Value> {
+    use crate::bridge::riichi_city::lobby;
+
+    let rc = state.config.read().await.autoplay.riichi_city.clone();
+    let creds = state
+        .autoplay_context
+        .inject
+        .lobby_credentials()
+        .ok_or_else(|| {
+            "Not connected — log into Riichi City with capture running to detect \
+             available rooms"
+                .to_string()
+        })?;
+    let config_dir = state
+        .config_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    let deviceid = lobby::load_or_create_device_id(&config_dir)
+        .map_err(|e| format!("could not persist the lobby device id: {e:#}"))?;
+    let client = lobby::LobbyClient::new(
+        rc.queue_web_base
+            .as_deref()
+            .unwrap_or(lobby::DEFAULT_WEB_BASE),
+        lobby::LobbyAuth::from_credentials(&creds, deviceid, rc.channel.clone()),
+    );
+    let (classifies, user_info) = client
+        .read_classifies_with_user()
+        .await
+        .map_err(|e| format!("could not read the ranked-room list: {e:#}"))?;
+
+    // Prefer the level-based gate (the server returns all classifies
+    // regardless of rank; the client's UI filters using stageLevelMap).
+    let rooms: Vec<String> = user_info
+        .as_ref()
+        .and_then(lobby::stage_level_from_user_info)
+        .map(|level| {
+            lobby::rooms_for_stage_level(level)
+                .into_iter()
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(serde_json::json!({ "rooms": rooms }))
+}
+
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> CmdResult<AppConfig> {
     Ok(state.config.read().await.clone())
@@ -1694,6 +1748,7 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::autoplay_session_start,
             $crate::ipc::commands::autoplay_session_stop,
             $crate::ipc::commands::autoplay_session_status,
+            $crate::ipc::commands::riichi_city_available_rooms,
             $crate::ipc::commands::stop_capture,
             $crate::ipc::commands::restart_capture,
             $crate::ipc::commands::get_capture_status,

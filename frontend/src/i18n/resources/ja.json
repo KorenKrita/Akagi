@@ -660,6 +660,7 @@
     "fullauto_running": "フルオート（{{count}}）",
     "fullauto_queued": "マッチング中 {{time}}",
     "fullauto_waiting": "待機中 {{time}}",
+    "fullauto_room_auto_switched": "段位に合わせて利用可能な最高部屋に切り替えました",
     "fullauto_title": "フルオートセッション",
     "onboarding": {
       "title": "ボードをカスタマイズ",

@@ -660,6 +660,7 @@
     "fullauto_running": "全自動（{{count}}）",
     "fullauto_queued": "排賽中 {{time}}",
     "fullauto_waiting": "等待中 {{time}}",
+    "fullauto_room_auto_switched": "已切換到段位允許的最高房間",
     "fullauto_title": "全自動會話",
     "onboarding": {
       "title": "自訂你的版面",
