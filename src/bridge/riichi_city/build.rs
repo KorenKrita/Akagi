@@ -209,8 +209,13 @@ pub fn encode_action_with(
         // for a 6p self-draw win). A ron presumably mirrors that with the
         // claimed tile; no sample yet. TODO(capture): confirm the ron shape.
         MjaiEvent::Hora { target, actor, .. } => {
-            let mut d = json!({ "action": if target == actor { action::TSUMO } else { action::RON } });
-            if let Some(pai) = if target == actor { tsumo_pai } else { last_discard } {
+            let mut d =
+                json!({ "action": if target == actor { action::TSUMO } else { action::RON } });
+            if let Some(pai) = if target == actor {
+                tsumo_pai
+            } else {
+                last_discard
+            } {
                 d["card"] = json!(mjai_to_card(pai)?);
             }
             d
@@ -248,7 +253,10 @@ fn dahai_data(pai: &str, tsumogiri: bool, riichi: bool) -> Option<Value> {
 }
 
 fn action_frame(data: &Value) -> Vec<u8> {
-    WPacket::encode_request(BIN_CMD_REQUEST, &json!({ "cmd": CMD_GAME_ACTION, "data": data }))
+    WPacket::encode_request(
+        BIN_CMD_REQUEST,
+        &json!({ "cmd": CMD_GAME_ACTION, "data": data }),
+    )
 }
 
 /// The round-advance press ("OK" on the scoring screen — the second OK; the
@@ -256,10 +264,7 @@ fn action_frame(data: &Value) -> Vec<u8> {
 /// round end advances to the next round (`rsp_user_prepare code 0` +
 /// `cmd_user_prepare` broadcast; a duplicate gets `code 2`, harmlessly).
 pub fn user_prepare() -> Vec<u8> {
-    WPacket::encode_request(
-        BIN_CMD_REQUEST,
-        &json!({ "cmd": "req_user_prepare" }),
-    )
+    WPacket::encode_request(BIN_CMD_REQUEST, &json!({ "cmd": "req_user_prepare" }))
 }
 
 #[cfg(test)]
@@ -410,7 +415,8 @@ mod tests {
             pai: "E".into(),
             consumed: ["E".into(), "E".into()],
         };
-        let pkt = &WPacket::parse_frame(&encode_action_with(&pon, None, None, Some(&hand)).unwrap())[0];
+        let pkt =
+            &WPacket::parse_frame(&encode_action_with(&pon, None, None, Some(&hand)).unwrap())[0];
         assert_eq!(pkt.body["data"]["move_cards_pos"], json!([6, 7]));
 
         // Tile not in hand → no field at all.
@@ -422,7 +428,8 @@ mod tests {
         };
         let unknown: Vec<String> = vec!["9s".to_string(); 13];
         let pkt =
-            &WPacket::parse_frame(&encode_action_with(&chi, None, None, Some(&unknown)).unwrap())[0];
+            &WPacket::parse_frame(&encode_action_with(&chi, None, None, Some(&unknown)).unwrap())
+                [0];
         assert!(pkt.body["data"].get("move_cards_pos").is_none());
     }
 
@@ -447,7 +454,11 @@ mod tests {
 
         let pkt = &WPacket::parse_frame(&encode_action(&MjaiEvent::None).unwrap())[0];
         assert_eq!(pkt.body["data"]["action"], 1);
-        assert_eq!(pkt.body["data"].as_object().unwrap().len(), 1, "pass is bare");
+        assert_eq!(
+            pkt.body["data"].as_object().unwrap().len(),
+            1,
+            "pass is bare"
+        );
     }
 
     /// Verbatim from the recording: the riichi discard carried the full

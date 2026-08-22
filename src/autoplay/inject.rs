@@ -142,13 +142,18 @@ impl InjectBus {
     }
 
     pub fn note_window(&self) {
-        *self.window_opened_at.lock().expect("window_opened_at poisoned") =
-            Some(std::time::Instant::now());
+        *self
+            .window_opened_at
+            .lock()
+            .expect("window_opened_at poisoned") = Some(std::time::Instant::now());
         self.window_open.store(true, Ordering::Relaxed);
     }
 
     pub fn window_opened_at(&self) -> Option<std::time::Instant> {
-        *self.window_opened_at.lock().expect("window_opened_at poisoned")
+        *self
+            .window_opened_at
+            .lock()
+            .expect("window_opened_at poisoned")
     }
 
     pub fn note_window_closed(&self) {
@@ -241,7 +246,10 @@ mod tests {
     #[test]
     fn window_state_opens_and_closes() {
         let bus = InjectBus::new();
-        assert!(!bus.window_is_open(), "no window before the server offers one");
+        assert!(
+            !bus.window_is_open(),
+            "no window before the server offers one"
+        );
         bus.note_window();
         assert!(bus.window_is_open());
         bus.note_window_closed();
@@ -272,7 +280,10 @@ mod tests {
         bus.note_up_index(40); // the client just sent #40
 
         let frame = crate::bridge::riichi_city::build::user_prepare();
-        assert!(bus.send(InjectFrame { gameplay: true, bytes: frame }));
+        assert!(bus.send(InjectFrame {
+            gameplay: true,
+            bytes: frame
+        }));
         let sent = rx.recv().await.unwrap();
         let be = |b: &[u8]| u32::from_be_bytes(b[8..12].try_into().unwrap());
         assert_eq!(be(&sent.bytes), 41, "past the client's 40");
@@ -281,7 +292,10 @@ mod tests {
         bus.note_up_index(100);
         let mut again = sent.bytes.clone();
         again[8..12].copy_from_slice(&0u32.to_be_bytes()); // stale index
-        assert!(bus.send(InjectFrame { gameplay: true, bytes: again }));
+        assert!(bus.send(InjectFrame {
+            gameplay: true,
+            bytes: again
+        }));
         let sent2 = rx.recv().await.unwrap();
         assert_eq!(be(&sent2.bytes), 101);
     }

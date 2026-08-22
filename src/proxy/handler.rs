@@ -1207,10 +1207,14 @@ mod tests {
                 &authority.parse::<Uri>().expect("valid authority"),
             )
         };
-        assert!(connect("hwmaj-client.ap-northeast-1.log.aliyuncs.com:443"),
-            "Riichi City's flow-log host");
-        assert!(connect("example-client.cn-hongkong.log.aliyuncs.com:443"),
-            "a Mahjong Soul project");
+        assert!(
+            connect("hwmaj-client.ap-northeast-1.log.aliyuncs.com:443"),
+            "Riichi City's flow-log host"
+        );
+        assert!(
+            connect("example-client.cn-hongkong.log.aliyuncs.com:443"),
+            "a Mahjong Soul project"
+        );
         assert!(connect("log.aliyuncs.com:443"));
         // Not telemetry.
         assert!(!connect("aga-alb.mahjong-jp.net:443"));

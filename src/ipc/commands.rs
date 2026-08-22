@@ -86,12 +86,13 @@ pub async fn autoplay_session_start(
             );
         }
         if cfg.platform.kind != crate::config::Platform::RiichiCity {
-            return Err(
-                "Auto-queuing is currently only supported for Riichi City".to_string(),
-            );
+            return Err("Auto-queuing is currently only supported for Riichi City".to_string());
         }
     }
-    if !state.autoplay_manager_started.load(std::sync::atomic::Ordering::SeqCst) {
+    if !state
+        .autoplay_manager_started
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
         return Err(
             "The autoplay manager is not running — toggle autoplay on and try again".to_string(),
         );

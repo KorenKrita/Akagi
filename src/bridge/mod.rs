@@ -117,8 +117,8 @@ pub fn for_platform(
         crate::config::Platform::Tenhou => {
             Box::new(TenhouBridge::new(flow_log, session).with_shared_state(hooks.tenhou_state))
         }
-        crate::config::Platform::RiichiCity => Box::new(
-            RiichiCityBridge::new(flow_log, session).with_inject(hooks.riichi_inject),
-        ),
+        crate::config::Platform::RiichiCity => {
+            Box::new(RiichiCityBridge::new(flow_log, session).with_inject(hooks.riichi_inject))
+        }
     }
 }

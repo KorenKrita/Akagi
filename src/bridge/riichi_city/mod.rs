@@ -79,10 +79,7 @@ impl RiichiCityBridge {
         }
     }
 
-    pub fn with_inject(
-        mut self,
-        inject: Option<crate::autoplay::inject::SharedInjectBus>,
-    ) -> Self {
+    pub fn with_inject(mut self, inject: Option<crate::autoplay::inject::SharedInjectBus>) -> Self {
         self.inject = inject;
         self
     }
@@ -135,14 +132,12 @@ impl RiichiCityBridge {
                             .unwrap_or_default()
                             .to_string()
                     };
-                    inject.note_lobby_credentials(
-                        crate::autoplay::inject::LobbyCredentials {
-                            sid: sid.to_string(),
-                            lang: field("lang"),
-                            platform: field("platform"),
-                            version: field("version"),
-                        },
-                    );
+                    inject.note_lobby_credentials(crate::autoplay::inject::LobbyCredentials {
+                        sid: sid.to_string(),
+                        lang: field("lang"),
+                        platform: field("platform"),
+                        version: field("version"),
+                    });
                     info!(target: LOG, "captured lobby sid from auth");
                 }
             }
@@ -183,7 +178,10 @@ impl RiichiCityBridge {
             // Per-request ack, counted for autoplay verification.
             "rsp_game_action" => {
                 if let Some(inject) = &self.inject {
-                    let code = data.and_then(|d| d.get("code")).and_then(json_i64).unwrap_or(0);
+                    let code = data
+                        .and_then(|d| d.get("code"))
+                        .and_then(json_i64)
+                        .unwrap_or(0);
                     inject.note_rsp(code);
                 }
                 Vec::new()
@@ -789,8 +787,7 @@ mod tests {
     #[test]
     fn auth_frame_lifts_lobby_credentials() {
         let inject = std::sync::Arc::new(crate::autoplay::inject::InjectBus::new());
-        let mut bridge =
-            RiichiCityBridge::new(None, None).with_inject(Some(inject.clone()));
+        let mut bridge = RiichiCityBridge::new(None, None).with_inject(Some(inject.clone()));
 
         assert!(inject.lobby_credentials().is_none(), "nothing before auth");
         feed(
@@ -819,8 +816,7 @@ mod tests {
     #[test]
     fn stagematch_run_lands_on_the_inject_bus() {
         let inject = std::sync::Arc::new(crate::autoplay::inject::InjectBus::new());
-        let mut bridge =
-            RiichiCityBridge::new(None, None).with_inject(Some(inject.clone()));
+        let mut bridge = RiichiCityBridge::new(None, None).with_inject(Some(inject.clone()));
 
         assert!(inject.queue_states().is_empty());
         feed(
@@ -856,8 +852,14 @@ mod tests {
         assert_eq!(
             queues,
             vec![
-                ("bvgn113gm5c5il7c48rg5".to_string(), "da77sunqueue000000000".to_string()),
-                ("bvgn113gm5c5il7c48rg7".to_string(), "da26fvro1kn6d935usfg".to_string()),
+                (
+                    "bvgn113gm5c5il7c48rg5".to_string(),
+                    "da77sunqueue000000000".to_string()
+                ),
+                (
+                    "bvgn113gm5c5il7c48rg7".to_string(),
+                    "da26fvro1kn6d935usfg".to_string()
+                ),
             ]
         );
     }

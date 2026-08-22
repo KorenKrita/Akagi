@@ -21,9 +21,9 @@
 
 #[cfg(windows)]
 use crate::util::NoConsoleWindow;
-use anyhow::{anyhow, Result};
 #[cfg(unix)]
 use anyhow::Context;
+use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 #[cfg(windows)]

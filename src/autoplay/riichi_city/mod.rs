@@ -103,7 +103,10 @@ fn decision_kind(ev: &MjaiEvent) -> DecisionKind {
 fn pre_delay(ctx: &ActionContext, kind: DecisionKind) -> u32 {
     let is_tsumogiri = matches!(
         ctx.action,
-        MjaiEvent::Dahai { tsumogiri: true, .. }
+        MjaiEvent::Dahai {
+            tsumogiri: true,
+            ..
+        }
     );
     let first_of_kyoku = matches!(ctx.action, MjaiEvent::Dahai { .. })
         && ctx

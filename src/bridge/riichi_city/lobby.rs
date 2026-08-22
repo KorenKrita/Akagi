@@ -93,11 +93,7 @@ pub struct LobbyAuth {
 }
 
 impl LobbyAuth {
-    pub fn from_credentials(
-        creds: &LobbyCredentials,
-        deviceid: String,
-        channel: String,
-    ) -> Self {
+    pub fn from_credentials(creds: &LobbyCredentials, deviceid: String, channel: String) -> Self {
         Self {
             sid: creds.sid.clone(),
             lang: creds.lang.clone(),
@@ -134,8 +130,7 @@ pub struct Envelope {
 impl Envelope {
     /// Parse a response body, decrypting `analysis_data` when present.
     pub fn parse(body: &str) -> Result<Envelope> {
-        let v: Value =
-            serde_json::from_str(body).context("lobby response is not JSON")?;
+        let v: Value = serde_json::from_str(body).context("lobby response is not JSON")?;
         let code = v.get("code").and_then(Value::as_i64).unwrap_or(0);
         let data = match v.get("data") {
             Some(d) if !d.is_null() => d.clone(),
@@ -143,9 +138,7 @@ impl Envelope {
                 let enc = v
                     .get("analysis_data")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        anyhow!("response carries neither data nor analysis_data")
-                    })?;
+                    .ok_or_else(|| anyhow!("response carries neither data nor analysis_data"))?;
                 decrypt_analysis(enc)?
             }
         };
@@ -356,8 +349,7 @@ mod tests {
 
     #[test]
     fn plain_envelope_parses() {
-        let env =
-            Envelope::parse(r#"{"code":0,"data":[{"id":"x","stageType":4}]}"#).unwrap();
+        let env = Envelope::parse(r#"{"code":0,"data":[{"id":"x","stageType":4}]}"#).unwrap();
         assert_eq!(env.code, 0);
         assert_eq!(env.data[0]["id"], "x");
     }
@@ -399,10 +391,7 @@ mod tests {
     fn encrypted_envelope_parses_under_ecb() {
         let payload = br#"{"data":{"list":[1,2,3]}}"#;
         let enc = aes_ecb_encrypt(payload, ANALYSIS_KEY);
-        let body = format!(
-            r#"{{"code":0,"analysis_data":"{}"}}"#,
-            b64(&enc)
-        );
+        let body = format!(r#"{{"code":0,"analysis_data":"{}"}}"#, b64(&enc));
         let env = Envelope::parse(&body).unwrap();
         // The blob's inner `data` is what surfaces.
         assert_eq!(env.data["list"][2], 3);
@@ -426,11 +415,36 @@ mod tests {
     #[test]
     fn classify_selection_maps_room_and_game_type() {
         let classifies = vec![
-            Classify { id: "star-e".into(), stage_type: 1, round: 1, player_count: 4 },
-            Classify { id: "sun-h".into(), stage_type: 3, round: 2, player_count: 4 },
-            Classify { id: "galaxy-e".into(), stage_type: 4, round: 1, player_count: 4 },
-            Classify { id: "galaxy-h".into(), stage_type: 4, round: 2, player_count: 4 },
-            Classify { id: "galaxy-3p".into(), stage_type: 4, round: 1, player_count: 3 },
+            Classify {
+                id: "star-e".into(),
+                stage_type: 1,
+                round: 1,
+                player_count: 4,
+            },
+            Classify {
+                id: "sun-h".into(),
+                stage_type: 3,
+                round: 2,
+                player_count: 4,
+            },
+            Classify {
+                id: "galaxy-e".into(),
+                stage_type: 4,
+                round: 1,
+                player_count: 4,
+            },
+            Classify {
+                id: "galaxy-h".into(),
+                stage_type: 4,
+                round: 2,
+                player_count: 4,
+            },
+            Classify {
+                id: "galaxy-3p".into(),
+                stage_type: 4,
+                round: 1,
+                player_count: 3,
+            },
         ];
         assert_eq!(
             select_classify(&classifies, RiichiRoom::Galaxy, RiichiGameType::EastOnly)
@@ -451,8 +465,7 @@ mod tests {
             "sun-h"
         );
         // The 3p table must never match a 4p queue.
-        assert!(select_classify(&classifies, RiichiRoom::Moon, RiichiGameType::EastOnly)
-            .is_none());
+        assert!(select_classify(&classifies, RiichiRoom::Moon, RiichiGameType::EastOnly).is_none());
     }
 
     #[test]

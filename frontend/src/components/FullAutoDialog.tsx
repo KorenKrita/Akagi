@@ -56,10 +56,11 @@ export function FullAutoDialog() {
   const rc = config?.autoplay.riichi_city
   const [draft, setDraft] = useState<AutoplayConfig['riichi_city'] | null>(null)
 
-  // Seed the draft from the live config whenever the dialog opens.
-  useEffect(() => {
-    if (open && rc) setDraft({ ...rc })
-  }, [open, rc])
+  // The dialog body renders only when open; the draft is nil until then,
+  // so the config seeds it on first render rather than in an effect.
+  const activeDraft = draft ?? (open && rc ? rc : null)
+  const patch = (p: Partial<AutoplayConfig['riichi_city']>) =>
+    setDraft((d) => ({ ...(d ?? (open && rc ? rc : undefined)!), ...p }))
 
   // Session status polling (also while closed, so the header stays honest).
   // 1s while a session runs so the queue timer ticks every second; 3s idle.
@@ -81,16 +82,13 @@ export function FullAutoDialog() {
     }
   }, [status?.active])
 
-  const patch = (p: Partial<AutoplayConfig['riichi_city']>) =>
-    setDraft((d) => (d ? { ...d, ...p } : d))
-
   const start = async () => {
-    if (!config || !draft) return
+    if (!config || !activeDraft) return
     setBusy(true)
     try {
       const newConfig = {
         ...config,
-        autoplay: { ...config.autoplay, riichi_city: draft },
+        autoplay: { ...config.autoplay, riichi_city: activeDraft },
       }
       await invoke('update_config', { newConfig })
       setConfig(newConfig)
@@ -155,13 +153,13 @@ export function FullAutoDialog() {
           </DialogDescription>
         </DialogHeader>
 
-        {draft && (
+        {activeDraft && (
           <div className="grid gap-4 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
                 <Label>{t('settings.autoplay.queue_room')}</Label>
                 <Select
-                  value={draft.room}
+                  value={activeDraft.room}
                   onValueChange={(v) =>
                     patch({ room: v as AutoplayConfig['riichi_city']['room'] })
                   }
@@ -182,7 +180,7 @@ export function FullAutoDialog() {
               <div className="grid gap-1.5">
                 <Label>{t('settings.autoplay.queue_game_type')}</Label>
                 <Select
-                  value={draft.game_type}
+                  value={activeDraft.game_type}
                   onValueChange={(v) =>
                     patch({
                       game_type: v as AutoplayConfig['riichi_city']['game_type'],
@@ -205,13 +203,13 @@ export function FullAutoDialog() {
             </div>
 
             {/* The sun-fallback option only exists in the galaxy room. */}
-            {draft.room === 'galaxy' && (
+            {activeDraft.room === 'galaxy' && (
               <div className="flex items-center justify-between gap-3">
                 <Label className="text-xs font-normal">
                   {t('settings.autoplay.queue_fallback_sun')}
                 </Label>
                 <Switch
-                  checked={draft.galaxy_fallback_sun}
+                  checked={activeDraft.galaxy_fallback_sun}
                   onCheckedChange={(v) => patch({ galaxy_fallback_sun: v })}
                 />
               </div>
@@ -224,7 +222,7 @@ export function FullAutoDialog() {
                   type="number"
                   inputMode="numeric"
                   min={0}
-                  value={draft.inter_game_delay_ms}
+                  value={activeDraft.inter_game_delay_ms}
                   onChange={(e) =>
                     patch({
                       inter_game_delay_ms: Math.max(0, Number(e.target.value || 0)),

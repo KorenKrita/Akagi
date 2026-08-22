@@ -1117,13 +1117,11 @@ async fn run_queue_task(
     notify: NotifyBus,
     config_dir: std::path::PathBuf,
 ) {
-    if let Err(reason) = queue_match(&cfg, &inject, &session, &notify, &config_dir).await
-    {
+    if let Err(reason) = queue_match(&cfg, &inject, &session, &notify, &config_dir).await {
         session.stop(&reason);
         warn!("autoplay session: {reason}");
-        let _ = notify.send(
-            crate::schema::Notification::error("Autoplay session stopped").body(reason),
-        );
+        let _ = notify
+            .send(crate::schema::Notification::error("Autoplay session stopped").body(reason));
     }
 }
 
@@ -1162,8 +1160,7 @@ async fn queue_match(
     let fallback_classify = if rc.room == crate::config::RiichiRoom::Galaxy
         && rc.galaxy_fallback_sun
     {
-        lobby::select_classify(&classifies, crate::config::RiichiRoom::Sun, rc.game_type)
-            .cloned()
+        lobby::select_classify(&classifies, crate::config::RiichiRoom::Sun, rc.game_type).cloned()
     } else {
         None
     };
@@ -1171,10 +1168,8 @@ async fn queue_match(
     // The generation snapshot is the "a match started" signal: the
     // StartGame handler bumps it when the booked table actually opens.
     let generation = session.start_generation();
-    let classify =
-        lobby::select_classify(&classifies, rc.room, rc.game_type).ok_or_else(|| {
-            "the configured room / game length is not offered right now".to_string()
-        })?;
+    let classify = lobby::select_classify(&classifies, rc.room, rc.game_type)
+        .ok_or_else(|| "the configured room / game length is not offered right now".to_string())?;
     let env = client
         .start_stage(&classify.id)
         .await
@@ -1226,9 +1221,8 @@ async fn queue_match(
                     match client.start_stage(&sun.id).await {
                         Ok(env) if env.code == 0 => {
                             let _ = notify.send(
-                                crate::schema::Notification::info("Autoplay session").body(
-                                    "No galaxy table in 2 minutes — now also queueing sun.",
-                                ),
+                                crate::schema::Notification::info("Autoplay session")
+                                    .body("No galaxy table in 2 minutes — now also queueing sun."),
                             );
                         }
                         Ok(env) => warn!(
@@ -1391,8 +1385,10 @@ async fn execute_riichi_frame(
             gameplay: true,
             bytes: frame.clone(),
         }) {
-            warn!("autoplay: no injection relay subscribed — is capture running? \
-                   dropping frame for {action:?}");
+            warn!(
+                "autoplay: no injection relay subscribed — is capture running? \
+                   dropping frame for {action:?}"
+            );
             return;
         }
         info!("autoplay: injected frame for {action:?} (attempt {attempt})");
@@ -1814,7 +1810,10 @@ mod tests {
             consumed: ["2p".into(), "4p".into()],
         };
         assert_eq!(future_window_grace(&claim), Duration::from_secs(3));
-        assert_eq!(future_window_grace(&MjaiEvent::None), Duration::from_secs(3));
+        assert_eq!(
+            future_window_grace(&MjaiEvent::None),
+            Duration::from_secs(3)
+        );
     }
 
     /// The window's `opened_at` is its identity: a slot holding a different

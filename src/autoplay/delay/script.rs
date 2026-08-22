@@ -1063,10 +1063,7 @@ mod tests {
         let bumped = SystemTime::now() + Duration::from_secs(2);
         // Windows needs a handle with write access for SetFileTime; a
         // read-only `File::open` yields ERROR_ACCESS_DENIED.
-        let f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         f.set_modified(bumped).unwrap();
         host.maybe_reload(&path, true);
         let cfg = MajsoulAutoplayConfig::default();

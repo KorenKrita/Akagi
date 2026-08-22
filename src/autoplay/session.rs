@@ -105,8 +105,7 @@ impl AutoplaySession {
     }
 
     pub fn note_queuing(&self) {
-        *self.queued_since.lock().expect("queued_since poisoned") =
-            Some(std::time::Instant::now());
+        *self.queued_since.lock().expect("queued_since poisoned") = Some(std::time::Instant::now());
         self.clear_between_games();
     }
 
@@ -122,7 +121,10 @@ impl AutoplaySession {
     }
 
     pub fn clear_between_games(&self) {
-        *self.between_games_since.lock().expect("between_games_since poisoned") = None;
+        *self
+            .between_games_since
+            .lock()
+            .expect("between_games_since poisoned") = None;
     }
 
     /// Called by the manager on `EndGame`; returns whether another game
@@ -148,7 +150,11 @@ impl AutoplaySession {
                 n => Some(n),
             },
             games_completed: self.completed.load(Ordering::SeqCst),
-            stop_reason: self.stop_reason.lock().expect("stop_reason poisoned").clone(),
+            stop_reason: self
+                .stop_reason
+                .lock()
+                .expect("stop_reason poisoned")
+                .clone(),
             queue_seconds: self
                 .queued_since
                 .lock()
