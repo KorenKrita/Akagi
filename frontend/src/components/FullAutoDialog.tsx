@@ -162,7 +162,9 @@ export function FullAutoDialog() {
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  {/* popper: item-aligned content detaches from its
+                      trigger inside a portaled dialog. */}
+                  <SelectContent position="popper">
                     <SelectItem value="star">Star</SelectItem>
                     <SelectItem value="moon">Moon</SelectItem>
                     <SelectItem value="sun">Sun</SelectItem>
@@ -183,7 +185,7 @@ export function FullAutoDialog() {
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper">
                     <SelectItem value="east_only">
                       {t('settings.autoplay.queue_game_type_east_only')}
                     </SelectItem>
