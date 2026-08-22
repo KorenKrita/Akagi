@@ -140,7 +140,7 @@ export function FullAutoDialog() {
             : t('game.fullauto_button')}
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>{t('game.fullauto_title')}</DialogTitle>
           <DialogDescription>
