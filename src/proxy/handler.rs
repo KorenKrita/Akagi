@@ -888,8 +888,30 @@ impl WebSocketHandler for ProxyHandler {
                         continue;
                     }
                     info!("inject: forwarding injected frame to {server_uri}");
-                    match sink.send(Message::Binary(frame.bytes.into())).await {
-                        Ok(()) => {}
+                    match sink.send(Message::Binary(frame.bytes.clone().into())).await {
+                        Ok(()) => {
+                            // Injected frames bypass the client socket, so
+                            // without this record they are invisible on the
+                            // wire — timing investigations could not tell
+                            // our sends from the client's own.
+                            let packets =
+                                crate::bridge::riichi_city::packet::WPacket::parse_frame(&frame.bytes);
+                            let parsed = packets.first().map(|p| {
+                                crate::schema::ParsedFrame {
+                                    method: format!("{} (injected)", p.method_label()),
+                                    args: p.body.clone(),
+                                }
+                            });
+                            self.inspector.record(InspectorEntry::WsFrame {
+                                ts_ms: Local::now().timestamp_millis(),
+                                direction: FrameDirection::Up,
+                                flow_id: self.inspector_flow_id(client),
+                                size: frame.bytes.len(),
+                                raw: FrameRaw::Binary(b64(&frame.bytes)),
+                                parsed,
+                                emitted: 0,
+                            });
+                        }
                         Err(tungstenite::Error::ConnectionClosed)
                         | Err(tungstenite::Error::AlreadyClosed) => break,
                         Err(e) => {
