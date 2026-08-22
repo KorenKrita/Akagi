@@ -36,6 +36,9 @@ mjai_bot/*/settings.toml
 # Tauri
 gen/
 
+# Packaging output (scripts/package-zip.sh)
+dist/
+
 # Bundled python + uv binaries fetched by scripts/fetch-runtime.sh.
 runtime/*
 !runtime/.gitkeep
