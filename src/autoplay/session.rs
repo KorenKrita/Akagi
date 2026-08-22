@@ -20,6 +20,8 @@ pub struct AutoplaySessionStatus {
     pub stop_reason: Option<String>,
     /// Seconds spent waiting in the matchmaking queue, if queueing now.
     pub queue_seconds: Option<u64>,
+    /// Seconds of the current inter-game wait, if between games.
+    pub between_games_seconds: Option<u64>,
 }
 
 pub struct AutoplaySession {
@@ -34,6 +36,8 @@ pub struct AutoplaySession {
     start_generation: AtomicU64,
     /// When the current queue attempt started; drives the UI timer.
     queued_since: std::sync::Mutex<Option<std::time::Instant>>,
+    /// When the current inter-game wait started; drives the UI timer.
+    between_games_since: std::sync::Mutex<Option<std::time::Instant>>,
     stop_reason: std::sync::Mutex<Option<String>>,
 }
 
@@ -52,6 +56,7 @@ impl AutoplaySession {
             completed: AtomicU32::new(0),
             start_generation: AtomicU64::new(0),
             queued_since: std::sync::Mutex::new(None),
+            between_games_since: std::sync::Mutex::new(None),
             stop_reason: std::sync::Mutex::new(None),
         }
     }
@@ -102,10 +107,22 @@ impl AutoplaySession {
     pub fn note_queuing(&self) {
         *self.queued_since.lock().expect("queued_since poisoned") =
             Some(std::time::Instant::now());
+        self.clear_between_games();
     }
 
     pub fn clear_queue_wait(&self) {
         *self.queued_since.lock().expect("queued_since poisoned") = None;
+    }
+
+    pub fn note_between_games(&self) {
+        *self
+            .between_games_since
+            .lock()
+            .expect("between_games_since poisoned") = Some(std::time::Instant::now());
+    }
+
+    pub fn clear_between_games(&self) {
+        *self.between_games_since.lock().expect("between_games_since poisoned") = None;
     }
 
     /// Called by the manager on `EndGame`; returns whether another game
@@ -136,6 +153,11 @@ impl AutoplaySession {
                 .queued_since
                 .lock()
                 .expect("queued_since poisoned")
+                .map(|t| t.elapsed().as_secs()),
+            between_games_seconds: self
+                .between_games_since
+                .lock()
+                .expect("between_games_since poisoned")
                 .map(|t| t.elapsed().as_secs()),
         }
     }
@@ -206,5 +228,18 @@ mod tests {
         assert_eq!(s.status().queue_seconds, Some(0));
         s.clear_queue_wait();
         assert!(s.status().queue_seconds.is_none());
+    }
+
+    #[test]
+    fn between_games_timer_starts_and_clears_on_queuing() {
+        let s = AutoplaySession::new();
+        s.start(None).unwrap();
+        assert!(s.status().between_games_seconds.is_none());
+        s.note_between_games();
+        assert_eq!(s.status().between_games_seconds, Some(0));
+        // Queueing takes over from waiting.
+        s.note_queuing();
+        assert!(s.status().between_games_seconds.is_none());
+        assert_eq!(s.status().queue_seconds, Some(0));
     }
 }

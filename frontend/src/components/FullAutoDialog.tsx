@@ -32,6 +32,7 @@ type AutoplaySessionStatus = {
   games_completed: number
   stop_reason: string | null
   queue_seconds: number | null
+  between_games_seconds: number | null
 }
 
 function formatDuration(seconds: number): string {
@@ -123,12 +124,16 @@ export function FullAutoDialog() {
     ? `${status.games_completed}${status.target_games ? ` / ${status.target_games}` : ''}`
     : ''
 
-  const queueSuffix =
-    status?.active && status.queue_seconds != null
-      ? ` · ${t('game.fullauto_queued', {
-          time: formatDuration(status.queue_seconds),
-        })}`
+  const statusSuffix = (seconds: number | null | undefined, key: string) =>
+    status?.active && seconds != null
+      ? ` · ${t(key, { time: formatDuration(seconds) })}`
       : ''
+
+  const queueSuffix = statusSuffix(status?.queue_seconds, 'game.fullauto_queued')
+  const waitingSuffix = statusSuffix(
+    status?.between_games_seconds,
+    'game.fullauto_waiting',
+  )
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -136,7 +141,9 @@ export function FullAutoDialog() {
         <Button variant="outline" size="sm" className="text-xs">
           <PlayCircle className="size-4" />
           {status?.active
-            ? t('game.fullauto_running', { count: progress }) + queueSuffix
+            ? t('game.fullauto_running', { count: progress }) +
+              queueSuffix +
+              waitingSuffix
             : t('game.fullauto_button')}
         </Button>
       </DialogTrigger>
@@ -244,6 +251,7 @@ export function FullAutoDialog() {
                 <p className="text-xs text-muted-foreground">
                   {t('settings.autoplay.session_running', { count: progress })}
                   {queueSuffix}
+                  {waitingSuffix}
                 </p>
                 <Button variant="destructive" onClick={stop} disabled={busy}>
                   {t('settings.autoplay.session_stop')}

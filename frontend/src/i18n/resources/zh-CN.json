@@ -659,6 +659,7 @@
     "fullauto_button": "开始全自动会话",
     "fullauto_running": "全自动（{{count}}）",
     "fullauto_queued": "排赛中 {{time}}",
+    "fullauto_waiting": "等待中 {{time}}",
     "fullauto_title": "全自动会话",
     "onboarding": {
       "title": "自定义你的面板",

@@ -189,18 +189,30 @@ impl AutoplayManager {
         }
     }
 
-    /// Queue the next Riichi City match after the inter-game delay.
+    /// Queue the next Riichi City match: first wait for the end screens to
+    /// actually show (first OK-button sighting — `room_end` fires while the
+    /// client is still settling), then hold the inter-game delay, then
+    /// queue. The wait phases are visible in the UI via the session's
+    /// between-games and queue timers.
     async fn schedule_next_queue(&self) {
         let rc = self.cfg.read().await.autoplay.riichi_city.clone();
         let delay = crate::autoplay::session::inter_game_delay(rc.inter_game_delay_ms);
-        info!("autoplay session: queueing the next match in {delay:?}");
+        info!("autoplay session: next match in {delay:?} once the score screen shows");
         let cfg = self.cfg.clone();
         let inject = self.ctx.inject.clone();
         let session = self.ctx.session.clone();
         let notify = self.notify.clone();
         let config_dir = self.config_dir.clone();
         tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(delay).await;
+            session.note_between_games();
+            let generation = session.start_generation();
+            if wait_for_ok_button(&session, generation).await {
+                tokio::time::sleep(delay).await;
+            }
+            session.clear_between_games();
+            if !session.is_active() || session.start_generation() != generation {
+                return;
+            }
             run_queue_task(cfg, inject, session, notify, config_dir).await;
         });
     }
@@ -1342,6 +1354,43 @@ async fn leave_queue(
 async fn autoplay_enabled_for_riichi(cfg: &Arc<RwLock<AppConfig>>) -> bool {
     let guard = cfg.read().await;
     guard.autoplay.enabled && guard.platform.kind == crate::config::Platform::RiichiCity
+}
+
+/// Wait until the end screens are actually up (first OK-button sighting),
+/// polling once a second. Returns `false` when the session stopped or a
+/// new game already started (nothing left to wait for); `true` when the
+/// button was sighted — or the cap elapsed without one (the user may have
+/// clicked through fast, or the window is hidden), in which case the
+/// caller proceeds with the plain delay.
+async fn wait_for_ok_button(
+    session: &crate::autoplay::session::SharedAutoplaySession,
+    generation: u64,
+) -> bool {
+    /// The breakdown OK renders within a few seconds of `room_end`.
+    const SIGHTING_CAP: Duration = Duration::from_secs(30);
+    const POLL: Duration = Duration::from_secs(1);
+
+    let deadline = tokio::time::Instant::now() + SIGHTING_CAP;
+    loop {
+        if !session.is_active() || session.start_generation() != generation {
+            return false;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            debug!("autoplay session: no OK sighting before the cap — proceeding");
+            return true;
+        }
+        let sighted = tauri::async_runtime::spawn_blocking(
+            crate::autoplay::riichi_city::vision::capture_ok_button,
+        )
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+        if sighted {
+            return true;
+        }
+        tokio::time::sleep(POLL).await;
+    }
 }
 
 /// Dedicated round-advance loop, on its own `MjaiBus` subscription so

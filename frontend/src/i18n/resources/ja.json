@@ -659,6 +659,7 @@
     "fullauto_button": "フルオートセッションを開始",
     "fullauto_running": "フルオート（{{count}}）",
     "fullauto_queued": "マッチング中 {{time}}",
+    "fullauto_waiting": "待機中 {{time}}",
     "fullauto_title": "フルオートセッション",
     "onboarding": {
       "title": "ボードをカスタマイズ",

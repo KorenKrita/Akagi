@@ -70,9 +70,9 @@ type CmdResult<T> = Result<T, String>;
 
 /// Start an auto-queue autoplay session (Riichi City): after each finished
 /// game the next match is queued automatically, until `games` games have
-/// been played (`None` = until stopped). Requires autoplay enabled and the
-/// Riichi City platform. Starting from the lobby (no game in progress)
-/// books the first match immediately.
+/// been played (`None` = until stopped). Requires autoplay enabled, the
+/// Riichi City platform, and no game in progress (a running game is
+/// already being played by autoplay — the session would miscount it).
 #[tauri::command]
 pub async fn autoplay_session_start(
     games: Option<u32>,
@@ -96,27 +96,31 @@ pub async fn autoplay_session_start(
             "The autoplay manager is not running — toggle autoplay on and try again".to_string(),
         );
     }
+    if state.autoplay_context.inject.in_game() {
+        return Err(
+            "A game is in progress — start the session from the lobby, or after this \
+             game ends (autoplay is already playing it)"
+                .to_string(),
+        );
+    }
     state
         .autoplay_context
         .session
         .start(games)
         .map_err(|e| e.to_string())?;
-    // Full-auto from the lobby: with no game in progress, book the first
-    // match right away instead of waiting for a game to finish.
-    if !state.autoplay_context.inject.in_game() {
-        let config_dir = state
-            .config_path
-            .parent()
-            .map(std::path::Path::to_path_buf)
-            .unwrap_or_default();
-        crate::autoplay::manager::spawn_queue_task(
-            state.config.clone(),
-            state.autoplay_context.inject.clone(),
-            state.autoplay_context.session.clone(),
-            state.notify_bus.clone(),
-            config_dir,
-        );
-    }
+    // No game in progress: book the first match right away.
+    let config_dir = state
+        .config_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    crate::autoplay::manager::spawn_queue_task(
+        state.config.clone(),
+        state.autoplay_context.inject.clone(),
+        state.autoplay_context.session.clone(),
+        state.notify_bus.clone(),
+        config_dir,
+    );
     Ok(state.autoplay_context.session.status())
 }
 
