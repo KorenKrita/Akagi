@@ -189,16 +189,18 @@ impl AutoplayManager {
         }
     }
 
-    /// Queue the next Riichi City match: first wait for the end screens to
-    /// actually show (first OK-button sighting — `room_end` fires while the
-    /// client is still animating the final hand), then hold the inter-game
-    /// delay, then queue. The between-games status timer starts only at the
-    /// sighting, so the UI never claims "waiting" while the score animation
-    /// is still playing.
+    /// Queue the next Riichi City match: wait for the end screens to show
+    /// (first OK-button sighting), hold a fixed 10s grace, then the
+    /// randomized inter-game delay, then queue. The UI timer runs the
+    /// whole span from the sighting — grace plus delay — so "waiting
+    /// 0:35" means 35 seconds since the score screen appeared.
     async fn schedule_next_queue(&self) {
         let rc = self.cfg.read().await.autoplay.riichi_city.clone();
         let delay = crate::autoplay::session::inter_game_delay(rc.inter_game_delay_ms);
-        info!("autoplay session: next match in {delay:?} once the score screen shows");
+        info!(
+            "autoplay session: next match ~{}s after the score screen shows",
+            POST_OK_GRACE.as_secs() + delay.as_secs()
+        );
         let cfg = self.cfg.clone();
         let inject = self.ctx.inject.clone();
         let session = self.ctx.session.clone();
@@ -210,6 +212,7 @@ impl AutoplayManager {
                 return;
             }
             session.note_between_games();
+            tokio::time::sleep(POST_OK_GRACE).await;
             tokio::time::sleep(delay).await;
             session.clear_between_games();
             if !session.is_active() || session.start_generation() != generation {
@@ -1083,6 +1086,10 @@ fn retry_hold_ms(base: u32, attempt: u32) -> u32 {
 
 /// How long the galaxy queue may run empty before the sun fallback is
 /// added (matching the client's "find a sun table" 2-minute timer).
+/// Fixed grace between sighting the end-screen OK button and starting the
+/// randomized inter-game delay.
+const POST_OK_GRACE: Duration = Duration::from_secs(10);
+
 const GALAXY_FALLBACK_AFTER: Duration = Duration::from_secs(120);
 
 /// How long a queue attempt waits for a table before the session gives

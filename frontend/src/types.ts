@@ -161,7 +161,7 @@ export type RiichiCityAutoplayConfig = {
   /** Galaxy only: accept a Sun table if none is found within 2 minutes. */
   galaxy_fallback_sun: boolean
   /** Wait after a game ends before queueing the next (actual wait is
-   *  uniform in [x/2, x]), ms. */
+   *  uniform in [x, 1.5x]), ms. */
   inter_game_delay_ms: number
 }
 

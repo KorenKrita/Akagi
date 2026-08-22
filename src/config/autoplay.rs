@@ -51,7 +51,8 @@ pub struct RiichiCityAutoplayConfig {
     /// Ignored (and hidden in the UI) for the other rooms.
     pub galaxy_fallback_sun: bool,
     /// Wait after a game ends before queueing the next one, ms. The actual
-    /// wait is uniform in `[inter_game_delay_ms/2, inter_game_delay_ms]`.
+    /// wait is uniform in `[inter_game_delay_ms, 3/2 × inter_game_delay_ms]`,
+    /// after a fixed 10s post-score-screen grace.
     pub inter_game_delay_ms: u32,
     /// Lobby API base URL. `None` uses the node the client itself races
     /// to by default (`aga-alb.mahjong-jp.net`). Debug knob for when the

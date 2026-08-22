@@ -387,7 +387,7 @@
       "min_button_delay": "Minimum button delay (ms)",
       "min_button_delay_hint": "Higher floor for chi/pon/kan/ron/skip/riichi buttons — they appear only after the discard animation plus their own pop-in, later than hand tiles. Raise this if buttons are still missing clicks.",
       "inter_game_delay": "Inter-game delay (ms)",
-      "inter_game_delay_hint": "Riichi City auto-queue: wait after a game ends before queueing the next (randomized within [x/2, x]).",
+      "inter_game_delay_hint": "Riichi City auto-queue: wait after the score screen before queueing the next (randomized within [x, 1.5x], plus 10s).",
       "queue_room": "Room",
       "queue_room_hint": "Riichi City auto-queue: the ranked room matches are queued in (Star < Moon < Sun < Galaxy).",
       "queue_game_type": "Game length",

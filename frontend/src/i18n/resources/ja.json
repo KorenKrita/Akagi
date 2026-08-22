@@ -387,7 +387,7 @@
       "min_button_delay": "ボタン最小遅延（ms）",
       "min_button_delay_hint": "チー/ポン/カン/ロン/スキップ/リーチなどのボタン用のより高い下限——ボタンは打牌アニメーションと自身のポップイン後にしか表示されず、手牌より遅れます。ボタンのクリックが外れる場合はこの値を上げてください。",
       "inter_game_delay": "局間待機（ミリ秒）",
-      "inter_game_delay_hint": "Riichi City 自動マッチング：1局終了後から次のマッチ募集までの待機時間（[x/2, x] の範囲でランダム）。",
+      "inter_game_delay_hint": "Riichi City 自動マッチング：スコア画面表示後から次のマッチ募集までの待機時間（[x, 1.5x] の範囲でランダム、+10秒）。",
       "queue_room": "部屋",
       "queue_room_hint": "Riichi City 自動マッチング：対局を募集する部屋（スター < ムーン < サン < ギャラクシー）。",
       "queue_game_type": "対局の長さ",

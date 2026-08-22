@@ -163,12 +163,12 @@ impl AutoplaySession {
     }
 }
 
-/// Uniform in `[inter_delay_ms/2, inter_delay_ms]`.
+/// Uniform in `[inter_delay_ms, 3/2 × inter_delay_ms]` — never shorter
+/// than the configured value.
 pub fn inter_game_delay(inter_delay_ms: u32) -> Duration {
     let inter = inter_delay_ms.max(2) as u64;
-    let half = inter / 2;
-    let r = rand::random::<u64>() % (inter - half);
-    Duration::from_millis(half + r)
+    let r = rand::random::<u64>() % (inter / 2 + 1);
+    Duration::from_millis(inter + r)
 }
 
 #[cfg(test)]
@@ -241,5 +241,18 @@ mod tests {
         s.note_queuing();
         assert!(s.status().between_games_seconds.is_none());
         assert_eq!(s.status().queue_seconds, Some(0));
+    }
+
+    #[test]
+    fn inter_game_delay_never_goes_below_the_configured_value() {
+        // With x = 8000: always in [8000, 12000] ms.
+        for _ in 0..200 {
+            let d = inter_game_delay(8_000);
+            assert!(d >= Duration::from_millis(8_000), "got {:?}", d);
+            assert!(d <= Duration::from_millis(12_000), "got {:?}", d);
+        }
+        // Edge: tiny config still works.
+        let d = inter_game_delay(2);
+        assert!(d >= Duration::from_millis(2));
     }
 }
