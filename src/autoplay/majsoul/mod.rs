@@ -891,6 +891,75 @@ mod tests {
         assert!(result.steps.is_empty(), "no click while riichi accepted");
     }
 
+    /// Regression (2026-08-22, West 1): a bot `hora` on a robbed kan must
+    /// click the Ron button. The engine's legal set used to be empty after
+    /// an opponent kakan, so the button never resolved and the window hung
+    /// until a human pressed Ron.
+    #[test]
+    fn chankan_hora_clicks_the_ron_button() {
+        let mut snap = snapshot_with_hand(
+            0,
+            vec![
+                "2m", "3m", "4m", "5m", "6m", "7m", "2p", "3p", "4p", "5p", "6p", "7p", "5s",
+            ],
+        );
+        snap.phase = Phase::WaitResponse;
+        let act = MjaiEvent::Hora {
+            actor: 0,
+            target: 1,
+            deltas: None,
+            ura_markers: None,
+        };
+        // What the tracker now offers on a robable kakan: the ron plus the
+        // always-present pass.
+        let legal = vec![
+            Action::new(ActionType::Ron, Some(88), vec![], Some(0)), // 5s
+            Action::new(ActionType::Pass, None, vec![], Some(0)),
+        ];
+        let cfg_ref = cfg();
+        let ctx = ctx_for(&act, &snap, &legal, Some("4z"), None, false, &cfg_ref);
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert_eq!(result.steps.len(), 2, "sleep + ron click, got {result:?}");
+        match &result.steps[1] {
+            Step::Click { x_norm, y_norm } => {
+                // [Ron, Pass] sorted by priority → Ron in slot 1, one left
+                // of the always-rightmost pass.
+                assert_eq!(*x_norm, 8.637_5);
+                assert_eq!(*y_norm, 7.0);
+            }
+            _ => panic!("second step should be a click"),
+        }
+    }
+
+    /// The decline side of the same window: a bot `none` on a robbed kan
+    /// must click the pass button rather than leave the client hanging.
+    #[test]
+    fn chankan_decline_clicks_the_pass_button() {
+        let mut snap = snapshot_with_hand(
+            0,
+            vec![
+                "2m", "3m", "4m", "5m", "6m", "7m", "2p", "3p", "4p", "5p", "6p", "7p", "5s",
+            ],
+        );
+        snap.phase = Phase::WaitResponse;
+        let act = MjaiEvent::None;
+        let legal = vec![
+            Action::new(ActionType::Ron, Some(88), vec![], Some(0)), // 5s
+            Action::new(ActionType::Pass, None, vec![], Some(0)),
+        ];
+        let cfg_ref = cfg();
+        let ctx = ctx_for(&act, &snap, &legal, Some("4z"), None, false, &cfg_ref);
+        let result = MajsoulAutoplay::new().plan(&ctx);
+        assert_eq!(result.steps.len(), 2, "sleep + pass click, got {result:?}");
+        match &result.steps[1] {
+            Step::Click { x_norm, y_norm } => {
+                assert_eq!(*x_norm, 10.875);
+                assert_eq!(*y_norm, 7.0);
+            }
+            _ => panic!("second step should be a click"),
+        }
+    }
+
     /// Regression: in sanma, drawing a North while in riichi opens the
     /// kita prompt and Majsoul holds the auto-discard until it is
     /// answered. The bot deciding to tsumogiri the North must decline

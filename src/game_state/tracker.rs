@@ -133,6 +133,18 @@ impl GameTracker {
             None
         };
 
+        // The replay path also opens no chankan window: an opponent's kakan
+        // that our seat could rob must be turned into a real `WaitResponse`
+        // window after it is applied, or every downstream consumer (`can_act`,
+        // the bot's candidate set, autoplay's buttons) sees an empty legal set
+        // and the window hangs (`native_bot::chankan` has the story).
+        let opponent_kakan = match (ev, self.our_seat) {
+            (AkagiEvent::Kakan { actor, pai, .. }, Some(seat)) if *actor != seat => {
+                Some((*actor, pai.clone(), seat))
+            }
+            _ => None,
+        };
+
         let Some(ri) = convert::to_riichienv(ev)? else {
             return Ok(()); // Skipped (e.g. MjaiEvent::None).
         };
@@ -164,6 +176,9 @@ impl GameTracker {
                             m.from_who = target;
                         }
                     }
+                    if let Some((actor, pai, seat)) = &opponent_kakan {
+                        native_bot::chankan::open_on_kakan(s, *actor, pai, *seat);
+                    }
                 }
                 TrackedGame::Three(s) => {
                     s.apply_mjai_event(ri);
@@ -185,6 +200,9 @@ impl GameTracker {
                         if let Some(m) = s.players.get_mut(actor).and_then(|p| p.melds.last_mut()) {
                             m.from_who = target;
                         }
+                    }
+                    if let Some((actor, pai, seat)) = &opponent_kakan {
+                        native_bot::chankan::open_on_kakan_3p(s, *actor, pai, *seat);
                     }
                 }
             }
@@ -612,6 +630,107 @@ mod tests {
         })
         .unwrap();
         t.handle(&dahai(0, "5s")).unwrap();
+        assert_eq!(t.our_seat_can_act(), Some(false));
+    }
+
+    /// Drive a kyoku to just after seat 1 kakans the 5s it pon'd earlier.
+    /// `our_hand` seeds our seat (0); opponents' hands stay hidden exactly
+    /// as the bridge feeds them.
+    fn drive_to_kakan(our_hand: &[&str]) -> GameTracker {
+        let mut t = GameTracker::new();
+        t.handle(&start_game()).unwrap();
+        let ours: Vec<String> = our_hand.iter().map(|s| s.to_string()).collect();
+        let hidden: Vec<String> = (0..13).map(|_| "?".into()).collect();
+        t.handle(&AkagiEvent::StartKyoku {
+            bakaze: "E".into(),
+            dora_marker: "2m".into(),
+            kyoku: 1,
+            honba: 0,
+            kyotaku: 0,
+            oya: 0,
+            scores: vec![25_000, 25_000, 25_000, 25_000],
+            tehais: vec![ours, hidden.clone(), hidden.clone(), hidden.clone()],
+            num_players: 4,
+        })
+        .unwrap();
+        // Seat 2 throws a 5s; seat 1 pons it.
+        t.handle(&AkagiEvent::Tsumo {
+            actor: 2,
+            pai: "?".into(),
+        })
+        .unwrap();
+        t.handle(&dahai(2, "5s")).unwrap();
+        t.handle(&AkagiEvent::Pon {
+            actor: 1,
+            target: 2,
+            pai: "5s".into(),
+            consumed: ["5s".into(), "5s".into()],
+        })
+        .unwrap();
+        // Turn order reaches seat 1 again; it draws the last 5s and kakans.
+        // Hidden seats draw `?`; our own draw and every discard are real —
+        // that is exactly what the bridge feeds.
+        for (actor, draw, discard) in [(1u8, "?", "1z"), (2, "?", "3z"), (3, "?", "4z")] {
+            t.handle(&AkagiEvent::Tsumo {
+                actor,
+                pai: draw.into(),
+            })
+            .unwrap();
+            t.handle(&dahai(actor, discard)).unwrap();
+        }
+        t.handle(&AkagiEvent::Tsumo {
+            actor: 0,
+            pai: "2z".into(),
+        })
+        .unwrap();
+        t.handle(&dahai(0, "2z")).unwrap();
+        t.handle(&AkagiEvent::Tsumo {
+            actor: 1,
+            pai: "5s".into(),
+        })
+        .unwrap();
+        t.handle(&AkagiEvent::Kakan {
+            actor: 1,
+            pai: "5s".into(),
+            consumed: ["5s".into(), "5s".into(), "5s".into()],
+        })
+        .unwrap();
+        t
+    }
+
+    /// Regression (2026-08-22, West 1): an opponent's kakan that completes
+    /// our hand must surface as a real decision window — `can_act` true and
+    /// a legal Ron — not as engine silence that leaves the bot unasked and
+    /// autoplay with nothing to click until a human takes the ron.
+    #[test]
+    fn can_act_on_a_kakan_we_can_rob() {
+        // Menzen tanyao waiting on 5s (`234m 567m 234p 567p 5s`).
+        let t = drive_to_kakan(&[
+            "2m", "3m", "4m", "5m", "6m", "7m", "2p", "3p", "4p", "5p", "6p", "7p", "5s",
+        ]);
+        assert_eq!(t.our_seat_can_act(), Some(true));
+
+        let legal = t.state().unwrap()._get_legal_actions_internal(0);
+        assert!(
+            legal
+                .iter()
+                .any(|a| a.action_type == riichienv_core::action::ActionType::Ron),
+            "the robbed 5s must be a legal ron (legal: {legal:?})"
+        );
+        assert_eq!(
+            t.snapshot().unwrap().phase,
+            crate::game_state::snapshot::Phase::WaitResponse
+        );
+    }
+
+    /// A kakan our hand has no claim on is the engine saying "not yours" —
+    /// same as an unclaimable discard.
+    #[test]
+    fn cannot_act_on_a_kakan_we_cannot_rob() {
+        // Same shape but waiting on 8s.
+        let t = drive_to_kakan(&[
+            "2m", "3m", "4m", "5m", "6m", "7m", "2p", "3p", "4p", "5p", "6p", "7p", "8s",
+        ]);
         assert_eq!(t.our_seat_can_act(), Some(false));
     }
 
