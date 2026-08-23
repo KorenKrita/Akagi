@@ -44,9 +44,10 @@ const MAJSOUL_ROOM_TIERS: Record<number, string> = {
 
 /**
  * Riichi City `options.stage_type` → ranked room tier, lowest to highest.
- * Tier names follow the client's own strings (`MATCHING_VIEW_STATE_TYPE_*`:
- * 新星/霞月/炎陽/銀河, EN Star/Moon/Sun/Galaxy); its replay list labels a
- * ranked game exactly this way.
+ * The client's tier enum is exhaustive at four (NewStar/BrightMoon/HotSun/
+ * MilkyWay). Tier names follow the client's own strings
+ * (`MATCHING_VIEW_STATE_TYPE_*`: 新星/霞月/炎陽/銀河, EN Star/Moon/Sun/
+ * Galaxy); its replay list labels a ranked game exactly this way.
  */
 const RIICHI_CITY_ROOM_TIERS: Record<number, string> = {
   1: 'star',
@@ -57,27 +58,38 @@ const RIICHI_CITY_ROOM_TIERS: Record<number, string> = {
 
 /**
  * Riichi City `options.game_play` → mode label key, from the client's
- * `GamePlayType` enum. 1001 (ranked) is handled separately via the stage
- * tier above; 1021 is the tier-less Taiwan-rules ranked ladder. The
- * 1007–1016/1022 block are the casual-hall variants (directive war,
- * chinitsu trial, Taiwan rules, 17-steps, bleed, hidden war, …), labeled
- * with the client's own "Casual Game" umbrella term.
+ * `GamePlayType` enum (its game logic ships as Lua in
+ * `Mahjong-JP_Data/StreamingAssets/Base/lua_common`). Labels are the
+ * client's own localized strings — the ones its replay list uses to title
+ * each mode.
+ *
+ * 1001 (Rank) is handled separately via the stage tier above. 1005 is the
+ * one-round lobby's queue instance of 1004, and 1008 the casual-hall
+ * instance of 1007 — each pair shares one client string. 1006 (TwoPlay,
+ * folded into friend rooms) and 1011 (AK2P, a retired collab) have no
+ * replay-list branch in the client; their labels combine the official
+ * 2-player string (PLAY_NAME_2) with the enum's own comment. `All` (0) is
+ * a filter sentinel and `CombineMahjong` (1) is a merge minigame — neither
+ * reaches a mahjong table.
  */
 const RIICHI_CITY_MODES: Record<number, string> = {
   1002: 'rc_tournament',
   1003: 'rc_friendly',
   1004: 'rc_one_round',
   1005: 'rc_one_round',
-  1007: 'rc_casual',
-  1008: 'rc_casual',
-  1009: 'rc_casual',
-  1010: 'rc_casual',
-  1013: 'rc_casual',
-  1014: 'rc_casual',
-  1015: 'rc_casual',
-  1016: 'rc_casual',
-  1021: 'rc_ranked',
-  1022: 'rc_casual',
+  1006: 'rc_two_player',
+  1007: 'rc_command',
+  1008: 'rc_command',
+  1009: 'rc_chinitsu',
+  1010: 'rc_taiwan',
+  1011: 'rc_ak_2p',
+  1012: 'rc_ai_challenge',
+  1013: 'rc_chill',
+  1014: 'rc_seventeen',
+  1015: 'rc_practice',
+  1016: 'rc_fury_waves',
+  1021: 'rc_taiwan_ranked',
+  1022: 'rc_hidden_war',
 }
 
 /**

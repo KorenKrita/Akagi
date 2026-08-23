@@ -118,7 +118,18 @@
       "rc_tournament": "Tournament",
       "rc_friendly": "Friendly Match",
       "rc_one_round": "1-Round Challenge",
-      "rc_casual": "Casual Game"
+      "rc_two_player": "2-Player",
+      "rc_ak_2p": "2-Player (AK Collab)",
+      "rc_command": "Command Challenge",
+      "rc_chinitsu": "Chinitsu Challenge",
+      "rc_taiwan": "16 Tiles",
+      "rc_ai_challenge": "AI Conquest Challenge",
+      "rc_chill": "Chill Mahjong",
+      "rc_seventeen": "17 Steps",
+      "rc_practice": "Practice Match",
+      "rc_fury_waves": "Fury Waves",
+      "rc_taiwan_ranked": "16 Tiles Ranked",
+      "rc_hidden_war": "12 Tiles"
     }
   },
   "logs": {

@@ -118,7 +118,18 @@
       "rc_tournament": "大会戦",
       "rc_friendly": "友人戦",
       "rc_one_round": "一局戦",
-      "rc_casual": "娯楽戦"
+      "rc_two_player": "二麻",
+      "rc_ak_2p": "二麻（AKコラボ）",
+      "rc_command": "指令戦",
+      "rc_chinitsu": "清一色の試練",
+      "rc_taiwan": "16張",
+      "rc_ai_challenge": "AI突破チャレンジ戦",
+      "rc_chill": "悠々麻雀",
+      "rc_seventeen": "決闘十七歩",
+      "rc_practice": "練習場",
+      "rc_fury_waves": "怒涛の戦",
+      "rc_taiwan_ranked": "16張段位戦",
+      "rc_hidden_war": "隠し牌戦"
     }
   },
   "logs": {

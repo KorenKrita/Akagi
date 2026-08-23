@@ -82,9 +82,19 @@ describe('roomLabelKey', () => {
     expect(
       roomLabelKey({ platform: 'riichi_city', game_play: 1004 }),
     ).toEqual({ key: 'history.room.rc_one_round' })
+    // The mode-specific labels extracted from the client's own enum.
     expect(
       roomLabelKey({ platform: 'riichi_city', game_play: 1010 }),
-    ).toEqual({ key: 'history.room.rc_casual' })
+    ).toEqual({ key: 'history.room.rc_taiwan' })
+    expect(
+      roomLabelKey({ platform: 'riichi_city', game_play: 1015 }),
+    ).toEqual({ key: 'history.room.rc_practice' })
+    expect(
+      roomLabelKey({ platform: 'riichi_city', game_play: 1021 }),
+    ).toEqual({ key: 'history.room.rc_taiwan_ranked' })
+    expect(
+      roomLabelKey({ platform: 'riichi_city', game_play: 1022 }),
+    ).toEqual({ key: 'history.room.rc_hidden_war' })
     // Unknown mode ids degrade to the raw number.
     expect(roomLabelKey({ platform: 'riichi_city', game_play: 1099 })).toEqual({
       key: 'history.room.raw',
@@ -159,7 +169,18 @@ describe('locale coverage', () => {
     'rc_tournament',
     'rc_friendly',
     'rc_one_round',
-    'rc_casual',
+    'rc_two_player',
+    'rc_ak_2p',
+    'rc_command',
+    'rc_chinitsu',
+    'rc_taiwan',
+    'rc_ai_challenge',
+    'rc_chill',
+    'rc_seventeen',
+    'rc_practice',
+    'rc_fury_waves',
+    'rc_taiwan_ranked',
+    'rc_hidden_war',
     'raw',
   ]
 
