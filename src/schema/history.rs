@@ -11,6 +11,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 use crate::schema::MjaiEvent;
 
@@ -40,6 +41,67 @@ pub enum KyokuMode {
     /// Saw `"W"` or `"N"` — west / north overtime, treated as hanchan
     /// for scoring (Majsoul never uses these except as continuation).
     Other,
+}
+
+// ---------- MatchInfo ----------
+
+/// Platform-specific match identity captured at `start_game`: which room /
+/// rank lobby the game was played in, plus the platform's own game id.
+///
+/// Values are stored **raw** (numeric ids, wire strings). Mapping them to
+/// display labels ("Gold Room East", "Houou") is a frontend concern so an
+/// id the app doesn't know yet degrades to showing the number instead of a
+/// wrong label. Tagged like [`Platform`] so the JSON is self-describing;
+/// every field is optional because each bridge fills only what its wire
+/// actually carried.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "platform", rename_all = "snake_case")]
+pub enum MatchInfo {
+    /// Mahjong Soul. `mode_id` is `game_config.meta.mode_id` — the ranked
+    /// matchmaking mode (1..=28 covers Bronze..Throne and Melee, 4p and 3p);
+    /// 0 for non-matchmade tables. `room_id` is the friendly-room number and
+    /// `contest_uid` the tournament id, when applicable.
+    Majsoul {
+        /// Raw `ReqAuthGame.game_uuid` — the paifu (replay) identifier.
+        #[serde(default)]
+        game_uuid: Option<String>,
+        #[serde(default)]
+        mode_id: Option<u32>,
+        #[serde(default)]
+        room_id: Option<u32>,
+        #[serde(default)]
+        contest_uid: Option<u32>,
+    },
+    /// Tenhou. `log_id` is the paifu id from `<TAIKYOKU log=…>`; `go_type`
+    /// is the raw `<GO type=…>` rule/room bitfield (room tier in bits 0x20 /
+    /// 0x80); `lobby` is the lobby number from the same message.
+    Tenhou {
+        #[serde(default)]
+        log_id: Option<String>,
+        #[serde(default)]
+        go_type: Option<u32>,
+        #[serde(default)]
+        lobby: Option<u32>,
+    },
+    /// Riichi City. `stage_type` / `game_play` / `classify_id` come from
+    /// `cmd_enter_room.options` and identify the matchmaking room;
+    /// `stage_type` 1..=4 = Star / Moon / Sun / Galaxy (新星/霞月/炎陽/銀河,
+    /// the ranked room tiers) and `game_play` is the client's `GamePlayType`
+    /// (1001 ranked, 1002 tournament, 1003 friendly, 1004/1005 one-round,
+    /// 1021 Taiwan-rules ranked, 1007..=1016/1022 casual-hall variants).
+    /// `room_id` is the table-instance token from the `cmd_enter_room`
+    /// wrapper. All raw wire values.
+    RiichiCity {
+        #[serde(default)]
+        room_id: Option<String>,
+        #[serde(default)]
+        classify_id: Option<String>,
+        #[serde(default)]
+        stage_type: Option<i64>,
+        #[serde(default)]
+        game_play: Option<i64>,
+    },
 }
 
 // ---------- GameStats ----------
@@ -150,6 +212,12 @@ pub struct GameRecord {
 
     pub stats: GameStats,
 
+    /// Platform-specific match identity (rank room, game/paifu id). `None`
+    /// for records written before this field existed and for bridges that
+    /// don't provide it.
+    #[serde(default)]
+    pub match_info: Option<MatchInfo>,
+
     /// Path of the mjai.jsonl copy, relative to the history root —
     /// always `"games/<id>.mjai.jsonl"`.
     pub log_path: String,
@@ -247,6 +315,89 @@ mod tests {
     }
 
     #[test]
+    fn match_info_round_trips_and_omits_none_fields() {
+        let infos = [
+            MatchInfo::Majsoul {
+                game_uuid: Some("240101-abcd".into()),
+                mode_id: Some(9),
+                room_id: None,
+                contest_uid: None,
+            },
+            MatchInfo::Tenhou {
+                log_id: Some("2026082300gm-00a9-0000-deadbeef".into()),
+                go_type: Some(169),
+                lobby: Some(0),
+            },
+            MatchInfo::RiichiCity {
+                room_id: Some("tabletoken0001".into()),
+                classify_id: Some("classifytoken0001".into()),
+                stage_type: Some(1),
+                game_play: Some(1001),
+            },
+        ];
+        for info in infos {
+            let j = serde_json::to_value(&info).unwrap();
+            let back: MatchInfo = serde_json::from_value(j).unwrap();
+            assert_eq!(back, info);
+        }
+
+        let j = serde_json::to_value(MatchInfo::Majsoul {
+            game_uuid: None,
+            mode_id: Some(12),
+            room_id: None,
+            contest_uid: None,
+        })
+        .unwrap();
+        assert_eq!(j["platform"], "majsoul");
+        assert_eq!(j["mode_id"], 12);
+        assert!(j.get("game_uuid").is_none(), "None fields must be omitted");
+
+        // A stored variant missing optional fields entirely still parses.
+        let back: MatchInfo = serde_json::from_str(r#"{"platform":"tenhou"}"#).unwrap();
+        assert_eq!(
+            back,
+            MatchInfo::Tenhou {
+                log_id: None,
+                go_type: None,
+                lobby: None
+            }
+        );
+    }
+
+    /// Records written before `match_info` existed (no such key in the JSON
+    /// line) keep parsing, defaulting to `None`.
+    #[test]
+    fn game_record_without_match_info_still_parses() {
+        let r = GameRecord {
+            id: "OLD".into(),
+            started_at: Utc::now(),
+            ended_at: Utc::now(),
+            platform: Platform::Majsoul,
+            num_players: 4,
+            kyoku_mode: KyokuMode::EastSouth,
+            names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            our_seat: Some(0),
+            final_scores: vec![30000, 25000, 25000, 20000],
+            final_ranks: vec![1, 2, 3, 4],
+            our_rank: Some(1),
+            our_delta: Some(5000),
+            stats: GameStats::default(),
+            match_info: Some(MatchInfo::Majsoul {
+                game_uuid: Some("u".into()),
+                mode_id: Some(8),
+                room_id: None,
+                contest_uid: None,
+            }),
+            log_path: "games/OLD.mjai.jsonl".into(),
+        };
+        let mut j = serde_json::to_value(&r).unwrap();
+        j.as_object_mut().unwrap().remove("match_info");
+        let back: GameRecord = serde_json::from_value(j).unwrap();
+        assert_eq!(back.match_info, None);
+        assert_eq!(back.id, r.id);
+    }
+
+    #[test]
     fn history_filter_default_matches_everything() {
         let r = GameRecord {
             id: "01ARZ".into(),
@@ -262,6 +413,7 @@ mod tests {
             our_rank: Some(1),
             our_delta: Some(5000),
             stats: GameStats::default(),
+            match_info: None,
             log_path: "games/01ARZ.mjai.jsonl".into(),
         };
         assert!(HistoryFilter::default().matches(&r));
@@ -283,6 +435,7 @@ mod tests {
             our_rank: None,
             our_delta: None,
             stats: GameStats::default(),
+            match_info: None,
             log_path: "x".into(),
         };
         let f = HistoryFilter {
@@ -308,6 +461,7 @@ mod tests {
             our_rank: Some(3),
             our_delta: Some(0),
             stats: GameStats::default(),
+            match_info: None,
             log_path: "games/rec1.mjai.jsonl".into(),
         };
         let ev = HistoryEvent::Recorded {

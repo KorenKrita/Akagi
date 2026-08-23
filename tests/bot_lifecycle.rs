@@ -140,7 +140,7 @@ async fn loading_emits_syncing_then_spawning_then_ready() {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         }),
     )
     .await
@@ -228,7 +228,7 @@ async fn second_spawn_skips_uv_sync_via_stamp() {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 4,
-                majsoul_meta: None,
+                game_meta: None,
             }),
         )
         .await
@@ -262,7 +262,7 @@ async fn second_spawn_skips_uv_sync_via_stamp() {
             aka_flag: None,
             id: Some(2),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         }),
     )
     .await

@@ -10,7 +10,8 @@ pub mod ipc;
 pub mod mjai;
 
 pub use history::{
-    GameRecord, GameStats, HistoryEvent, HistoryEventLog, HistoryFilter, KyokuMode, Platform,
+    GameRecord, GameStats, HistoryEvent, HistoryEventLog, HistoryFilter, KyokuMode, MatchInfo,
+    Platform,
 };
 pub use inspector::{
     BotReaction, CaptureSource, FrameDirection, FrameRaw, HttpAnnotation, HttpBody, HttpExchange,
@@ -21,4 +22,4 @@ pub use ipc::{
     LogEntry, LogSessionInfo, Notification, NotifyLevel, ReadInspectorRequest,
     ReadInspectorResponse, ReadLogRequest, ReadLogResponse, Snapshot,
 };
-pub use mjai::{GameEndReason, MajsoulGameMeta, MjaiEvent};
+pub use mjai::{GameEndReason, GameMeta, MjaiEvent};

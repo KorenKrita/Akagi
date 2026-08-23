@@ -64,6 +64,24 @@ When a non-Majsoul bridge lands (Tenhou, RiichiCity, ...):
 4. Older `index.jsonl` lines will deserialise with the new field defaulting;
    no migration step is required so long as the new field has a `Default`.
 
+## Match identity (`GameRecord.match_info`)
+
+`schema::history::MatchInfo` is a platform-tagged enum carrying the raw room
+/ rank-lobby ids and the platform's own game (paifu) id — e.g. Majsoul
+`mode_id` + `game_uuid`, Tenhou `<GO type>` bitfield + log id. Bridges attach
+it to `StartGame.game_meta` (a `#[serde(skip)]` field, so mjai logs and the
+inference API never see it) and the aggregator copies it into the record.
+
+Rules of the road:
+
+- Store **raw platform values**; label mapping lives in the frontend
+  (`frontend/src/lib/matchInfo.ts` + `history.room.*` locale keys) so an
+  unknown id shows as a number instead of a wrong name.
+- Every field is `Option` + `#[serde(default)]` — bridges fill what their
+  wire carried, old index lines deserialise with `match_info: None`.
+- To extend: add fields/variants in `schema/history.rs`, fill them in the
+  bridge's StartGame emission, mirror in `frontend/src/types.ts`.
+
 ## Adding a filter dimension
 
 1. Add the field to `HistoryFilter` (in `schema/history.rs`).

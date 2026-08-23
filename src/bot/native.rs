@@ -1082,7 +1082,7 @@ mod tests {
             aka_flag: None,
             id: Some(seat),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         }
     }
 
@@ -1879,7 +1879,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 3,
-            majsoul_meta: None,
+            game_meta: None,
         };
         let v = to_api_event(&sg, 0, 3);
         assert_eq!(v["names"].as_array().unwrap().len(), 4);

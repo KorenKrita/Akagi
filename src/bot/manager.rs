@@ -1293,7 +1293,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 4,
-                majsoul_meta: None,
+                game_meta: None,
             })
             .await
             .unwrap_err();
@@ -1351,7 +1351,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 4,
-                majsoul_meta: None,
+                game_meta: None,
             })
             .await
             .unwrap_err();
@@ -1434,7 +1434,7 @@ mod tests {
                 aka_flag: None,
                 id: Some(0),
                 num_players: 4,
-                majsoul_meta: None,
+                game_meta: None,
             })
             .await
             .unwrap_err();
@@ -1502,7 +1502,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         })
         .await
         .expect("handle returns Ok (analysis-only), not an error");
@@ -1559,7 +1559,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         })
         .await
         .expect("native bot must spawn without a Python runtime");

@@ -43,6 +43,7 @@
     "table": {
       "date": "日期",
       "platform": "平台",
+      "room": "房間",
       "mode": "模式",
       "rank": "順位",
       "end_score": "終局點數",
@@ -83,6 +84,9 @@
       "ended_at": "結束時間",
       "platform": "平台",
       "mode": "模式",
+      "room": "房間",
+      "game_id": "對局 ID",
+      "open_paifu": "開啟牌譜",
       "final": "終局排名",
       "stats": "詳細統計",
       "open_log": "開啟事件流",
@@ -90,7 +94,32 @@
       "seat_fallback": "座位 {{seat}}"
     },
     "delete_confirm": "確定要刪除這場對局紀錄嗎？此動作無法還原。",
-    "deleted": "已刪除"
+    "deleted": "已刪除",
+    "room": {
+      "majsoul_bronze": "銅之間",
+      "majsoul_silver": "銀之間",
+      "majsoul_gold": "金之間",
+      "majsoul_jade": "玉之間",
+      "majsoul_throne": "王座之間",
+      "majsoul_melee": "亂鬥之間",
+      "majsoul_friendly": "好友房 #{{id}}",
+      "majsoul_contest": "比賽 #{{id}}",
+      "tenhou_ippan": "一般桌",
+      "tenhou_joukyuu": "上級桌",
+      "tenhou_tokujou": "特上桌",
+      "tenhou_houou": "鳳凰桌",
+      "tenhou_lobby": "個室 {{lobby}}",
+      "rc_star": "新星",
+      "rc_moon": "霞月",
+      "rc_sun": "炎陽",
+      "rc_galaxy": "銀河",
+      "raw": "房間 #{{id}}",
+      "rc_ranked": "段位戰",
+      "rc_tournament": "大會戰",
+      "rc_friendly": "友人戰",
+      "rc_one_round": "一局戰",
+      "rc_casual": "休閒場"
+    }
   },
   "logs": {
     "title": "日誌",

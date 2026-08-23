@@ -18,6 +18,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { invoke } from '@/lib/tauri'
+import { roomLabelKey } from '@/lib/matchInfo'
 import { computePt, type PtRule } from '@/lib/ptCalc'
 import { useHistoryStore } from '@/stores/historyStore'
 import type { GameRecord } from '@/types'
@@ -77,6 +78,7 @@ export function GameList({
               <TableRow>
                 <TableHead>{t('history.table.date')}</TableHead>
                 <TableHead>{t('history.table.platform')}</TableHead>
+                <TableHead>{t('history.table.room')}</TableHead>
                 <TableHead>{t('history.table.mode')}</TableHead>
                 <TableHead>{t('history.table.rank')}</TableHead>
                 <TableHead className="text-right">
@@ -91,6 +93,7 @@ export function GameList({
                 const pt = computePt(r, rule)
                 const score =
                   r.our_seat == null ? null : r.final_scores[r.our_seat]
+                const room = roomLabelKey(r.match_info)
                 return (
                   <TableRow
                     key={r.id}
@@ -102,6 +105,9 @@ export function GameList({
                     </TableCell>
                     <TableCell>
                       {t(`platform.${r.platform}`)}
+                    </TableCell>
+                    <TableCell>
+                      {room ? t(room.key, room.params) : '—'}
                     </TableCell>
                     <TableCell>{modeLabel(r, t)}</TableCell>
                     <TableCell>{r.our_rank ?? '—'}</TableCell>

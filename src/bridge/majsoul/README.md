@@ -21,8 +21,11 @@ discards, calls, agari/ryukyoku) are still TODO.
     seats live under `payload.robots[]` without a nickname, so they get
     `""`. **No length-4 padding** — sanma authGame emits a length-3 names
     array natively.
-  - `gameConfig.meta.mode_id` is logged for diagnostics but not gated on
-    (sanma AI rooms emit `mode_id = 0`; ranked sanma uses 21/22/26).
+  - `gameConfig.meta.mode_id` / `room_id` / `contest_uid` are captured (zero
+    = "not applicable" → `None`) into the StartGame `game_meta.match_info`,
+    together with the raw `game_uuid` from the authGame request; history
+    persists them as `GameRecord.match_info`. Sanma AI rooms emit
+    `mode_id = 0`; ranked sanma uses 21/22/26. Never gated on.
 - Emits `MjaiEvent::StartGame { id: Some(seat), names, num_players, .. }`.
 
 `aka_flag` / `kyoku_first` aren't known yet at authGame time, so they stay

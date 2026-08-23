@@ -64,6 +64,9 @@ rand = "0.9"
 http = "1"
 http-body-util = "0.1.4"
 form_urlencoded = "1.2.2"
+# Tenhou `<UN/>` roster names are bare percent-encoded UTF-8 (no `+`-as-space
+# form semantics, so `form_urlencoded` would be wrong for them).
+percent-encoding = "2.3"
 time = "0.3"
 self-replace = "1"
 semver = "1"

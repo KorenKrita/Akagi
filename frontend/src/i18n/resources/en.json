@@ -43,6 +43,7 @@
     "table": {
       "date": "Date",
       "platform": "Platform",
+      "room": "Room",
       "mode": "Mode",
       "rank": "Rank",
       "end_score": "End Score",
@@ -83,6 +84,9 @@
       "ended_at": "End",
       "platform": "Platform",
       "mode": "Mode",
+      "room": "Room",
+      "game_id": "Game ID",
+      "open_paifu": "Open replay",
       "final": "Final standings",
       "stats": "Detailed stats",
       "open_log": "Open event stream",
@@ -90,7 +94,32 @@
       "seat_fallback": "Seat {{seat}}"
     },
     "delete_confirm": "Delete this game record permanently? This cannot be undone.",
-    "deleted": "Deleted"
+    "deleted": "Deleted",
+    "room": {
+      "majsoul_bronze": "Bronze Room",
+      "majsoul_silver": "Silver Room",
+      "majsoul_gold": "Gold Room",
+      "majsoul_jade": "Jade Room",
+      "majsoul_throne": "Throne Room",
+      "majsoul_melee": "Melee Room",
+      "majsoul_friendly": "Friends Room #{{id}}",
+      "majsoul_contest": "Tournament #{{id}}",
+      "tenhou_ippan": "General",
+      "tenhou_joukyuu": "Advanced",
+      "tenhou_tokujou": "Expert",
+      "tenhou_houou": "Phoenix",
+      "tenhou_lobby": "Lobby {{lobby}}",
+      "rc_star": "Star",
+      "rc_moon": "Moon",
+      "rc_sun": "Sun",
+      "rc_galaxy": "Galaxy",
+      "raw": "Room #{{id}}",
+      "rc_ranked": "Ranked Match",
+      "rc_tournament": "Tournament",
+      "rc_friendly": "Friendly Match",
+      "rc_one_round": "1-Round Challenge",
+      "rc_casual": "Casual Game"
+    }
   },
   "logs": {
     "title": "Logs",

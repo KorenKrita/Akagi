@@ -39,6 +39,7 @@ dependencies = [
  "mlua",
  "native_bot",
  "opener",
+ "percent-encoding",
  "prost",
  "prost-build",
  "prost-reflect",

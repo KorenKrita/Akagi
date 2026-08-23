@@ -536,6 +536,45 @@ export type GameStats = {
   nagashi_mangan: number
 }
 
+/**
+ * Platform-specific match identity captured at `start_game` — which room /
+ * rank lobby the game was played in plus the platform's own game (paifu) id.
+ * Mirrors `crate::schema::history::MatchInfo`: internally tagged on
+ * `platform`, raw platform values, `None` fields omitted from the JSON.
+ */
+export type MatchInfo =
+  | {
+      platform: 'majsoul'
+      /** Raw `game_uuid` — the replay identifier. */
+      game_uuid?: string | null
+      /** Ranked matchmode id (1..=28 = Bronze..Throne / Melee, 4p+3p). */
+      mode_id?: number | null
+      /** Friendly/AI room number. */
+      room_id?: number | null
+      /** Tournament id. */
+      contest_uid?: number | null
+    }
+  | {
+      platform: 'tenhou'
+      /** Paifu id from `<TAIKYOKU log=…>`. */
+      log_id?: string | null
+      /** Raw `<GO type=…>` rule/room bitfield (tier in bits 0x20/0x80). */
+      go_type?: number | null
+      /** Lobby number; 0 = the public ranked lobby. */
+      lobby?: number | null
+    }
+  | {
+      platform: 'riichi_city'
+      /** Table-instance token from the `cmd_enter_room` wrapper. */
+      room_id?: string | null
+      /** Matchmaking classification id (wire string). */
+      classify_id?: string | null
+      /** Rank stage tier of the matchmaking room. */
+      stage_type?: number | null
+      /** Game mode id (e.g. 1001). */
+      game_play?: number | null
+    }
+
 export type GameRecord = {
   id: string
   /** RFC3339 timestamp. */
@@ -553,6 +592,8 @@ export type GameRecord = {
   /** `final_score - starting_score` (4p:25000, 3p:35000). */
   our_delta: number | null
   stats: GameStats
+  /** Absent/null on records from before this field existed. */
+  match_info?: MatchInfo | null
   log_path: string
 }
 

@@ -25,7 +25,7 @@ use crate::{
     autoplay::tenhou_state::{SharedTenhouState, TenhouState},
     config::Platform,
     logger::{FlowLogger, Session},
-    schema::{mjai::Actor, MjaiEvent},
+    schema::{mjai::Actor, GameMeta, MatchInfo, MjaiEvent},
 };
 use chrono::Local;
 use meld::{Meld, MeldKind};
@@ -127,10 +127,16 @@ impl TenhouBridge {
         // Tags that contribute no mjai events — silently ignored. The Python
         // reference does the same in `_convert_helo`, `_convert_rejoin`, etc.
         match tag {
-            "HELO" | "REJOIN" | "GO" | "UN" | "BYE" | "SHUFFLE" => return Vec::new(),
+            "HELO" | "REJOIN" | "BYE" | "SHUFFLE" => return Vec::new(),
             _ => {}
         }
 
+        if tag == "GO" {
+            return self.on_go(msg);
+        }
+        if tag == "UN" {
+            return self.on_un(msg);
+        }
         if tag == "TAIKYOKU" {
             return self.on_taikyoku(msg);
         }
@@ -162,14 +168,49 @@ impl TenhouBridge {
         Vec::new()
     }
 
-    /// `<TAIKYOKU oya="N" .../>` — start of game. Resolves our wire-absolute
-    /// seat but defers `start_game` emission until the first `<INIT/>`, where
-    /// the 0-score slot reveals whether the game is sanma. Without that wait
-    /// we'd stamp `start_game.num_players = 4` on every sanma game (Tenhou's
-    /// TAIKYOKU itself carries no player-count signal — only the dealer's
-    /// relative seat).
+    /// `<GO type="…" lobby="…"/>` — rules/room announcement, sent before
+    /// `<TAIKYOKU/>`. No mjai events; the raw bitfield is stashed for
+    /// history's `MatchInfo` (room tier lives in bits 0x20 / 0x80).
+    fn on_go(&mut self, msg: &JsonValue) -> Vec<MjaiEvent> {
+        self.state.go_type = parse_u32(msg, "type");
+        self.state.lobby = parse_u32(msg, "lobby");
+        Vec::new()
+    }
+
+    /// `<UN n0=… n1=… …/>` — player roster, names percent-encoded UTF-8 in
+    /// wire-*relative* order (n0 = us). A reconnect `<UN/>` carries only the
+    /// returning player's name, so only the roster form (n0 and n1 both
+    /// present) is accepted — a partial update must not clobber good names.
+    /// No mjai events; consumed at `start_game` emission.
+    fn on_un(&mut self, msg: &JsonValue) -> Vec<MjaiEvent> {
+        let name = |key: &str| {
+            msg.get(key).and_then(JsonValue::as_str).map(|raw| {
+                percent_encoding::percent_decode_str(raw)
+                    .decode_utf8_lossy()
+                    .into_owned()
+            })
+        };
+        let (Some(n0), Some(n1)) = (name("n0"), name("n1")) else {
+            return Vec::new();
+        };
+        let n2 = name("n2").unwrap_or_default();
+        let n3 = name("n3").unwrap_or_default();
+        self.state.un_names = Some([n0, n1, n2, n3]);
+        Vec::new()
+    }
+
+    /// `<TAIKYOKU oya="N" log="…"/>` — start of game. Resolves our
+    /// wire-absolute seat but defers `start_game` emission until the first
+    /// `<INIT/>`, where the 0-score slot reveals whether the game is sanma.
+    /// Without that wait we'd stamp `start_game.num_players = 4` on every
+    /// sanma game (Tenhou's TAIKYOKU itself carries no player-count signal —
+    /// only the dealer's relative seat). The `log` attribute is the paifu id.
     fn on_taikyoku(&mut self, msg: &JsonValue) -> Vec<MjaiEvent> {
         let oya_rel = parse_u8(msg, "oya").unwrap_or(0);
+        self.state.log_id = msg
+            .get("log")
+            .and_then(JsonValue::as_str)
+            .map(str::to_string);
         // oya is dealer's *relative* seat in the 4-cycle wire frame. Our
         // wire-abs seat is the inverse: (-oya_rel) mod 4. For sanma our
         // wire-abs is always in {0, 1, 2} because we are a real player —
@@ -180,6 +221,31 @@ impl TenhouBridge {
         self.state.pending_start_game = true;
         self.rotate_mjai_log();
         Vec::new()
+    }
+
+    /// Seat-ordered display names for `start_game`. `<UN/>` roster names are
+    /// wire-relative (index 0 = us) and arrive before `<TAIKYOKU/>` resolves
+    /// our seat, so the remap to wire-absolute happens here (sanma ghost slot
+    /// skipped). Falls back to the historical seat-number placeholders when
+    /// no roster `<UN/>` was seen.
+    fn build_start_names(&mut self) -> Vec<String> {
+        let n = self.state.num_players as usize;
+        let mut names: Vec<String> = (0..n).map(|i| i.to_string()).collect();
+        if let Some(un) = self.state.un_names.take() {
+            for (rel, name) in un.into_iter().enumerate() {
+                if name.is_empty() {
+                    continue;
+                }
+                let abs = self.state.rel_to_abs(rel as u8);
+                if self.state.is_ghost_abs(abs) {
+                    continue;
+                }
+                if let Some(slot) = names.get_mut(abs as usize) {
+                    *slot = name;
+                }
+            }
+        }
+        names
     }
 
     /// `<INIT seed="..." ten="..." oya="..." hai0="..."/>` — start of kyoku.
@@ -251,14 +317,30 @@ impl TenhouBridge {
         let mut events = Vec::with_capacity(2);
         if self.state.pending_start_game {
             self.state.pending_start_game = false;
-            let names: Vec<String> = (0..self.state.num_players).map(|i| i.to_string()).collect();
+            let names = self.build_start_names();
+            // Read non-destructively: a reconnect can replay TAIKYOKU+INIT
+            // without a fresh <GO/>, and the re-emitted start_game must
+            // keep the room bitfield. A *new* game always sends its own
+            // <GO/> (and every TAIKYOKU reassigns log_id), so staleness
+            // across games isn't a concern. Names ARE consumed (in
+            // `build_start_names`): a stale roster is worse than a missing
+            // one, and reconnects resend the full <UN/>.
+            let match_info = MatchInfo::Tenhou {
+                log_id: self.state.log_id.clone(),
+                go_type: self.state.go_type,
+                lobby: self.state.lobby,
+            };
             events.push(MjaiEvent::StartGame {
                 names,
                 kyoku_first: None,
                 aka_flag: None,
                 id: Some(self.state.seat as Actor),
                 num_players: self.state.num_players,
-                majsoul_meta: None,
+                game_meta: Some(GameMeta {
+                    game_id: None,
+                    match_mode: None,
+                    match_info: Some(match_info),
+                }),
             });
         }
         events.push(MjaiEvent::StartKyoku {
@@ -853,6 +935,135 @@ mod tests {
         // start_game is emitted at the first INIT (when sanma is known).
         let events = parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"1"}"#);
         assert!(events.is_empty(), "start_game must be deferred to INIT");
+    }
+
+    /// GO / UN / TAIKYOKU metadata surfaces on `start_game`: real roster
+    /// names (percent-decoded, remapped from wire-relative to wire-absolute
+    /// seats) plus `MatchInfo::Tenhou` with the room bitfield, lobby and
+    /// paifu id.
+    #[test]
+    fn go_un_taikyoku_metadata_reaches_start_game() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(&mut b, r#"{"tag":"GO","type":"169","lobby":"0"}"#);
+        // n0 is *us* (wire-relative); "%E3%81%82" decodes to "あ".
+        parse_one(
+            &mut b,
+            r#"{"tag":"UN","n0":"%E3%81%82","n1":"bob","n2":"carol","n3":"dave","dan":"16,15,14,13","rate":"2100.00,2000.00,1900.00,1800.00"}"#,
+        );
+        // Dealer at rel 1 → our wire-abs seat = (4-1)%4 = 3.
+        parse_one(
+            &mut b,
+            r#"{"tag":"TAIKYOKU","oya":"1","log":"2026082300gm-00a9-0000-deadbeef"}"#,
+        );
+        let init = r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"1","hai":"0,4,8,36,40,44,72,76,80,108,112,116,120"}"#;
+        let events = parse_one(&mut b, init);
+        match &events[0] {
+            MjaiEvent::StartGame {
+                id,
+                names,
+                game_meta,
+                ..
+            } => {
+                assert_eq!(*id, Some(3));
+                // rel [us, shimocha, toimen, kamicha] → abs [3, 0, 1, 2].
+                assert_eq!(
+                    names,
+                    &vec![
+                        "bob".to_string(),
+                        "carol".to_string(),
+                        "dave".to_string(),
+                        "あ".to_string(),
+                    ]
+                );
+                let meta = game_meta.as_ref().expect("tenhou game meta");
+                match &meta.match_info {
+                    Some(MatchInfo::Tenhou {
+                        log_id,
+                        go_type,
+                        lobby,
+                    }) => {
+                        assert_eq!(log_id.as_deref(), Some("2026082300gm-00a9-0000-deadbeef"));
+                        assert_eq!(*go_type, Some(169));
+                        assert_eq!(*lobby, Some(0));
+                    }
+                    other => panic!("expected Tenhou match_info, got {other:?}"),
+                }
+            }
+            other => panic!("expected StartGame first, got {other:?}"),
+        }
+    }
+
+    /// A reconnect `<UN/>` carries a single player's name — it must not
+    /// clobber a full roster (or install a mostly-empty one).
+    #[test]
+    fn partial_un_does_not_replace_roster() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(
+            &mut b,
+            r#"{"tag":"UN","n0":"alice","n1":"bob","n2":"carol","n3":"dave"}"#,
+        );
+        // A different name in the partial update proves the guard rejected
+        // the whole message rather than merging the one field.
+        parse_one(&mut b, r#"{"tag":"UN","n2":"INTRUDER"}"#);
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
+        let init = r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,4,8,36,40,44,72,76,80,108,112,116,120"}"#;
+        let events = parse_one(&mut b, init);
+        match &events[0] {
+            MjaiEvent::StartGame { names, .. } => {
+                // oya rel 0 → our seat 0, so rel order == abs order here.
+                assert_eq!(
+                    names,
+                    &vec![
+                        "alice".to_string(),
+                        "bob".to_string(),
+                        "carol".to_string(),
+                        "dave".to_string(),
+                    ]
+                );
+            }
+            other => panic!("expected StartGame first, got {other:?}"),
+        }
+    }
+
+    /// Sanma roster: the wire stays 4-positional and relative, so the ghost
+    /// slot's empty name sits at the ghost's *relative* index (here rel 1:
+    /// our seat is 2, ghost wire-abs is 3). Real names land on their real
+    /// seats and the emitted vector stays length 3.
+    #[test]
+    fn sanma_un_names_skip_the_ghost_slot() {
+        let mut b = TenhouBridge::new(None, None);
+        parse_one(
+            &mut b,
+            r#"{"tag":"UN","n0":"alice","n1":"","n2":"bob","n3":"carol"}"#,
+        );
+        // Dealer at rel 2 → our wire-abs = (4-2)%4 = 2.
+        parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"2"}"#);
+        // 0-score slot at E1H0 marks sanma; like the UN names, `ten` is
+        // relative, so the ghost's 0 sits at rel 1 (wire-abs 3) here.
+        let init = r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"350,0,350,350","oya":"2","hai":"0,4,8,36,40,44,72,76,80,108,112,116,120"}"#;
+        let events = parse_one(&mut b, init);
+        match &events[0] {
+            MjaiEvent::StartGame {
+                names, num_players, ..
+            } => {
+                assert_eq!(*num_players, 3);
+                // rel→abs with seat 2: rel0→2 (alice), rel1→3 ghost (empty,
+                // skipped), rel2→0 (bob), rel3→1 (carol).
+                assert_eq!(
+                    names,
+                    &vec!["bob".to_string(), "carol".to_string(), "alice".to_string()]
+                );
+            }
+            other => panic!("expected StartGame first, got {other:?}"),
+        }
+        // The ghost's rel-1 zero is skipped; all three real seats carry
+        // their 35000.
+        match &events[1] {
+            MjaiEvent::StartKyoku { scores, .. } => {
+                assert_eq!(scores, &vec![35000, 35000, 35000]);
+            }
+            other => panic!("expected StartKyoku second, got {other:?}"),
+        }
     }
 
     #[test]
