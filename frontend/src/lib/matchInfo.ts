@@ -43,15 +43,40 @@ const MAJSOUL_ROOM_TIERS: Record<number, string> = {
 
 /**
  * Riichi City `options.stage_type` → ranked room tier, lowest to highest.
- * From the client's ranked-queue protocol (`readStageClassifies`
- * `stageType` 1–4), verified against live `cmd_stagematch_run` pushes in
- * PR #268.
+ * Tier names follow the client's own strings (`MATCHING_VIEW_STATE_TYPE_*`:
+ * 新星/霞月/炎陽/銀河, EN Star/Moon/Sun/Galaxy); its replay list labels a
+ * ranked game exactly this way.
  */
 const RIICHI_CITY_ROOM_TIERS: Record<number, string> = {
   1: 'star',
   2: 'moon',
   3: 'sun',
   4: 'galaxy',
+}
+
+/**
+ * Riichi City `options.game_play` → mode label key, from the client's
+ * `GamePlayType` enum. 1001 (ranked) is handled separately via the stage
+ * tier above; 1021 is the tier-less Taiwan-rules ranked ladder. The
+ * 1007–1016/1022 block are the casual-hall variants (directive war,
+ * chinitsu trial, Taiwan rules, 17-steps, bleed, hidden war, …), labeled
+ * with the client's own "Casual Game" umbrella term.
+ */
+const RIICHI_CITY_MODES: Record<number, string> = {
+  1002: 'rc_tournament',
+  1003: 'rc_friendly',
+  1004: 'rc_one_round',
+  1005: 'rc_one_round',
+  1007: 'rc_casual',
+  1008: 'rc_casual',
+  1009: 'rc_casual',
+  1010: 'rc_casual',
+  1013: 'rc_casual',
+  1014: 'rc_casual',
+  1015: 'rc_casual',
+  1016: 'rc_casual',
+  1021: 'rc_ranked',
+  1022: 'rc_casual',
 }
 
 /**
@@ -89,13 +114,22 @@ export function roomLabelKey(
       return { key: `history.room.tenhou_${tenhouTier(info.go_type)}` }
     }
     case 'riichi_city': {
-      // stage_type is only meaningful for ranked queues; 0/absent (friend
-      // rooms, events) shows nothing rather than a wrong tier.
-      if (!info.stage_type) return null
-      const tier = RIICHI_CITY_ROOM_TIERS[info.stage_type]
-      return tier
-        ? { key: `history.room.rc_${tier}` }
-        : { key: 'history.room.raw', params: { id: info.stage_type } }
+      const gp = info.game_play
+      // Ranked queue: label by the stage tier (falling back to the generic
+      // "Ranked Match" when the tier is missing or unknown).
+      if (gp === 1001 || (gp == null && info.stage_type)) {
+        const tier = info.stage_type
+          ? RIICHI_CITY_ROOM_TIERS[info.stage_type]
+          : undefined
+        if (tier) return { key: `history.room.rc_${tier}` }
+        if (gp === 1001) return { key: 'history.room.rc_ranked' }
+        return { key: 'history.room.raw', params: { id: info.stage_type } }
+      }
+      if (gp == null) return null
+      const mode = RIICHI_CITY_MODES[gp]
+      return mode
+        ? { key: `history.room.${mode}` }
+        : { key: 'history.room.raw', params: { id: gp } }
     }
   }
 }

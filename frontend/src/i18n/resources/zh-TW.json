@@ -107,11 +107,16 @@
       "tenhou_tokujou": "特上桌",
       "tenhou_houou": "鳳凰桌",
       "tenhou_lobby": "個室 {{lobby}}",
-      "rc_star": "星之間",
-      "rc_moon": "月之間",
-      "rc_sun": "日之間",
-      "rc_galaxy": "銀河之間",
-      "raw": "房間 #{{id}}"
+      "rc_star": "新星",
+      "rc_moon": "霞月",
+      "rc_sun": "炎陽",
+      "rc_galaxy": "銀河",
+      "raw": "房間 #{{id}}",
+      "rc_ranked": "段位戰",
+      "rc_tournament": "大會戰",
+      "rc_friendly": "友人戰",
+      "rc_one_round": "一局戰",
+      "rc_casual": "休閒場"
     }
   },
   "logs": {

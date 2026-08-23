@@ -107,11 +107,16 @@
       "tenhou_tokujou": "Expert",
       "tenhou_houou": "Phoenix",
       "tenhou_lobby": "Lobby {{lobby}}",
-      "rc_star": "Star Room",
-      "rc_moon": "Moon Room",
-      "rc_sun": "Sun Room",
-      "rc_galaxy": "Galaxy Room",
-      "raw": "Room #{{id}}"
+      "rc_star": "Star",
+      "rc_moon": "Moon",
+      "rc_sun": "Sun",
+      "rc_galaxy": "Galaxy",
+      "raw": "Room #{{id}}",
+      "rc_ranked": "Ranked Match",
+      "rc_tournament": "Tournament",
+      "rc_friendly": "Friendly Match",
+      "rc_one_round": "1-Round Challenge",
+      "rc_casual": "Casual Game"
     }
   },
   "logs": {

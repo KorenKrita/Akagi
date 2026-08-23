@@ -46,6 +46,34 @@ describe('roomLabelKey', () => {
     ).toEqual({ key: 'history.room.tenhou_lobby', params: { lobby: 7994 } })
   })
 
+  it('labels Riichi City games by game mode', () => {
+    // Ranked (1001): tier from stage_type, generic ranked label without one.
+    expect(
+      roomLabelKey({ platform: 'riichi_city', game_play: 1001, stage_type: 2 }),
+    ).toEqual({ key: 'history.room.rc_moon' })
+    expect(
+      roomLabelKey({ platform: 'riichi_city', game_play: 1001 }),
+    ).toEqual({ key: 'history.room.rc_ranked' })
+    // Non-ranked modes label by the GamePlayType mapping.
+    expect(
+      roomLabelKey({ platform: 'riichi_city', game_play: 1003 }),
+    ).toEqual({ key: 'history.room.rc_friendly' })
+    expect(
+      roomLabelKey({ platform: 'riichi_city', game_play: 1002 }),
+    ).toEqual({ key: 'history.room.rc_tournament' })
+    expect(
+      roomLabelKey({ platform: 'riichi_city', game_play: 1004 }),
+    ).toEqual({ key: 'history.room.rc_one_round' })
+    expect(
+      roomLabelKey({ platform: 'riichi_city', game_play: 1010 }),
+    ).toEqual({ key: 'history.room.rc_casual' })
+    // Unknown mode ids degrade to the raw number.
+    expect(roomLabelKey({ platform: 'riichi_city', game_play: 1099 })).toEqual({
+      key: 'history.room.raw',
+      params: { id: 1099 },
+    })
+  })
+
   it('maps Riichi City stage types 1-4 to Star/Moon/Sun/Galaxy', () => {
     expect(
       roomLabelKey({ platform: 'riichi_city', stage_type: 1 }),
