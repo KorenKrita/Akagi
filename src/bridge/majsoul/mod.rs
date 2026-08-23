@@ -17,7 +17,7 @@ use crate::{
     autoplay::budget::{BudgetSource, SharedTimeBudget, TimeBudget},
     config::Platform,
     logger::{FlowLogger, Session},
-    schema::{mjai::Actor, MajsoulGameMeta, MjaiEvent},
+    schema::{mjai::Actor, GameMeta, MatchInfo, MjaiEvent},
 };
 use anyhow::{bail, Context, Result};
 use chrono::Local;
@@ -113,6 +113,10 @@ pub struct MajsoulBridge {
     mjai_log: Option<Arc<FlowLogger>>,
     account_id: Option<u64>,
     game_id: Option<u64>,
+    /// Raw `ReqAuthGame.game_uuid` — the paifu identifier, persisted into
+    /// history's `MatchInfo` so the frontend can link to the replay.
+    /// `game_id` above stays the FNV hash used for reconnect detection.
+    game_uuid: Option<String>,
     seat: Option<Actor>,
     /// Mjai-mapped dora indicators seen so far this kyoku. Compared
     /// against the `doras` array that any action payload may carry
@@ -179,6 +183,7 @@ impl MajsoulBridge {
             mjai_log: None,
             account_id: None,
             game_id: None,
+            game_uuid: None,
             seat: None,
             doras: Vec::new(),
             dora_timing: None,
@@ -255,11 +260,12 @@ impl MajsoulBridge {
         match (&msg.msg_type, msg.method_name.as_ref()) {
             (MessageType::Request, METHOD_AUTH_GAME) => {
                 self.account_id = msg.payload.get("account_id").and_then(JsonValue::as_u64);
-                self.game_id = msg
+                self.game_uuid = msg
                     .payload
                     .get("game_uuid")
                     .and_then(JsonValue::as_str)
-                    .map(stable_game_id);
+                    .map(str::to_string);
+                self.game_id = self.game_uuid.as_deref().map(stable_game_id);
                 if self.account_id.is_none() {
                     warn!(
                         target: "akagi::bridge::majsoul",
@@ -1234,9 +1240,16 @@ impl MajsoulBridge {
         } else {
             self.num_players = detected;
         }
-        let mode_id = payload
-            .pointer("/game_config/meta/mode_id")
-            .and_then(JsonValue::as_u64);
+        let meta_u32 = |key: &str| {
+            payload
+                .pointer(&format!("/game_config/meta/{key}"))
+                .and_then(JsonValue::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|&value| value != 0)
+        };
+        let mode_id = meta_u32("mode_id");
+        let room_id = meta_u32("room_id");
+        let contest_uid = meta_u32("contest_uid");
         let match_mode = payload
             .pointer("/game_config/mode/mode")
             .and_then(JsonValue::as_u64)
@@ -1253,9 +1266,15 @@ impl MajsoulBridge {
             aka_flag: None,
             id: Some(seat),
             num_players: self.num_players,
-            majsoul_meta: Some(MajsoulGameMeta {
+            game_meta: Some(GameMeta {
                 game_id: self.game_id,
                 match_mode,
+                match_info: Some(MatchInfo::Majsoul {
+                    game_uuid: self.game_uuid.clone(),
+                    mode_id,
+                    room_id,
+                    contest_uid,
+                }),
             }),
         }]
     }
@@ -1962,16 +1981,30 @@ mod tests {
             }),
         ));
         match &events[0] {
-            MjaiEvent::StartGame { majsoul_meta, .. } => {
-                let meta = majsoul_meta.expect("Mahjong Soul metadata");
+            MjaiEvent::StartGame { game_meta, .. } => {
+                let meta = game_meta.as_ref().expect("Mahjong Soul metadata");
                 assert_eq!(meta.game_id, Some(stable_game_id(game_uuid)));
                 assert_eq!(meta.match_mode, Some(2));
+                match &meta.match_info {
+                    Some(MatchInfo::Majsoul {
+                        game_uuid: uuid,
+                        mode_id,
+                        room_id,
+                        contest_uid,
+                    }) => {
+                        assert_eq!(uuid.as_deref(), Some(game_uuid));
+                        assert_eq!(*mode_id, Some(12));
+                        assert_eq!(*room_id, None);
+                        assert_eq!(*contest_uid, None);
+                    }
+                    other => panic!("expected Majsoul match_info, got {other:?}"),
+                }
             }
             other => panic!("expected StartGame, got {other:?}"),
         }
         assert!(serde_json::to_value(&events[0])
             .unwrap()
-            .get("majsoul_meta")
+            .get("game_meta")
             .is_none());
     }
 
@@ -2041,6 +2074,7 @@ mod tests {
                 id,
                 names,
                 num_players,
+                game_meta,
                 ..
             } => {
                 assert_eq!(*id, Some(1));
@@ -2049,6 +2083,21 @@ mod tests {
                     names,
                     &vec!["".to_string(), "player_a".to_string(), "".to_string()]
                 );
+                // Zero-valued meta ids mean "not applicable" and are dropped;
+                // the friendly/AI room number is kept as-is.
+                match &game_meta.as_ref().expect("game meta").match_info {
+                    Some(MatchInfo::Majsoul {
+                        mode_id,
+                        room_id,
+                        contest_uid,
+                        ..
+                    }) => {
+                        assert_eq!(*mode_id, None);
+                        assert_eq!(*room_id, Some(33123));
+                        assert_eq!(*contest_uid, None);
+                    }
+                    other => panic!("expected Majsoul match_info, got {other:?}"),
+                }
             }
             other => panic!("expected StartGame, got {other:?}"),
         }

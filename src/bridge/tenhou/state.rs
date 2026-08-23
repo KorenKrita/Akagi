@@ -45,6 +45,17 @@ pub struct State {
     /// next `<INIT/>`. We defer emission so we know yonma vs sanma (via INIT's
     /// 0-score slot) and can stamp `num_players` correctly on `start_game`.
     pub pending_start_game: bool,
+    /// `<GO type=…/>` rule/room bitfield (room tier in bits 0x20/0x80),
+    /// stashed until `start_game` emission consumes it into `MatchInfo`.
+    pub go_type: Option<u32>,
+    /// `<GO lobby=…/>` lobby number, stashed like `go_type`.
+    pub lobby: Option<u32>,
+    /// `<TAIKYOKU log=…/>` paifu id, stashed like `go_type`.
+    pub log_id: Option<String>,
+    /// `<UN/>` roster names, percent-decoded, in wire-*relative* order
+    /// (index 0 = us). `<UN/>` arrives before `<TAIKYOKU/>` resolves our
+    /// seat, so the remap to wire-absolute happens at `start_game` emission.
+    pub un_names: Option<[String; 4]>,
     /// Decision window currently open for *our* seat, if any. Only consumed by
     /// autoplay (see [`crate::autoplay::tenhou_state`]); parsing keeps it up to
     /// date unconditionally because it is cheap and a stale window is worse
@@ -66,6 +77,10 @@ impl Default for State {
             num_players: 4,
             last_revealed_tile_actor: None,
             pending_start_game: false,
+            go_type: None,
+            lobby: None,
+            log_id: None,
+            un_names: None,
             window: None,
         }
     }

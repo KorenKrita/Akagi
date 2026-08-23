@@ -1214,7 +1214,7 @@ mod tests {
             aka_flag: None,
             id: Some(1),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         });
         assert_eq!(
             m.state.cached_our_seat,
@@ -1246,7 +1246,7 @@ mod tests {
             aka_flag: None,
             id: Some(2),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         });
         assert_eq!(m.state.cached_our_seat, Some(2));
 
@@ -1293,7 +1293,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         });
         assert_eq!(m.state.dead_clicks, 0, "a new table is a fresh start");
     }
@@ -1444,7 +1444,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         });
         assert_eq!(m.state.cached_our_seat, Some(0));
 
@@ -1455,7 +1455,7 @@ mod tests {
             aka_flag: None,
             id: None,
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         });
         assert!(
             m.state.cached_our_seat.is_none(),

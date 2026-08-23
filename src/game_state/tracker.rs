@@ -489,7 +489,7 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         }
     }
 
@@ -566,7 +566,7 @@ mod tests {
             aka_flag: None,
             id: None, // observer / replay: no seat of ours
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         })
         .unwrap();
         assert_eq!(t.our_seat_can_act(), None, "no seat, no opinion");
@@ -796,7 +796,7 @@ mod tests {
             aka_flag: None,
             id: seat,
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         }
     }
 
@@ -1010,7 +1010,7 @@ mod tests {
             aka_flag: None,
             id: Some(1),
             num_players: 3,
-            majsoul_meta: None,
+            game_meta: None,
         };
         t.handle(&ev).unwrap();
         assert!(t.state().is_none(), "state() returns None for 3p");

@@ -114,8 +114,8 @@ impl RecorderState {
 
     fn handle(&mut self, ev: MjaiEvent, store: &HistoryStore, bus: &HistoryBus) {
         match &ev {
-            MjaiEvent::StartGame { majsoul_meta, .. } => {
-                let incoming_game_id = majsoul_meta.and_then(|meta| meta.game_id);
+            MjaiEvent::StartGame { game_meta, .. } => {
+                let incoming_game_id = game_meta.as_ref().and_then(|meta| meta.game_id);
                 let reconnecting_same_game = incoming_game_id.is_some()
                     && incoming_game_id == self.game_id
                     && self.buf.is_some()
@@ -268,16 +268,17 @@ mod tests {
             aka_flag: Some(true),
             id: Some(0),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         }
     }
 
     fn start_game_with_id(game_id: u64) -> MjaiEvent {
         let mut event = start_game();
-        if let MjaiEvent::StartGame { majsoul_meta, .. } = &mut event {
-            *majsoul_meta = Some(crate::schema::MajsoulGameMeta {
+        if let MjaiEvent::StartGame { game_meta, .. } = &mut event {
+            *game_meta = Some(crate::schema::GameMeta {
                 game_id: Some(game_id),
                 match_mode: Some(2),
+                match_info: None,
             });
         }
         event

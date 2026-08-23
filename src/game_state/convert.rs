@@ -85,7 +85,7 @@ mod tests {
             aka_flag: None,
             id: Some(2),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         };
         let out = to_riichienv(&ev).unwrap().unwrap();
         match out {
@@ -104,7 +104,7 @@ mod tests {
             aka_flag: None,
             id: None,
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         };
         let out = to_riichienv(&ev).unwrap().unwrap();
         assert!(matches!(out, RiEvent::StartGame { id: None, .. }));

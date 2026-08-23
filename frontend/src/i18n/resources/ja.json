@@ -43,6 +43,7 @@
     "table": {
       "date": "日時",
       "platform": "プラットフォーム",
+      "room": "卓",
       "mode": "形式",
       "rank": "順位",
       "end_score": "終局点数",
@@ -83,6 +84,9 @@
       "ended_at": "終了時刻",
       "platform": "プラットフォーム",
       "mode": "形式",
+      "room": "卓",
+      "game_id": "対局ID",
+      "open_paifu": "牌譜を開く",
       "final": "最終順位",
       "stats": "詳細統計",
       "open_log": "イベント記録を開く",
@@ -90,7 +94,21 @@
       "seat_fallback": "席 {{seat}}"
     },
     "delete_confirm": "この対局記録を削除しますか？元に戻せません。",
-    "deleted": "削除しました"
+    "deleted": "削除しました",
+    "room": {
+      "majsoul_bronze": "銅の間",
+      "majsoul_silver": "銀の間",
+      "majsoul_gold": "金の間",
+      "majsoul_jade": "玉の間",
+      "majsoul_throne": "王座の間",
+      "majsoul_melee": "乱闘の間",
+      "tenhou_ippan": "一般卓",
+      "tenhou_joukyuu": "上級卓",
+      "tenhou_tokujou": "特上卓",
+      "tenhou_houou": "鳳凰卓",
+      "tenhou_lobby": "個室 {{lobby}}",
+      "raw": "ルーム #{{id}}"
+    }
   },
   "logs": {
     "title": "ログ",

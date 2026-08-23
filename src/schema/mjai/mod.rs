@@ -14,23 +14,28 @@
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+use crate::schema::history::MatchInfo;
+
 /// mjai tile string. Examples: `"1m"`, `"5mr"` (red 5), `"E"`, `"P"`, `"?"`.
 pub type Tile = String;
 
 /// Seat index, 0..=3 (4p) or 0..=2 (3p).
 pub type Actor = u8;
 
-/// Mahjong Soul data kept inside Akagi's typed event bus. These fields are
-/// deliberately excluded from mjai JSON so subprocess bots, logs and the cloud
-/// inference API continue to receive the standard protocol shape.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MajsoulGameMeta {
-    /// Stable hash of `ReqAuthGame.game_uuid`, used to recognize a reconnect of
-    /// the same table without persisting the UUID itself.
+/// In-process game metadata kept inside Akagi's typed event bus. These fields
+/// are deliberately excluded from mjai JSON so subprocess bots, logs and the
+/// cloud inference API continue to receive the standard protocol shape.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GameMeta {
+    /// Stable hash of `ReqAuthGame.game_uuid` (Majsoul), used to recognize a
+    /// reconnect of the same table without comparing the UUID itself.
     pub game_id: Option<u64>,
-    /// `game_config.mode.mode`: 1/2 = 4p East / East-South,
+    /// `game_config.mode.mode` (Majsoul): 1/2 = 4p East / East-South,
     /// 11/12 = 3p East / East-South.
     pub match_mode: Option<u8>,
+    /// Persisted match identity (rank room, game/paifu id) copied into
+    /// `GameRecord.match_info` by the history aggregator.
+    pub match_info: Option<MatchInfo>,
 }
 
 /// Why an in-process game-end event was emitted. The reason and standings are
@@ -70,7 +75,7 @@ pub enum MjaiEvent {
         #[serde(default = "default_num_players")]
         num_players: u8,
         #[serde(skip, default)]
-        majsoul_meta: Option<MajsoulGameMeta>,
+        game_meta: Option<GameMeta>,
     },
     StartKyoku {
         bakaze: Tile,
@@ -390,13 +395,19 @@ mod tests {
             aka_flag: None,
             id: Some(0),
             num_players: 4,
-            majsoul_meta: Some(MajsoulGameMeta {
+            game_meta: Some(GameMeta {
                 game_id: Some(7),
                 match_mode: Some(2),
+                match_info: Some(MatchInfo::Majsoul {
+                    game_uuid: Some("240101-uuid".into()),
+                    mode_id: Some(12),
+                    room_id: None,
+                    contest_uid: None,
+                }),
             }),
         };
         let start_json = serde_json::to_value(start).unwrap();
-        assert!(start_json.get("majsoul_meta").is_none());
+        assert!(start_json.get("game_meta").is_none());
 
         let end = MjaiEvent::confirmed_game(
             Some(vec![12000, 41000, 27000, 20000]),

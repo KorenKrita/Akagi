@@ -3,7 +3,9 @@
 // Mirrors the GameRecord shape directly — no re-aggregation needed.
 
 import { useTranslation } from 'react-i18next'
+import { ExternalLink } from 'lucide-react'
 
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -19,6 +21,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { openExternal } from '@/lib/external'
+import { matchGameId, paifuUrl, roomLabelKey } from '@/lib/matchInfo'
 import type { GameRecord } from '@/types'
 
 const STARTING_4P = 25_000
@@ -34,6 +38,9 @@ export function GameDetailDialog({
   const { t } = useTranslation()
   const open = record !== null
   const start = record?.num_players === 3 ? STARTING_3P : STARTING_4P
+  const room = roomLabelKey(record?.match_info)
+  const gameId = matchGameId(record?.match_info)
+  const replayUrl = paifuUrl(record?.match_info)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -73,6 +80,29 @@ export function GameDetailDialog({
                     : t('history.filter.other')}
               </span>
             </Section>
+            {room && (
+              <Section title={t('history.detail.room')}>
+                <span className="text-sm">{t(room.key, room.params)}</span>
+              </Section>
+            )}
+            {gameId && (
+              <Section title={t('history.detail.game_id')}>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs break-all">{gameId}</span>
+                  {replayUrl && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 shrink-0"
+                      onClick={() => openExternal(replayUrl)}
+                    >
+                      <ExternalLink className="h-3 w-3 mr-1" />
+                      {t('history.detail.open_paifu')}
+                    </Button>
+                  )}
+                </div>
+              </Section>
+            )}
 
             <Section title={t('history.detail.final')}>
               <Table>

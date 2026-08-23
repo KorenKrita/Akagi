@@ -52,14 +52,14 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
     } = input;
 
     // ----- Bootstrap: pull num_players + names + our_seat from start_game -----
-    let (num_players, names, our_seat, majsoul_meta) = events.iter().find_map(|ev| match ev {
+    let (num_players, names, our_seat, game_meta) = events.iter().find_map(|ev| match ev {
         MjaiEvent::StartGame {
             names,
             id,
             num_players,
-            majsoul_meta,
+            game_meta,
             ..
-        } => Some((*num_players, names.clone(), *id, *majsoul_meta)),
+        } => Some((*num_players, names.clone(), *id, game_meta.clone())),
         _ => None,
     })?;
 
@@ -77,7 +77,7 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
     let mut cur_scores = vec![0i32; n];
     let mut stats = GameStats::default();
 
-    let mut kyoku_mode = match majsoul_meta.and_then(|meta| meta.match_mode) {
+    let mut kyoku_mode = match game_meta.as_ref().and_then(|meta| meta.match_mode) {
         // 2 = 4p East-South, 12 = 3p East-South.
         Some(2) | Some(12) => KyokuMode::EastSouth,
         _ => KyokuMode::EastOnly,
@@ -348,6 +348,7 @@ pub fn aggregate(input: AggregateInput<'_>) -> Option<GameRecord> {
         our_rank,
         our_delta,
         stats,
+        match_info: game_meta.and_then(|meta| meta.match_info),
         log_path: format!("games/{id}.mjai.jsonl"),
     })
 }
@@ -405,7 +406,7 @@ fn ranks_from_scores(scores: &[i32]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::MajsoulGameMeta;
+    use crate::schema::{GameMeta, MatchInfo};
 
     fn ts() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-05-01T10:00:00Z")
@@ -420,7 +421,7 @@ mod tests {
             aka_flag: Some(true),
             id: Some(seat),
             num_players: 4,
-            majsoul_meta: None,
+            game_meta: None,
         }
     }
 
@@ -436,6 +437,43 @@ mod tests {
             tehais: vec![vec![]; 4],
             num_players: 4,
         }
+    }
+
+    /// `match_info` rides the in-process StartGame meta into the persisted
+    /// record.
+    #[test]
+    fn match_info_is_copied_into_the_record() {
+        let info = MatchInfo::Majsoul {
+            game_uuid: Some("240101-uuid".into()),
+            mode_id: Some(11),
+            room_id: None,
+            contest_uid: None,
+        };
+        let mut start = start_game_4p(0);
+        if let MjaiEvent::StartGame { game_meta, .. } = &mut start {
+            *game_meta = Some(GameMeta {
+                game_id: Some(1),
+                match_mode: Some(1),
+                match_info: Some(info.clone()),
+            });
+        }
+        let events = vec![
+            start,
+            start_kyoku("E", 0, vec![25000; 4]),
+            MjaiEvent::confirmed_game(
+                Some(vec![30000, 25000, 25000, 20000]),
+                Some(vec![1, 2, 3, 4]),
+            ),
+        ];
+        let rec = aggregate(AggregateInput {
+            events: &events,
+            platform: Platform::Majsoul,
+            started_at: ts(),
+            ended_at: ts(),
+            id: "MATCHINFO".into(),
+        })
+        .unwrap();
+        assert_eq!(rec.match_info, Some(info));
     }
 
     #[test]
@@ -545,10 +583,11 @@ mod tests {
     #[test]
     fn planned_hanchan_stays_hanchan_when_bankruptcy_ends_it_in_east() {
         let mut start = start_game_4p(1);
-        if let MjaiEvent::StartGame { majsoul_meta, .. } = &mut start {
-            *majsoul_meta = Some(MajsoulGameMeta {
+        if let MjaiEvent::StartGame { game_meta, .. } = &mut start {
+            *game_meta = Some(GameMeta {
                 game_id: Some(7),
                 match_mode: Some(2),
+                match_info: None,
             });
         }
         let events = vec![
@@ -580,9 +619,10 @@ mod tests {
                 aka_flag: Some(true),
                 id: Some(0),
                 num_players: 3,
-                majsoul_meta: Some(MajsoulGameMeta {
+                game_meta: Some(GameMeta {
                     game_id: Some(7),
                     match_mode: Some(12),
+                    match_info: None,
                 }),
             },
             MjaiEvent::StartKyoku {
@@ -633,7 +673,7 @@ mod tests {
                 aka_flag: Some(true),
                 id: None,
                 num_players: 4,
-                majsoul_meta: None,
+                game_meta: None,
             },
             start_kyoku("E", 0, vec![25000, 25000, 25000, 25000]),
             MjaiEvent::Hora {
@@ -668,7 +708,7 @@ mod tests {
                 aka_flag: Some(true),
                 id: Some(0),
                 num_players: 3,
-                majsoul_meta: None,
+                game_meta: None,
             },
             MjaiEvent::StartKyoku {
                 bakaze: "E".into(),

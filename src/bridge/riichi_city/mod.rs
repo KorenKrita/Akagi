@@ -37,7 +37,7 @@ use super::{Bridge, Direction, ParseResult};
 use crate::{
     config::Platform,
     logger::{FlowLogger, Session},
-    schema::{MjaiEvent, ParsedFrame},
+    schema::{GameMeta, MatchInfo, MjaiEvent, ParsedFrame},
 };
 use chrono::Local;
 use consts::card_to_mjai;
@@ -235,7 +235,13 @@ impl RiichiCityBridge {
                 aka_flag: None,
                 id: Some(seat),
                 num_players: self.status.num_players,
-                majsoul_meta: None,
+                game_meta: Some(GameMeta {
+                    game_id: None,
+                    match_mode: None,
+                    match_info: Some(MatchInfo::RiichiCity {
+                        room_id: self.status.classify_id,
+                    }),
+                }),
             });
             self.status.game_start = false;
         }

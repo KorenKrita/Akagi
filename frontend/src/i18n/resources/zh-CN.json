@@ -43,6 +43,7 @@
     "table": {
       "date": "日期",
       "platform": "平台",
+      "room": "房间",
       "mode": "模式",
       "rank": "顺位",
       "end_score": "终局点数",
@@ -83,6 +84,9 @@
       "ended_at": "结束时间",
       "platform": "平台",
       "mode": "模式",
+      "room": "房间",
+      "game_id": "对局 ID",
+      "open_paifu": "打开牌谱",
       "final": "终局排名",
       "stats": "详细统计",
       "open_log": "打开事件流",
@@ -90,7 +94,21 @@
       "seat_fallback": "座位 {{seat}}"
     },
     "delete_confirm": "确定要删除这场对局记录吗？此操作无法撤销。",
-    "deleted": "已删除"
+    "deleted": "已删除",
+    "room": {
+      "majsoul_bronze": "铜之间",
+      "majsoul_silver": "银之间",
+      "majsoul_gold": "金之间",
+      "majsoul_jade": "玉之间",
+      "majsoul_throne": "王座之间",
+      "majsoul_melee": "乱斗之间",
+      "tenhou_ippan": "一般桌",
+      "tenhou_joukyuu": "上级桌",
+      "tenhou_tokujou": "特上桌",
+      "tenhou_houou": "凤凰桌",
+      "tenhou_lobby": "个室 {{lobby}}",
+      "raw": "房间 #{{id}}"
+    }
   },
   "logs": {
     "title": "日志",
