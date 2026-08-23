@@ -102,6 +102,8 @@
       "majsoul_jade": "玉の間",
       "majsoul_throne": "王座の間",
       "majsoul_melee": "乱闘の間",
+      "majsoul_friendly": "友人対戦 #{{id}}",
+      "majsoul_contest": "大会 #{{id}}",
       "tenhou_ippan": "一般卓",
       "tenhou_joukyuu": "上級卓",
       "tenhou_tokujou": "特上卓",

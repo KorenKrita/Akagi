@@ -27,8 +27,10 @@ pub type Actor = u8;
 /// cloud inference API continue to receive the standard protocol shape.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GameMeta {
-    /// Stable hash of `ReqAuthGame.game_uuid` (Majsoul), used to recognize a
-    /// reconnect of the same table without comparing the UUID itself.
+    /// Stable hash of `ReqAuthGame.game_uuid` (Majsoul) — the reconnect key
+    /// the history recorder dedups on. The raw UUID itself travels
+    /// separately in `match_info` (persisted to the local history index,
+    /// never uploaded).
     pub game_id: Option<u64>,
     /// `game_config.mode.mode` (Majsoul): 1/2 = 4p East / East-South,
     /// 11/12 = 3p East / East-South.

@@ -102,6 +102,8 @@
       "majsoul_jade": "Jade Room",
       "majsoul_throne": "Throne Room",
       "majsoul_melee": "Melee Room",
+      "majsoul_friendly": "Friends Room #{{id}}",
+      "majsoul_contest": "Tournament #{{id}}",
       "tenhou_ippan": "General",
       "tenhou_joukyuu": "Advanced",
       "tenhou_tokujou": "Expert",

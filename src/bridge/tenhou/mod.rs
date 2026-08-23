@@ -318,12 +318,17 @@ impl TenhouBridge {
         if self.state.pending_start_game {
             self.state.pending_start_game = false;
             let names = self.build_start_names();
-            // `take()` so a following game that somehow skips GO/UN/TAIKYOKU
-            // attributes falls back to None instead of stale values.
+            // Read non-destructively: a reconnect can replay TAIKYOKU+INIT
+            // without a fresh <GO/>, and the re-emitted start_game must
+            // keep the room bitfield. A *new* game always sends its own
+            // <GO/> (and every TAIKYOKU reassigns log_id), so staleness
+            // across games isn't a concern. Names ARE consumed (in
+            // `build_start_names`): a stale roster is worse than a missing
+            // one, and reconnects resend the full <UN/>.
             let match_info = MatchInfo::Tenhou {
-                log_id: self.state.log_id.take(),
-                go_type: self.state.go_type.take(),
-                lobby: self.state.lobby.take(),
+                log_id: self.state.log_id.clone(),
+                go_type: self.state.go_type,
+                lobby: self.state.lobby,
             };
             events.push(MjaiEvent::StartGame {
                 names,
@@ -997,7 +1002,9 @@ mod tests {
             &mut b,
             r#"{"tag":"UN","n0":"alice","n1":"bob","n2":"carol","n3":"dave"}"#,
         );
-        parse_one(&mut b, r#"{"tag":"UN","n2":"carol"}"#);
+        // A different name in the partial update proves the guard rejected
+        // the whole message rather than merging the one field.
+        parse_one(&mut b, r#"{"tag":"UN","n2":"INTRUDER"}"#);
         parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"0"}"#);
         let init = r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"250,250,250,250","oya":"0","hai":"0,4,8,36,40,44,72,76,80,108,112,116,120"}"#;
         let events = parse_one(&mut b, init);
@@ -1031,8 +1038,9 @@ mod tests {
         );
         // Dealer at rel 2 → our wire-abs = (4-2)%4 = 2.
         parse_one(&mut b, r#"{"tag":"TAIKYOKU","oya":"2"}"#);
-        // 0-score 4th slot at E1H0 marks sanma.
-        let init = r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"350,350,350,0","oya":"2","hai":"0,4,8,36,40,44,72,76,80,108,112,116,120"}"#;
+        // 0-score slot at E1H0 marks sanma; like the UN names, `ten` is
+        // relative, so the ghost's 0 sits at rel 1 (wire-abs 3) here.
+        let init = r#"{"tag":"INIT","seed":"0,0,0,1,2,4","ten":"350,0,350,350","oya":"2","hai":"0,4,8,36,40,44,72,76,80,108,112,116,120"}"#;
         let events = parse_one(&mut b, init);
         match &events[0] {
             MjaiEvent::StartGame {
@@ -1047,6 +1055,14 @@ mod tests {
                 );
             }
             other => panic!("expected StartGame first, got {other:?}"),
+        }
+        // The ghost's rel-1 zero is skipped; all three real seats carry
+        // their 35000.
+        match &events[1] {
+            MjaiEvent::StartKyoku { scores, .. } => {
+                assert_eq!(scores, &vec![35000, 35000, 35000]);
+            }
+            other => panic!("expected StartKyoku second, got {other:?}"),
         }
     }
 

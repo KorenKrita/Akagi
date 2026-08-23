@@ -7,8 +7,9 @@ import type { MatchInfo } from '@/types'
 
 /**
  * Majsoul ranked matchmode id → room tier key. From the game's own
- * matchmode table: each tier owns three 4p ids (best-of-one / East / South)
- * and two 3p ids (East / South); Melee has no best-of-one.
+ * matchmode table: Bronze–Jade own three 4p ids each (best-of-one / East /
+ * South) plus two 3p ids (East / South); Melee and Throne have no
+ * best-of-one.
  */
 const MAJSOUL_ROOM_TIERS: Record<number, string> = {
   1: 'bronze',
@@ -100,11 +101,21 @@ export function roomLabelKey(
   if (!info) return null
   switch (info.platform) {
     case 'majsoul': {
-      if (info.mode_id == null) return null
-      const tier = MAJSOUL_ROOM_TIERS[info.mode_id]
-      return tier
-        ? { key: `history.room.majsoul_${tier}` }
-        : { key: 'history.room.raw', params: { id: info.mode_id } }
+      if (info.mode_id != null) {
+        const tier = MAJSOUL_ROOM_TIERS[info.mode_id]
+        return tier
+          ? { key: `history.room.majsoul_${tier}` }
+          : { key: 'history.room.raw', params: { id: info.mode_id } }
+      }
+      // Non-matchmade tables (mode_id 0 → absent): tournament, then
+      // friendly/AI room, identified by their raw numbers.
+      if (info.contest_uid != null) {
+        return { key: 'history.room.majsoul_contest', params: { id: info.contest_uid } }
+      }
+      if (info.room_id != null) {
+        return { key: 'history.room.majsoul_friendly', params: { id: info.room_id } }
+      }
+      return null
     }
     case 'tenhou': {
       if (info.lobby != null && info.lobby !== 0) {
@@ -132,6 +143,9 @@ export function roomLabelKey(
         : { key: 'history.room.raw', params: { id: gp } }
     }
   }
+  // Unreachable for the current MatchInfo union; keeps the declared return
+  // type honest if a platform variant ships before this mirror learns it.
+  return null
 }
 
 /** The platform's own game (paifu) id, if the record carries one. */
@@ -147,16 +161,23 @@ export function matchGameId(info: MatchInfo | null | undefined): string | null {
       // offers to a per-game identifier.
       return info.room_id ?? null
   }
+  return null
 }
 
 /**
  * Replay URL, when one can be built without guessing. Tenhou log links are
  * region-independent; Majsoul replay hosts differ per region (which isn't
- * recorded), so Majsoul gets the copyable uuid only.
+ * recorded), so Majsoul gets the copyable uuid only. `ourSeat` (the
+ * record's `our_seat`, wire-absolute = Tenhou's `tw` index) opens the
+ * replay from the player's own perspective.
  */
-export function paifuUrl(info: MatchInfo | null | undefined): string | null {
+export function paifuUrl(
+  info: MatchInfo | null | undefined,
+  ourSeat?: number | null,
+): string | null {
   if (info?.platform === 'tenhou' && info.log_id) {
-    return `https://tenhou.net/0/?log=${encodeURIComponent(info.log_id)}`
+    const tw = ourSeat == null ? '' : `&tw=${ourSeat}`
+    return `https://tenhou.net/0/?log=${encodeURIComponent(info.log_id)}${tw}`
   }
   return null
 }

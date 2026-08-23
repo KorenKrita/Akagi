@@ -149,11 +149,12 @@ impl RiichiCityBridge {
                 Vec::new()
             }
             "cmd_enter_room" => {
-                let room_id = pkt
-                    .body
-                    .get("room_id")
-                    .and_then(JsonValue::as_str)
-                    .map(str::to_string);
+                // Wire sends the table token as a string; tolerate a number.
+                let room_id = pkt.body.get("room_id").and_then(|v| {
+                    v.as_str()
+                        .map(str::to_string)
+                        .or_else(|| json_i64(v).map(|n| n.to_string()))
+                });
                 self.on_enter_room(room_id, data)
             }
             "cmd_game_start" => self.on_game_start(data),
@@ -168,8 +169,12 @@ impl RiichiCityBridge {
     }
 
     /// `cmd_enter_room` — collect players + table size; emits nothing. Dedups
-    /// repeated messages for the same room by `classify_id`. The wire sends
-    /// `classify_id` as a string; tolerate a number for older payloads.
+    /// a repeated announcement of the *same table* by the wrapper's
+    /// `room_id` (the per-table instance token) — NOT by `classify_id`,
+    /// which names the matchmaking queue class and so repeats across
+    /// consecutive games in the same room tier. The dedup also requires an
+    /// already-collected roster, so a fuller re-announcement can still
+    /// replace an empty one.
     fn on_enter_room(
         &mut self,
         room_id: Option<String>,
@@ -181,10 +186,8 @@ impl RiichiCityBridge {
                 .map(str::to_string)
                 .or_else(|| json_i64(v).map(|n| n.to_string()))
         });
-        if let (Some(prev), Some(now)) =
-            (self.status.classify_id.as_deref(), classify_id.as_deref())
-        {
-            if prev == now {
+        if let (Some(prev), Some(now)) = (self.status.room_id.as_deref(), room_id.as_deref()) {
+            if prev == now && !self.status.player_list.is_empty() {
                 warn!(target: LOG, "duplicate cmd_enter_room for active room, ignored");
                 return Vec::new();
             }
@@ -832,6 +835,95 @@ mod tests {
         );
     }
 
+    /// Consecutive games in the same matchmaking queue share a
+    /// `classify_id` but get distinct table tokens. The dedup must key on
+    /// the table token: the second game's `cmd_enter_room` must be honored
+    /// (fresh `start_game`) even without an intervening `cmd_room_end`.
+    #[test]
+    fn same_queue_new_table_is_not_deduped() {
+        let mut b = RiichiCityBridge::new(None, None);
+        auth(&mut b);
+        enter_room_4p(&mut b);
+        let start = json!({
+            "cmd": "cmd_game_start",
+            "data": {
+                "quan_feng": 0x31, "bao_pai_card": 0x21, "dealer_pos": 0,
+                "ben_chang_num": 0, "li_zhi_bang_num": 0,
+                "user_info_list": [
+                    {"user_id": 1001, "hand_points": 25000},
+                    {"user_id": 1002, "hand_points": 25000},
+                    {"user_id": 1003, "hand_points": 25000},
+                    {"user_id": 1004, "hand_points": 25000}
+                ],
+                "hand_cards": [0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,0x29,0x01,0x02,0x03,0x04,0x05]
+            }
+        });
+        let events = feed(&mut b, 18, start.clone());
+        assert!(matches!(events[0], MjaiEvent::StartGame { .. }));
+
+        // Next game, same queue class, new table token.
+        feed(
+            &mut b,
+            18,
+            json!({
+                "cmd": "cmd_enter_room",
+                "room_id": "tabletoken0002",
+                "data": {
+                    "options": {
+                        "classify_id": "classifytoken0001",
+                        "player_count": 4,
+                        "stage_type": 1,
+                        "game_play": 1001
+                    },
+                    "players": [
+                        {"user": {"user_id": 1001, "nickname": "alice"}},
+                        {"user": {"user_id": 1002, "nickname": "bob"}},
+                        {"user": {"user_id": 1003, "nickname": "carol"}},
+                        {"user": {"user_id": 1004, "nickname": "dave"}}
+                    ]
+                }
+            }),
+        );
+        let events = feed(&mut b, 18, start);
+        match &events[0] {
+            MjaiEvent::StartGame { game_meta, .. } => {
+                match &game_meta.as_ref().expect("meta").match_info {
+                    Some(MatchInfo::RiichiCity { room_id, .. }) => {
+                        assert_eq!(room_id.as_deref(), Some("tabletoken0002"));
+                    }
+                    other => panic!("expected RiichiCity match_info, got {other:?}"),
+                }
+            }
+            other => panic!("expected StartGame for the second game, got {other:?}"),
+        }
+    }
+
+    /// A re-announcement of the *same* table (reconnect) is ignored, so a
+    /// partial payload can't clobber the collected roster.
+    #[test]
+    fn duplicate_same_table_enter_room_keeps_the_roster() {
+        let mut b = RiichiCityBridge::new(None, None);
+        auth(&mut b);
+        enter_room_4p(&mut b);
+        feed(
+            &mut b,
+            18,
+            json!({
+                "cmd": "cmd_enter_room",
+                "room_id": "tabletoken0001",
+                "data": {
+                    "options": { "classify_id": "classifytoken0001", "player_count": 4 },
+                    "players": []
+                }
+            }),
+        );
+        assert_eq!(b.status.player_list, vec![1001, 1002, 1003, 1004]);
+        assert_eq!(
+            b.status.nicknames.get(&1001).map(String::as_str),
+            Some("alice")
+        );
+    }
+
     #[test]
     fn yonma_game_start_emits_start_game_kyoku_tsumo() {
         let mut b = RiichiCityBridge::new(None, None);
@@ -967,6 +1059,22 @@ mod tests {
             _ => None,
         });
         assert_eq!(scores, Some(&vec![33300, 44400, 11100, 22200]));
+
+        // Names follow the same dealer rotation: enter-room order
+        // [alice, bob, carol, dave] rotated by dealer_pos 2.
+        let names = events.iter().find_map(|event| match event {
+            MjaiEvent::StartGame { names, .. } => Some(names),
+            _ => None,
+        });
+        assert_eq!(
+            names,
+            Some(&vec![
+                "carol".to_string(),
+                "dave".to_string(),
+                "alice".to_string(),
+                "bob".to_string(),
+            ])
+        );
     }
 
     #[test]

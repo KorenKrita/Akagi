@@ -29,10 +29,12 @@ pub struct GameStatus {
     /// later rounds: `(dealer_pos - shift) mod num_players`.
     pub shift: i64,
     /// Matchmaking classification id from `cmd_enter_room.options` (a wire
-    /// string of ~22 base32-ish chars). Used to dedup repeated
-    /// `cmd_enter_room` and persisted into history's `MatchInfo`.
+    /// string of ~22 base32-ish chars). Names the queue class — repeats
+    /// across games in the same room tier. Persisted into `MatchInfo`.
     pub classify_id: Option<String>,
     /// Table-instance token from the `cmd_enter_room` wrapper (`room_id`).
+    /// Unique per table, so it (not `classify_id`) keys the duplicate-
+    /// `cmd_enter_room` dedup.
     pub room_id: Option<String>,
     /// `options.stage_type` — rank stage tier of the matchmaking room.
     pub stage_type: Option<i64>,

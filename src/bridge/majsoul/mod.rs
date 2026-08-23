@@ -1281,7 +1281,9 @@ impl MajsoulBridge {
 }
 
 fn stable_game_id(game_uuid: &str) -> u64 {
-    // FNV-1a keeps the UUID private while providing a stable reconnect key.
+    // FNV-1a gives a compact, stable reconnect key for the recorder's dedup.
+    // The raw UUID is kept separately on the bridge and persisted via
+    // `MatchInfo` into the local history index (never uploaded).
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in game_uuid.bytes() {
         hash ^= u64::from(byte);

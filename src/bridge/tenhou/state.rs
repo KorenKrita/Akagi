@@ -46,11 +46,13 @@ pub struct State {
     /// 0-score slot) and can stamp `num_players` correctly on `start_game`.
     pub pending_start_game: bool,
     /// `<GO type=…/>` rule/room bitfield (room tier in bits 0x20/0x80),
-    /// stashed until `start_game` emission consumes it into `MatchInfo`.
+    /// stashed for `start_game` emission. Read non-destructively so a
+    /// reconnect's re-emitted `start_game` (TAIKYOKU+INIT with no fresh
+    /// `<GO/>`) keeps the room; every new game sends its own `<GO/>`.
     pub go_type: Option<u32>,
     /// `<GO lobby=…/>` lobby number, stashed like `go_type`.
     pub lobby: Option<u32>,
-    /// `<TAIKYOKU log=…/>` paifu id, stashed like `go_type`.
+    /// `<TAIKYOKU log=…/>` paifu id; reassigned by every `<TAIKYOKU/>`.
     pub log_id: Option<String>,
     /// `<UN/>` roster names, percent-decoded, in wire-*relative* order
     /// (index 0 = us). `<UN/>` arrives before `<TAIKYOKU/>` resolves our

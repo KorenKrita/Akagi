@@ -40,7 +40,7 @@ export function GameDetailDialog({
   const start = record?.num_players === 3 ? STARTING_3P : STARTING_4P
   const room = roomLabelKey(record?.match_info)
   const gameId = matchGameId(record?.match_info)
-  const replayUrl = paifuUrl(record?.match_info)
+  const replayUrl = paifuUrl(record?.match_info, record?.our_seat)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

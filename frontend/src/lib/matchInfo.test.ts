@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import { matchGameId, paifuUrl, roomLabelKey } from './matchInfo'
+import en from '@/i18n/resources/en.json'
+import ja from '@/i18n/resources/ja.json'
+import zhCN from '@/i18n/resources/zh-CN.json'
+import zhTW from '@/i18n/resources/zh-TW.json'
 
 describe('roomLabelKey', () => {
   it('maps Majsoul ranked mode ids to room tiers', () => {
@@ -22,6 +26,20 @@ describe('roomLabelKey', () => {
       params: { id: 99 },
     })
     expect(roomLabelKey({ platform: 'majsoul' })).toBeNull()
+  })
+
+  it('labels non-matchmade Majsoul tables by contest or friendly room', () => {
+    expect(
+      roomLabelKey({ platform: 'majsoul', contest_uid: 777, room_id: 33123 }),
+    ).toEqual({ key: 'history.room.majsoul_contest', params: { id: 777 } })
+    expect(roomLabelKey({ platform: 'majsoul', room_id: 33123 })).toEqual({
+      key: 'history.room.majsoul_friendly',
+      params: { id: 33123 },
+    })
+    // A ranked mode id wins over the room number.
+    expect(
+      roomLabelKey({ platform: 'majsoul', mode_id: 12, room_id: 33123 }),
+    ).toEqual({ key: 'history.room.majsoul_jade' })
   })
 
   it('decodes Tenhou GO type bits into room tiers', () => {
@@ -109,11 +127,52 @@ describe('matchGameId / paifuUrl', () => {
     ).toBe('tabletoken0001')
   })
 
-  it('builds replay links for Tenhou only', () => {
+  it('builds replay links for Tenhou only, with the viewer seat when known', () => {
     expect(
       paifuUrl({ platform: 'tenhou', log_id: '2026010100gm-00a9-0000-cafe0001' }),
     ).toBe('https://tenhou.net/0/?log=2026010100gm-00a9-0000-cafe0001')
-    expect(paifuUrl({ platform: 'majsoul', game_uuid: 'u' })).toBeNull()
+    expect(
+      paifuUrl(
+        { platform: 'tenhou', log_id: '2026010100gm-00a9-0000-cafe0001' },
+        2,
+      ),
+    ).toBe('https://tenhou.net/0/?log=2026010100gm-00a9-0000-cafe0001&tw=2')
+    expect(paifuUrl({ platform: 'majsoul', game_uuid: 'u' }, 0)).toBeNull()
     expect(paifuUrl({ platform: 'riichi_city', room_id: 'x' })).toBeNull()
+  })
+})
+
+describe('locale coverage', () => {
+  // Every key roomLabelKey can emit must resolve in every locale — a tier
+  // added to a map without its strings would otherwise ship a raw i18n key
+  // to the UI with no test failure.
+  const emittableKeys = [
+    ...['bronze', 'silver', 'gold', 'jade', 'throne', 'melee'].map(
+      (t) => `majsoul_${t}`,
+    ),
+    'majsoul_friendly',
+    'majsoul_contest',
+    ...['ippan', 'joukyuu', 'tokujou', 'houou'].map((t) => `tenhou_${t}`),
+    'tenhou_lobby',
+    ...['star', 'moon', 'sun', 'galaxy'].map((t) => `rc_${t}`),
+    'rc_ranked',
+    'rc_tournament',
+    'rc_friendly',
+    'rc_one_round',
+    'rc_casual',
+    'raw',
+  ]
+
+  it.each([
+    ['en', en],
+    ['ja', ja],
+    ['zh-CN', zhCN],
+    ['zh-TW', zhTW],
+  ])('%s has every emittable history.room key', (_name, locale) => {
+    const room = (locale as { history: { room: Record<string, string> } })
+      .history.room
+    for (const key of emittableKeys) {
+      expect(room[key], `history.room.${key}`).toBeTypeOf('string')
+    }
   })
 })
