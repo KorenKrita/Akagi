@@ -672,13 +672,13 @@ impl BotManager {
     /// learns the hand is over, and `EndGame` is where the runner is torn
     /// down. They are also once per hand, so flushing them costs nothing.
     ///
-    /// So is another seat's kakan, for a different reason: riichienv does not
-    /// model the chankan window on the path the tracker drives. It applies a
-    /// kakan by moving straight to `WaitAct` for the caller, so our legal set
-    /// comes back empty whether we could rob the kan or not. That is the
-    /// engine having nothing to say rather than saying no, and a robbed kan
-    /// is too expensive to lose to the difference. Kakan is rare enough that
-    /// always asking costs nothing measurable.
+    /// An opponent's kakan used to need an exemption from `can_act` — the
+    /// engine's replay path opened no chankan window, so a robable kan
+    /// looked exactly like an unrobable one. The tracker now opens that
+    /// window itself (`native_bot::chankan`), so a kakan is just another
+    /// claim window: `can_act = true` when the robbed tile completes a win
+    /// for our seat, and the engine genuinely saying "not ours" needs no
+    /// override.
     fn is_decision_point(&self, e: &MjaiEvent, can_act: Option<bool>) -> bool {
         if self.actor_id.is_none() {
             return false;
@@ -691,7 +691,6 @@ impl BotManager {
             | MjaiEvent::Ryukyoku { .. }
             | MjaiEvent::EndKyoku
             | MjaiEvent::EndGame { .. } => true,
-            MjaiEvent::Kakan { .. } => self.opens_a_window(e),
             _ => self.opens_a_window(e) && can_act != Some(false),
         }
     }
@@ -993,13 +992,32 @@ mod tests {
         assert_eq!(calls.lock().await.len(), 1, "shape alone decides");
     }
 
-    /// A robbed kan must still be offered to the bot. riichienv's replay path
-    /// applies a kakan by handing the turn straight back to the caller, so it
-    /// reports `can_act = false` for our seat whether or not we could rob it —
-    /// an engine gap, not an answer, and one that would silently cost a
-    /// chankan.
+    /// A robbed kan is still the bot's call — but through the same door as
+    /// every other claim: the tracker opens the chankan window
+    /// (`native_bot::chankan`), so `can_act = true` is what flushes the ask.
+    /// Regression for the 2026-08-22 West 1 incident: the window used to be
+    /// invisible here too, and the bot was never asked at all.
     #[tokio::test]
-    async fn another_seats_kakan_is_asked_despite_the_engines_missing_window() {
+    async fn robable_kakan_is_asked_through_can_act() {
+        let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
+        mgr.handle_tracked(tracked(
+            MjaiEvent::Kakan {
+                actor: 0,
+                pai: "1m".into(),
+                consumed: ["1m".into(), "1m".into(), "1m".into()],
+            },
+            Some(true),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(calls.lock().await.len(), 1, "chankan is the bot's call");
+    }
+
+    /// The other side of the door: a kakan our seat cannot rob is the
+    /// engine saying "not yours", exactly like an unclaimable discard, and
+    /// asking anyway would only produce a guaranteed `none`.
+    #[tokio::test]
+    async fn unrobable_kakan_is_not_our_question() {
         let (mut mgr, calls, _, _, _) = manager_with_mock(vec![]);
         mgr.handle_tracked(tracked(
             MjaiEvent::Kakan {
@@ -1011,11 +1029,7 @@ mod tests {
         ))
         .await
         .unwrap();
-        assert_eq!(
-            calls.lock().await.len(),
-            1,
-            "chankan is still the bot's call"
-        );
+        assert!(calls.lock().await.is_empty());
     }
 
     /// Round and game boundaries flush regardless: they open no decision, but

@@ -11,10 +11,13 @@
 //!   riichienv-core state (shared by extraction and inference).
 //! - [`replay`] — drive an mjai game log through the engine, emitting
 //!   `(obs, action, mask)` training samples (extractor side).
+//! - [`chankan`] — open the chankan ron window that riichienv-core's mjai
+//!   replay path skips (used by both live engines below).
 //! - [`model`] / [`engine`] — candle CNN inference (behind the `infer` feature).
 
 pub mod action_codec;
 pub mod adapt;
+pub mod chankan;
 pub mod mjai_compat;
 pub mod obs;
 pub mod replay;

@@ -172,12 +172,28 @@ impl Engine {
     /// log's `nukidora` has to be renamed to `kita` *before* serde sees it, or
     /// it deserializes into `MjaiEvent::Other` and the event is lost.
     pub fn feed(&mut self, ev: MjaiEvent) {
+        // The chankan check needs the kakan's actor/tile after the event is
+        // applied — `apply_mjai_event` consumes it.
+        let opponent_kakan = match &ev {
+            MjaiEvent::Kakan { actor, pai } if *actor as u8 != self.seat => {
+                Some((*actor as u8, pai.clone()))
+            }
+            _ => None,
+        };
         match &mut self.backend {
-            Backend::Four { state, .. } => state.apply_mjai_event(ev),
+            Backend::Four { state, .. } => {
+                state.apply_mjai_event(ev);
+                if let Some((actor, pai)) = opponent_kakan {
+                    crate::chankan::open_on_kakan(state, actor, &pai, self.seat);
+                }
+            }
             Backend::Three { state, .. } => {
                 let mut ev = ev;
                 sanitize_3p(&mut ev);
-                state.apply_mjai_event(ev)
+                state.apply_mjai_event(ev);
+                if let Some((actor, pai)) = opponent_kakan {
+                    crate::chankan::open_on_kakan_3p(state, actor, &pai, self.seat);
+                }
             }
         }
     }
