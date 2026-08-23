@@ -106,17 +106,17 @@ fn round_advance_delay(yakus: u32) -> Duration {
 mod tests {
     use super::*;
 
-    /// The round-advance delay = a 10s animation floor + jitter [0,2000] + a
+    /// The round-advance delay = a 15s animation floor + jitter [0,2000] + a
     /// reading beat that is zero for ≤2 yaku lines and grows half a second
     /// per extra line (capped at 2500). Randomized, so assert the bounds over
-    /// samples, that nothing ever fires under the 10s floor, that more yaku
+    /// samples, that nothing ever fires under the 15s floor, that more yaku
     /// lines shift the window up, and that everything stays under the
     /// client's ~59s countdown.
     #[test]
     fn round_advance_delay_bounds_scale_with_yaku_count() {
         let bounds = |yakus: u32| -> (u64, u64) {
             let read = (u64::from(yakus.saturating_sub(2)) * 500).min(2_500);
-            (10_000 + read, 12_000 + read)
+            (15_000 + read, 17_000 + read)
         };
         for yakus in [0u32, 2, 3, 5, 9, 20] {
             let (lo, hi) = bounds(yakus);
@@ -127,7 +127,7 @@ mod tests {
                     "yakus={yakus}: {ms} not in [{lo},{hi}]"
                 );
                 assert!(
-                    ms >= 10_000,
+                    ms >= 15_000,
                     "yakus={yakus}: {ms} under the animation floor"
                 );
             }
