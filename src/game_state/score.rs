@@ -62,6 +62,15 @@ pub fn calculate_score(
 /// rinshan from `is_rinshan_flag`, ippatsu from `players[actor].ippatsu_cycle`,
 /// chankan from `pending_kan.is_some()` (ron only).
 ///
+/// Known gap: `pending_kan` is never set on the tracker's replay path — only
+/// the live engine sets it, and `native_bot::chankan` deliberately leaves it
+/// unset when it opens the chankan window (nothing would clear it before the
+/// next start_kyoku, so setting it would tag every later ron of the hand as a
+/// chankan). Net effect: a chankan ron's preview under-reports by the chankan
+/// han (and, in the riichi-into-chankan corner, the ippatsu han too — the
+/// tracker's ippatsu patch retires the window on the kakan event before the
+/// chankan check runs; see `tracker.rs`).
+///
 /// `tsumo_first_turn` (tenhou/chiihou) is derived from observable state
 /// rather than `state.is_first_turn` — riichienv-core 0.4.8's mjai-event
 /// handler initializes that flag to `true` on `start_kyoku` and never
@@ -95,6 +104,7 @@ pub fn evaluate_hora_4p(state: &GameState, actor: u8, is_tsumo: bool) -> Option<
         haitei: is_tsumo && state.wall.drawable_count == 0 && !state.is_rinshan_flag,
         houtei: !is_tsumo && state.wall.drawable_count == 0 && !state.is_rinshan_flag,
         rinshan: is_tsumo && state.is_rinshan_flag,
+        // Always false on the replay path — see "Known gap" in the doc above.
         chankan: !is_tsumo && state.pending_kan.is_some(),
         tsumo_first_turn: first_turn,
         player_wind: Wind::from((actor + 4 - state.oya) % 4),
@@ -174,6 +184,7 @@ pub fn evaluate_hora_3p(state: &GameState3P, actor: u8, is_tsumo: bool) -> Optio
         haitei: is_tsumo && state.wall.drawable_count == 0 && !state.is_rinshan_flag,
         houtei: !is_tsumo && state.wall.drawable_count == 0 && !state.is_rinshan_flag,
         rinshan: is_tsumo && state.is_rinshan_flag,
+        // Always false on the replay path — see the 4p variant's doc comment.
         chankan: !is_tsumo && state.pending_kan.is_some(),
         tsumo_first_turn: first_turn,
         player_wind: Wind::from((actor + 3 - state.oya) % 3),

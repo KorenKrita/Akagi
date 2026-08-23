@@ -176,6 +176,12 @@ impl GameTracker {
                             m.from_who = target;
                         }
                     }
+                    // Runs after `apply_ippatsu_patch_4p`, which has already
+                    // retired every ippatsu window (a kakan is a call) — the
+                    // live path checks chankan with ippatsu still up. Harmless
+                    // for the window itself (chankan is a yaku, so han >= 1
+                    // regardless); only `evaluate_hora`'s preview of an
+                    // ippatsu-plus-chankan ron loses that han.
                     if let Some((actor, pai, seat)) = &opponent_kakan {
                         native_bot::chankan::open_on_kakan(s, *actor, pai, *seat);
                     }
@@ -201,6 +207,7 @@ impl GameTracker {
                             m.from_who = target;
                         }
                     }
+                    // Same ippatsu-ordering caveat as the 4p arm above.
                     if let Some((actor, pai, seat)) = &opponent_kakan {
                         native_bot::chankan::open_on_kakan_3p(s, *actor, pai, *seat);
                     }

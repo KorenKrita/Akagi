@@ -53,9 +53,15 @@ pub fn open_on_kakan(state: &mut GameState, kan_actor: u8, pai: &str, seat: u8) 
     let us = &state.players[seat as usize];
     let calc = HandEvaluator::new(us.hand.clone(), us.melds.clone());
     let waits = calc.get_waits_u8();
-    let furiten = us.discards.iter().any(|&d| waits.contains(&(d / 4)))
-        || us.missed_agari_riichi
-        || us.missed_agari_doujun;
+    // Own-river furiten only. The live path also consults the missed-agari
+    // flags (temporary / riichi furiten), but `apply_mjai_event` never sets
+    // them — it only ever *clears* `missed_agari_doujun` — so checking them
+    // here would be dead code. The replay path's ordinary discard-ron windows
+    // share the blind spot (`_get_claim_actions_for_player` reads the same
+    // always-false flags): after a declined ron, the engine may offer a ron
+    // the server will not. Autoplay's stray click lands on an empty table and
+    // the next event moves the state on, so the cost stays cosmetic.
+    let furiten = us.discards.iter().any(|&d| waits.contains(&(d / 4)));
     let win = !furiten && {
         let cond = Conditions {
             tsumo: false,
@@ -78,6 +84,13 @@ pub fn open_on_kakan(state: &mut GameState, kan_actor: u8, pai: &str, seat: u8) 
     // Entry-replace, not push: the live path appends into a freshly-cleared
     // map, but the replay path's map can carry residue for our seat, and
     // stacking a second identical Ron serves nobody.
+    //
+    // Deliberately NOT the live path's `pending_kan = Some(..)`: on the
+    // replay path nothing clears that field before the next start_kyoku, so
+    // setting it would tag every later ron of the hand as a chankan in
+    // `evaluate_hora`'s score preview. Leaving it unset costs less and stays
+    // confined to this window — the preview misses the chankan han itself
+    // (see `game_state/score.rs`).
     let ron = Action::new(ActionType::Ron, Some(tile), vec![], Some(seat));
     state.current_claims.insert(seat, vec![ron]);
     state.phase = Phase::WaitResponse;
@@ -100,9 +113,9 @@ pub fn open_on_kakan_3p(state: &mut GameState3P, kan_actor: u8, pai: &str, seat:
     let us = &state.players[seat as usize];
     let calc = HandEvaluator3P::new(us.hand.clone(), us.melds.clone());
     let waits = calc.get_waits_u8();
-    let furiten = us.discards.iter().any(|&d| waits.contains(&(d / 4)))
-        || us.missed_agari_riichi
-        || us.missed_agari_doujun;
+    // Own-river furiten only — the missed-agari flags are never set on the
+    // replay path; see the note in [`open_on_kakan`].
+    let furiten = us.discards.iter().any(|&d| waits.contains(&(d / 4)));
     let win = !furiten && {
         let cond = Conditions {
             tsumo: false,
@@ -124,7 +137,8 @@ pub fn open_on_kakan_3p(state: &mut GameState3P, kan_actor: u8, pai: &str, seat:
     if !win {
         return false;
     }
-    // Entry-replace, not push — same rationale as the 4p path above.
+    // Entry-replace, not push; `pending_kan` stays unset — same rationale as
+    // the 4p path above.
     let ron = Action::new(ActionType::Ron, Some(tile), vec![], Some(seat));
     state.current_claims.insert(seat, vec![ron]);
     state.phase = Phase::WaitResponse;
@@ -227,15 +241,25 @@ mod tests {
     }
 
     #[test]
-    fn furiten_blocks_the_window() {
+    fn own_river_furiten_blocks_the_window() {
         let mut state = game_at_kakan(OUR_HAND);
         // A 5s in our own river makes the wait furiten.
         state.players[1].discards.push(mjai_to_tid("5s").unwrap());
         assert!(!open_on_kakan(&mut state, 0, "5s", 1));
+    }
 
+    /// Characterization, not aspiration: the missed-agari flags are dead on
+    /// the replay path (`apply_mjai_event` never sets them), so the helper
+    /// deliberately ignores them and the window opens anyway. If Akagi ever
+    /// starts maintaining the flags — an ippatsu-patch-style fixup in the
+    /// tracker, or an upstream riichienv fix — flip this test and put the
+    /// flag checks back into the furiten test above.
+    #[test]
+    fn missed_agari_flags_are_ignored_by_design() {
         let mut state = game_at_kakan(OUR_HAND);
         state.players[1].missed_agari_doujun = true;
-        assert!(!open_on_kakan(&mut state, 0, "5s", 1));
+        state.players[1].missed_agari_riichi = true;
+        assert!(open_on_kakan(&mut state, 0, "5s", 1));
     }
 
     /// The window must not linger: the rinshan draw after a passed chankan
