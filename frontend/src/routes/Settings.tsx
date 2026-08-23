@@ -77,6 +77,11 @@ export function Settings() {
   const [draft, setDraft] = useState<AppConfig | null>(stored)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // Riichi City autoplay is MITM frame injection — pop a risk warning the
+  // moment the draft combines the two, from either direction (platform
+  // switched to Riichi City while autoplay is on, or autoplay switched on
+  // while the platform is Riichi City).
+  const [rcAutoplayWarnOpen, setRcAutoplayWarnOpen] = useState(false)
 
   useEffect(() => {
     // Sync the editable draft from the store when it (re)loads.
@@ -211,7 +216,11 @@ export function Settings() {
 
       <OverlayCard draft={draft} setDraft={setDraft} />
 
-      <PlatformCard draft={draft} setDraft={setDraft} />
+      <PlatformCard
+        draft={draft}
+        setDraft={setDraft}
+        onRiichiCityAutoplay={() => setRcAutoplayWarnOpen(true)}
+      />
 
       <CaptureCard draft={draft} setDraft={setDraft} />
 
@@ -281,7 +290,11 @@ export function Settings() {
         </CardContent>
       </Card>
 
-      <AutoplayCard draft={draft} setDraft={setDraft} />
+      <AutoplayCard
+        draft={draft}
+        setDraft={setDraft}
+        onRiichiCityAutoplay={() => setRcAutoplayWarnOpen(true)}
+      />
 
       <NetworkCard draft={draft} setDraft={setDraft} />
 
@@ -309,6 +322,22 @@ export function Settings() {
             </Button>
             <Button size="sm" onClick={saveAndLeave} disabled={saving}>
               {saving ? t('common.saving') : t('settings.save_and_leave')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={rcAutoplayWarnOpen} onOpenChange={setRcAutoplayWarnOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settings.autoplay.rc_warning_title')}</DialogTitle>
+            <DialogDescription>
+              {t('settings.autoplay.rc_warning_desc')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="bg-transparent p-0 border-0 mx-0 mb-0">
+            <Button size="sm" onClick={() => setRcAutoplayWarnOpen(false)}>
+              {t('settings.autoplay.rc_warning_ack')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -729,14 +758,19 @@ function UiScaleField() {
 function PlatformCard({
   draft,
   setDraft,
+  onRiichiCityAutoplay,
 }: {
   draft: AppConfig
   setDraft: (c: AppConfig) => void
+  onRiichiCityAutoplay: () => void
 }) {
   const { t } = useTranslation()
   const current = draft.platform.kind
   const setKind = (kind: PlatformKind) => {
     if (kind === current) return
+    if (kind === 'RiichiCity' && (draft.autoplay?.enabled ?? false)) {
+      onRiichiCityAutoplay()
+    }
     // If the user hasn't customised the Chromium start URL, swap it to
     // the new platform's default so the next launch lands on the right
     // game. A user-customised URL is left alone — the URL field below
@@ -791,9 +825,11 @@ function PlatformCard({
 function AutoplayCard({
   draft,
   setDraft,
+  onRiichiCityAutoplay,
 }: {
   draft: AppConfig
   setDraft: (c: AppConfig) => void
+  onRiichiCityAutoplay: () => void
 }) {
   const { t } = useTranslation()
   const ap = draft.autoplay ?? {
@@ -838,7 +874,10 @@ function AutoplayCard({
         <Toggle
           label={t('settings.autoplay.enable')}
           value={ap.enabled}
-          onChange={(v) => setApField({ enabled: v })}
+          onChange={(v) => {
+            setApField({ enabled: v })
+            if (v && platformIsRiichiCity) onRiichiCityAutoplay()
+          }}
         />
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.enable_help')}
