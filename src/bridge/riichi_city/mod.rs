@@ -341,18 +341,25 @@ impl RiichiCityBridge {
 
         self.status.pending_dora.clear();
         self.status.pending_reach = None;
+        self.status.meld_counts = [0; 4];
 
         // Opening draw: our own drawn 14th tile if we are the dealer, otherwise
         // the dealer's hidden first draw.
         match tsumo_code {
-            Some(code) => events.push(MjaiEvent::Tsumo {
-                actor: self.status.seat,
-                pai: card_to_mjai(code as u32),
-            }),
-            None => events.push(MjaiEvent::Tsumo {
-                actor: oya,
-                pai: "?".to_string(),
-            }),
+            Some(code) => {
+                self.status.drawn_by = Some(self.status.seat);
+                events.push(MjaiEvent::Tsumo {
+                    actor: self.status.seat,
+                    pai: card_to_mjai(code as u32),
+                });
+            }
+            None => {
+                self.status.drawn_by = Some(oya);
+                events.push(MjaiEvent::Tsumo {
+                    actor: oya,
+                    pai: "?".to_string(),
+                });
+            }
         }
         events
     }
@@ -368,6 +375,7 @@ impl RiichiCityBridge {
             warn!(target: LOG, "cmd_in_card_brc from unknown user_id");
             return events;
         };
+        self.status.drawn_by = Some(actor);
         events.push(MjaiEvent::Tsumo {
             actor,
             pai: field_card(data, "card"),
@@ -375,12 +383,17 @@ impl RiichiCityBridge {
         events
     }
 
-    /// `cmd_send_current_action` — our own draw (revealed tile).
+    /// `cmd_send_current_action` — our own draw (revealed tile). Also
+    /// fires with `in_card: 0` as the discard prompt after our own
+    /// chi/pon (the client's handler documents both), which is no draw
+    /// at all — the `"?"` guard skips it, and `drawn_by` must stay unset
+    /// so the following discard is never read as tsumogiri.
     fn on_send_current_action(&mut self, data: Option<&JsonValue>) -> Vec<MjaiEvent> {
         let mut events = self.flush_pending_reach();
         let Some(data) = data else { return events };
         let pai = field_card(data, "in_card");
         if pai != "?" {
+            self.status.drawn_by = Some(self.status.seat);
             events.push(MjaiEvent::Tsumo {
                 actor: self.status.seat,
                 pai,
@@ -414,6 +427,13 @@ impl RiichiCityBridge {
                 warn!(target: LOG, "game action from unknown user_id");
                 continue;
             };
+            // Chi/pon/daiminkan/ankan shrink the caller's rack by one
+            // 3-tile set (a kakan upgrades a counted pon; kita nets zero).
+            if matches!(act, 2..=6 | 8) {
+                if let Some(m) = self.status.meld_counts.get_mut(actor as usize) {
+                    *m = m.saturating_add(1);
+                }
+            }
             match act {
                 2..=4 => {
                     // Chi always calls from kamicha (previous seat).
@@ -472,11 +492,27 @@ impl RiichiCityBridge {
                 }
                 11 => {
                     let pai = field_card(action, "card");
-                    let tsumogiri = match action.get("move_cards_pos").and_then(JsonValue::as_array)
-                    {
-                        Some(a) if !a.is_empty() => a.first().and_then(json_i64) == Some(14),
-                        _ => true,
-                    };
+                    // Tsumogiri inference: `move_cards_pos[0]` is the tile's
+                    // 1-based rack slot and the held draw racks LAST, so a
+                    // tsumogiri names exactly `13 - 3*melds + 1` — the rack
+                    // size while holding a draw. The client clamps a
+                    // would-be last-slot tedashi below that
+                    // (`CheckOutCardIndex`), making the sentinel
+                    // unambiguous — but only on a turn that actually drew:
+                    // a post-chi/pon discard reuses the same slot range
+                    // with no draw involved.
+                    let drawn_slot = self
+                        .status
+                        .meld_counts
+                        .get(actor as usize)
+                        .map(|&m| 13 - 3 * m as i64 + 1);
+                    let tsumogiri = self.status.drawn_by == Some(actor)
+                        && match action.get("move_cards_pos").and_then(JsonValue::as_array) {
+                            Some(a) if !a.is_empty() => a.first().and_then(json_i64) == drawn_slot,
+                            // No positions: the draw is all we know.
+                            _ => true,
+                        };
+                    self.status.drawn_by = None;
                     let is_li_zhi = field_bool(action, "is_li_zhi");
                     if is_li_zhi {
                         events.push(MjaiEvent::Reach { actor, pai: None });
@@ -1180,6 +1216,127 @@ mod tests {
             }
             other => panic!("expected Tsumo, got {other:?}"),
         }
+    }
+
+    /// Tsumogiri is inferred from the rack-slot sentinel plus a live
+    /// draw: `move_cards_pos[0]` equal to the seat's rack size
+    /// (`13 - 3*melds + 1`) on a turn that drew — the client racks the
+    /// held draw last and clamps tedashi below it.
+    #[test]
+    fn tsumogiri_needs_a_draw_and_the_drawn_slot() {
+        let mut b = started_4p();
+        // Seat 1 draws, then discards the drawn slot → tsumogiri.
+        feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_in_card_brc", "data": {"user_id": 1002, "card": 0}}),
+        );
+        let e = feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_game_action_brc", "data": {"action_info": [
+                {"action": 11, "user_id": 1002, "card": 0x25, "move_cards_pos": [14], "is_li_zhi": false}
+            ]}}),
+        );
+        assert!(matches!(
+            &e[0],
+            MjaiEvent::Dahai {
+                actor: 1,
+                tsumogiri: true,
+                ..
+            }
+        ));
+
+        // Seat 2 draws but discards a lower slot → tedashi.
+        feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_in_card_brc", "data": {"user_id": 1003, "card": 0}}),
+        );
+        let e = feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_game_action_brc", "data": {"action_info": [
+                {"action": 11, "user_id": 1003, "card": 0x25, "move_cards_pos": [13], "is_li_zhi": false}
+            ]}}),
+        );
+        assert!(matches!(
+            &e[0],
+            MjaiEvent::Dahai {
+                actor: 2,
+                tsumogiri: false,
+                ..
+            }
+        ));
+    }
+
+    /// After a call the rack shrinks: the tsumogiri sentinel follows the
+    /// seat's meld count, and a post-call discard (no draw) is never
+    /// tsumogiri even when it names the rack's last slot.
+    #[test]
+    fn tsumogiri_slot_follows_the_melded_rack() {
+        let mut b = started_4p();
+        // Seat 1 draws and discards; we pon it and must now discard from
+        // an 11-slot rack without drawing.
+        feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_in_card_brc", "data": {"user_id": 1002, "card": 0}}),
+        );
+        feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_game_action_brc", "data": {"action_info": [
+                {"action": 11, "user_id": 1002, "card": 0x25, "move_cards_pos": [14], "is_li_zhi": false}
+            ]}}),
+        );
+        feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_game_action_brc", "data": {"action_info": [
+                {"action": 5, "user_id": 1001, "card": 0x25, "group_cards": [0x25, 0x25]}
+            ]}}),
+        );
+        let e = feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_game_action_brc", "data": {"action_info": [
+                {"action": 11, "user_id": 1001, "card": 0x31, "move_cards_pos": [11], "is_li_zhi": false}
+            ]}}),
+        );
+        assert!(
+            matches!(
+                &e[0],
+                MjaiEvent::Dahai {
+                    actor: 0,
+                    tsumogiri: false,
+                    ..
+                }
+            ),
+            "post-call discard is tedashi even at the last slot"
+        );
+
+        // Next turn we draw; slot 11 now IS the drawn slot.
+        feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_send_current_action", "data": {"in_card": 0x05}}),
+        );
+        let e = feed(
+            &mut b,
+            18,
+            json!({"cmd": "cmd_game_action_brc", "data": {"action_info": [
+                {"action": 11, "user_id": 1001, "card": 0x05, "move_cards_pos": [11], "is_li_zhi": false}
+            ]}}),
+        );
+        assert!(matches!(
+            &e[0],
+            MjaiEvent::Dahai {
+                actor: 0,
+                tsumogiri: true,
+                ..
+            }
+        ));
     }
 
     #[test]

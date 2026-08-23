@@ -45,6 +45,17 @@ pub struct GameStatus {
     pub nicknames: std::collections::HashMap<i64, String>,
     /// Actor of the most recent discard — the ron/pon/kan target.
     pub last_dahai_actor: Option<u8>,
+    /// Seat currently holding a fresh draw (wall or rinshan), set by the
+    /// draw broadcasts and cleared by that seat's discard. Gates the
+    /// tsumogiri inference: a discard can only be tsumogiri on a turn
+    /// that drew — a post-chi/pon discard never is.
+    pub drawn_by: Option<u8>,
+    /// Called melds per actor this kyoku (chi/pon/daiminkan/ankan; a
+    /// kakan upgrades an existing pon and keeps the count). Sizes each
+    /// seat's tile rack: holding a draw, it racks `13 - 3*melds + 1`
+    /// tiles, and that last slot is the `move_cards_pos` index the
+    /// client sends for a tsumogiri.
+    pub meld_counts: [u8; 4],
     /// Deferred `reach_accepted`, emitted just before the next action so a
     /// chi/pon/kan on the riichi discard is ordered correctly.
     pub pending_reach: Option<MjaiEvent>,
@@ -69,6 +80,8 @@ impl Default for GameStatus {
             game_play: None,
             nicknames: std::collections::HashMap::new(),
             last_dahai_actor: None,
+            drawn_by: None,
+            meld_counts: [0; 4],
             pending_reach: None,
             pending_dora: Vec::new(),
             game_start: false,
