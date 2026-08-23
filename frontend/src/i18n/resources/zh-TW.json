@@ -118,7 +118,18 @@
       "rc_tournament": "大會戰",
       "rc_friendly": "友人戰",
       "rc_one_round": "一局戰",
-      "rc_casual": "休閒場"
+      "rc_two_player": "2麻",
+      "rc_ak_2p": "2麻（AK聯動）",
+      "rc_command": "指令戰",
+      "rc_chinitsu": "清一色試煉",
+      "rc_taiwan": "16張",
+      "rc_ai_challenge": "AI突圍挑戰賽",
+      "rc_chill": "悠悠麻將",
+      "rc_seventeen": "決鬥十七步",
+      "rc_practice": "練習場",
+      "rc_fury_waves": "怒濤戰",
+      "rc_taiwan_ranked": "16張段位戰",
+      "rc_hidden_war": "隱牌戰"
     }
   },
   "logs": {

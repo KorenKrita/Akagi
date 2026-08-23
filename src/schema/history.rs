@@ -87,9 +87,11 @@ pub enum MatchInfo {
     /// Riichi City. `stage_type` / `game_play` / `classify_id` come from
     /// `cmd_enter_room.options` and identify the matchmaking room;
     /// `stage_type` 1..=4 = Star / Moon / Sun / Galaxy (新星/霞月/炎陽/銀河,
-    /// the ranked room tiers) and `game_play` is the client's `GamePlayType`
-    /// (1001 ranked, 1002 tournament, 1003 friendly, 1004/1005 one-round,
-    /// 1021 Taiwan-rules ranked, 1007..=1016/1022 casual-hall variants).
+    /// the ranked room tiers — the client's tier enum is exhaustive at
+    /// four) and `game_play` is the client's `GamePlayType` enum (its
+    /// game logic ships as Lua; the full id→mode mapping with the
+    /// client's own localized names lives in the frontend's
+    /// `matchInfo.ts`).
     /// `room_id` is the table-instance token from the `cmd_enter_room`
     /// wrapper. All raw wire values.
     RiichiCity {
