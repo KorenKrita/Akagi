@@ -1212,25 +1212,25 @@ async fn round_advance_watcher(
 }
 
 /// Human-like wait before injecting the settlement OK (`req_user_prepare`),
-/// timed off `EndKyoku` with no screen capture. Two parts: a randomized
-/// render allowance (the score breakdown takes a beat to draw after
-/// `cmd_game_end`), plus a reading beat that scales with the number of yaku
-/// lines in the winning hand (each line past two adds half a second, capped;
-/// draws count as zero yakus). The total is always far below the client's
-/// ~59s auto-advance countdown, so we press before it, never after.
+/// timed off `EndKyoku` with no screen capture. A 10s floor first, because
+/// the settlement animation (win reveal, score tally, ura-dora flip) plays
+/// out over several seconds after `cmd_game_end` and the OK press must land
+/// after it, not during. On top of the floor: uniform jitter so the timing
+/// is not a fixed signature, plus a reading beat that grows with the number
+/// of yaku lines in the winning hand (each line past two adds half a second,
+/// capped; draws add nothing). The total stays well below the client's ~59s
+/// auto-advance countdown, so we press before it, never after.
 fn round_advance_delay(yakus: u32) -> Duration {
-    /// Lower bound of the score-screen render allowance.
-    const RENDER_MIN_MS: u64 = 1_500;
-    /// Uniform jitter added on top, so the press timing is not a fixed
-    /// signature.
-    const RENDER_JITTER_MS: u64 = 1_000;
-    /// Reading-beat base and cap, scaled by yaku-line count.
-    const READ_BASE_MS: u64 = 1_500;
-    const READ_CAP_MS: u64 = 4_000;
+    /// Floor covering the settlement animation; the press never lands sooner.
+    const FLOOR_MS: u64 = 10_000;
+    /// Uniform jitter added on top of the floor.
+    const JITTER_MS: u64 = 2_000;
+    /// Extra reading time for bigger hands, capped.
+    const READ_CAP_MS: u64 = 2_500;
 
-    let render = RENDER_MIN_MS + rand::random::<u64>() % (RENDER_JITTER_MS + 1);
-    let read = (READ_BASE_MS + u64::from(yakus.saturating_sub(2)) * 500).min(READ_CAP_MS);
-    Duration::from_millis(render + read)
+    let jitter = rand::random::<u64>() % (JITTER_MS + 1);
+    let read = (u64::from(yakus.saturating_sub(2)) * 500).min(READ_CAP_MS);
+    Duration::from_millis(FLOOR_MS + jitter + read)
 }
 
 /// Spawn point for the autoplay loop. Wired by `crate::lib::run` so the
@@ -1423,16 +1423,17 @@ mod tests {
         assert_eq!(retry_hold_ms(u32::MAX, 5), 2_000, "no overflow");
     }
 
-    /// The round-advance delay = render allowance [1500,2500] + a reading
-    /// beat that is flat for ≤2 yaku lines and grows half a second per extra
-    /// line (capped at 4000). Randomized, so assert the bounds over samples
-    /// and that more yaku lines shift the window up. Always well under the
+    /// The round-advance delay = a 10s animation floor + jitter [0,2000] + a
+    /// reading beat that is zero for ≤2 yaku lines and grows half a second
+    /// per extra line (capped at 2500). Randomized, so assert the bounds over
+    /// samples, that nothing ever fires under the 10s floor, that more yaku
+    /// lines shift the window up, and that everything stays under the
     /// client's ~59s countdown.
     #[test]
     fn round_advance_delay_bounds_scale_with_yaku_count() {
         let bounds = |yakus: u32| -> (u64, u64) {
-            let read = (1_500 + u64::from(yakus.saturating_sub(2)) * 500).min(4_000);
-            (1_500 + read, 2_500 + read)
+            let read = (u64::from(yakus.saturating_sub(2)) * 500).min(2_500);
+            (10_000 + read, 12_000 + read)
         };
         for yakus in [0u32, 2, 3, 5, 9, 20] {
             let (lo, hi) = bounds(yakus);
@@ -1441,6 +1442,10 @@ mod tests {
                 assert!(
                     (lo..=hi).contains(&ms),
                     "yakus={yakus}: {ms} not in [{lo},{hi}]"
+                );
+                assert!(
+                    ms >= 10_000,
+                    "yakus={yakus}: {ms} under the animation floor"
                 );
             }
             assert!(
