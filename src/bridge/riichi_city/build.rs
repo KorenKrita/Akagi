@@ -30,12 +30,14 @@ const BIN_CMD_REQUEST: u16 = 6;
 /// against the client's `EMjActionType` enum and uplink recordings: 1
 /// pass, 2/3/4 chi variants (claimed tile low/middle/high in the run),
 /// 5 pon, 6 daiminkan, 7 ron, 8 ankan, 9 kakan, 10 tsumo, 11 dahai,
-/// 13 kita.
+/// 12 kyuushu (nine terminals, `ActionEndGame` — offered as
+/// `is_nine_cards`), 13 kita.
 mod action {
     pub const PASS: i64 = 1;
     pub const RON: i64 = 7;
     pub const TSUMO: i64 = 10;
     pub const DAHAI: i64 = 11;
+    pub const NINE_CARDS: i64 = 12;
     pub const KITA: i64 = 13;
     pub const PON: i64 = 5;
     pub const DAIMINKAN: i64 = 6;
@@ -304,6 +306,14 @@ pub fn encode_action_with(
         }
         // Verified: declining a call window is a bare `{"action":1}`.
         MjaiEvent::None => json!({ "action": action::PASS }),
+        // Kyuushu (nine terminals): the offer builder adds a bare
+        // `{action = ActionEndGame}` for `is_nine_cards` and the button
+        // click sends it unchanged through `ReqGameOpt` — nil fields
+        // omitted, no confirm dialog. Only the bot's declaration form
+        // (`deltas: None`, how `BotAction::Kyushu` maps) is encodable: a
+        // Ryukyoku carrying deltas is an exhaustive draw observed on the
+        // wire, never a decision we can send.
+        MjaiEvent::Ryukyoku { deltas: None } => json!({ "action": action::NINE_CARDS }),
         _ => return None,
     };
     Some(action_frame(&data))
@@ -659,6 +669,36 @@ mod tests {
         assert_eq!(pkt.body["data"]["action"], 7);
         assert_eq!(pkt.body["data"]["card"], 0x17);
         assert_eq!(pkt.body["data"].as_object().unwrap().len(), 2);
+    }
+
+    /// Kyuushu (nine terminals) is a bare `{"action":12}` — the offer
+    /// builder's `{action = ActionEndGame}` for `is_nine_cards`, sent
+    /// unchanged by the button click. Regression for a live timeout
+    /// (2026-08-23): the bot declared on a 9-terminal first draw and the
+    /// unencodable action left the window open until the server
+    /// auto-discarded ~27s later.
+    #[test]
+    fn kyuushu_is_a_bare_twelve() {
+        let pkt =
+            &WPacket::parse_frame(&encode_action(&MjaiEvent::Ryukyoku { deltas: None }).unwrap())
+                [0];
+        assert_eq!(pkt.body["cmd"], CMD_GAME_ACTION);
+        assert_eq!(pkt.body["data"]["action"], 12);
+        assert_eq!(
+            pkt.body["data"].as_object().unwrap().len(),
+            1,
+            "no card, no positions — the client sends the code alone"
+        );
+    }
+
+    /// A Ryukyoku carrying deltas is an exhaustive draw observed on the
+    /// wire, not a decision — it must never encode.
+    #[test]
+    fn an_observed_draw_is_not_an_action() {
+        assert!(encode_action(&MjaiEvent::Ryukyoku {
+            deltas: Some(vec![1000, -1000, 1000, -1000]),
+        })
+        .is_none());
     }
 
     /// Verbatim from the recording: a 6p self-draw win went out as
