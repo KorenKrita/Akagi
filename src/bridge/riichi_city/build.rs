@@ -1,11 +1,11 @@
 //! Riichi City outbound (client → server) frame builder.
 //!
 //! Gameplay actions ride `"req_game_action"` with the same numeric action
-//! codes the server broadcasts back. Verified from a recorded session:
-//! discard (`action:11`, riichi = same request with `is_li_zhi:true`),
-//! pass (`action:1`), tsumo (`action:10`). Unverified (no sample): chi/
-//! pon/kan/kita shapes, ron, and the tedashi value of `move_cards_pos` —
-//! see the TODO(capture) notes inline.
+//! codes the server broadcasts back. Every shape below is verified against
+//! the client's own sender (the game logic ships as Lua:
+//! `lua_models_game` `ReqOutCard`/`ReqGameOpt`, and the offer-to-button
+//! construction in `lua_procestates_game_components`), cross-checked with
+//! recorded uplink frames from live play.
 
 use crate::schema::MjaiEvent;
 use serde_json::{json, Value};
@@ -19,8 +19,10 @@ const CMD_GAME_ACTION: &str = "req_game_action";
 const BIN_CMD_REQUEST: u16 = 6;
 
 /// Action codes shared with the inbound `cmd_game_action_brc`. Verified
-/// uplink: 1 pass, 2/3/4 chi variants, 5 pon, 6 daiminkan, 7 ron, 8
-/// ankan, 10 tsumo, 11 dahai.
+/// against the client's `EMjActionType` enum and uplink recordings: 1
+/// pass, 2/3/4 chi variants (claimed tile low/middle/high in the run),
+/// 5 pon, 6 daiminkan, 7 ron, 8 ankan, 9 kakan, 10 tsumo, 11 dahai,
+/// 13 kita.
 mod action {
     pub const PASS: i64 = 1;
     pub const RON: i64 = 7;
@@ -150,30 +152,26 @@ pub fn encode_action_with(
     hand: Option<&[String]>,
 ) -> Option<Vec<u8>> {
     let data: Value = match ev {
-        MjaiEvent::Dahai { pai, tsumogiri, .. } => dahai_data(pai, *tsumogiri, false)?,
-        MjaiEvent::Reach { pai: Some(pai), .. } => dahai_data(pai, false, true)?,
+        MjaiEvent::Dahai { pai, tsumogiri, .. } => dahai_data(pai, *tsumogiri, false, hand)?,
+        MjaiEvent::Reach { pai: Some(pai), .. } => dahai_data(pai, false, true, hand)?,
+        // Discard-claims (chi/pon) are bare `{action, card}` on the wire:
+        // the client's own claim buttons send nothing else — the server
+        // derives the meld from the variant code plus our hand.
         MjaiEvent::Chi { pai, consumed, .. } => {
             let card = mjai_to_card(pai)?;
             let group = cards(consumed)?;
-            with_pos(
-                json!({
-                    "action": chi_action_code(card, &[group[0], group[1]])?,
-                    "card": card,
-                    "group_cards": group,
-                }),
-                hand,
-                consumed,
-            )
-        }
-        MjaiEvent::Pon { pai, consumed, .. } => with_pos(
             json!({
-                "action": action::PON,
-                "card": mjai_to_card(pai)?,
-                "group_cards": cards(consumed)?,
-            }),
-            hand,
-            consumed,
-        ),
+                "action": chi_action_code(card, &[group[0], group[1]])?,
+                "card": card,
+            })
+        }
+        MjaiEvent::Pon { pai, .. } => json!({
+            "action": action::PON,
+            "card": mjai_to_card(pai)?,
+        }),
+        // Daiminkan is the one claim that does carry the consumed tiles:
+        // `card` names the claimed discard, `group_cards` the three
+        // matching tiles from our hand, `move_cards_pos` their positions.
         MjaiEvent::Daiminkan { pai, consumed, .. } => with_pos(
             json!({
                 "action": action::DAIMINKAN,
@@ -183,15 +181,24 @@ pub fn encode_action_with(
             hand,
             consumed,
         ),
-        MjaiEvent::Ankan { consumed, .. } => with_pos(
-            json!({
-                "action": action::ANKAN,
-                "card": cards(consumed)?.first().copied()?,
-                "group_cards": cards(consumed)?,
-            }),
-            hand,
-            consumed,
-        ),
+        // Ankan (from the client's offer builder): `card` is one of the
+        // four, `group_cards` carries three ("the server only needs
+        // three" — its own comment), and `move_cards_pos` the positions
+        // of all four.
+        MjaiEvent::Ankan { consumed, .. } => {
+            let group = cards(consumed)?;
+            with_pos(
+                json!({
+                    "action": action::ANKAN,
+                    "card": group.first().copied()?,
+                    "group_cards": &group[1..],
+                }),
+                hand,
+                consumed,
+            )
+        }
+        // Kakan (client's `ActionBuGang` branch): the promoted tile and
+        // its hand position, and no `group_cards`.
         MjaiEvent::Kakan { pai, .. } => with_pos(
             json!({
                 "action": action::KAKAN,
@@ -200,13 +207,14 @@ pub fn encode_action_with(
             hand,
             std::slice::from_ref(pai),
         ),
+        // Kita (client's `ActionPullNorth`): the north tile, bare.
         MjaiEvent::Kita { pai, .. } => json!({
             "action": action::KITA,
             "card": mjai_to_card(pai.as_deref().unwrap_or("N"))?,
         }),
-        // Verified: a tsumo names its winning tile (`{"action":10,"card":6}`
-        // for a 6p self-draw win). A ron presumably mirrors that with the
-        // claimed tile; no sample yet. TODO(capture): confirm the ron shape.
+        // Tsumo names its winning tile (`{"action":10,"card":6}` for a 6p
+        // self-draw win — recorded). A ron mirrors it with the claimed
+        // discard, per the client's claim-button construction.
         MjaiEvent::Hora { target, actor, .. } => {
             let mut d =
                 json!({ "action": if target == actor { action::TSUMO } else { action::RON } });
@@ -229,16 +237,34 @@ pub fn encode_action_with(
 /// A discard request. Riichi is the same request with `is_li_zhi: true`
 /// (verified: the recorded riichi discard carries exactly these fields).
 ///
-/// `move_cards_pos` is client display metadata the server relays in the
-/// broadcast. The tsumogiri shape `[14,13]` is verified. The tedashi shape
-/// is NOT: the two values reference the client's internal tile-rack
-/// positions (they did not match dealt order, code-sorted order, or
-/// 0/1-based indices of either in the recording), so `[13,13]` — one of
-/// the observed shapes — is sent as a placeholder.
-/// TODO(capture/live): watch the first tedashis of a live autoplay game;
-/// if the server validates or relays visibly wrong positions, record a
-/// manual tedashi and derive the real formula.
-fn dahai_data(pai: &str, tsumogiri: bool, riichi: bool) -> Option<Value> {
+/// `move_cards_pos` is client display metadata, never validated: the
+/// client computes `[index, toIndex]` as animation hints (which rack slot
+/// the tile slides from) and the server merely relays them in the
+/// broadcast so other clients can animate. `index` is the tile's 1-based
+/// position in the hand — the drawn tile sits last (`CheckOutCardIndex`).
+/// `toIndex` depends on the player's chosen tile-sort order
+/// (`GetMoveIndexByOutCard`); the client's own fallback branches return
+/// `hand.len() - 1`, which is what we send. Without a hand we fall back
+/// to the recorded placeholder shapes.
+fn dahai_data(pai: &str, tsumogiri: bool, riichi: bool, hand: Option<&[String]>) -> Option<Value> {
+    let pos: Value = match hand {
+        Some(hand) if !hand.is_empty() => {
+            let to = (hand.len() - 1).max(1) as u32;
+            let from = if tsumogiri {
+                hand.len() as u32
+            } else {
+                // First matching tile, 1-based — mirrors the client's
+                // card-object lookup well enough for an animation hint.
+                hand.iter()
+                    .position(|h| h == pai)
+                    .map(|i| i as u32 + 1)
+                    .unwrap_or(to)
+            };
+            json!([from, to])
+        }
+        // No hand: the recorded placeholder shapes.
+        _ => json!([if tsumogiri { 14 } else { 13 }, 13]),
+    };
     Some(json!({
         "action": action::DAHAI,
         "card": mjai_to_card(pai)?,
@@ -247,7 +273,7 @@ fn dahai_data(pai: &str, tsumogiri: bool, riichi: bool) -> Option<Value> {
         // its first uninterrupted turn (junme <= 1 with no calls).
         "is_xuan_gao_ting": false,
         "li_zhi_operate": 0,
-        "move_cards_pos": if tsumogiri { [14, 13] } else { [13, 13] },
+        "move_cards_pos": pos,
     }))
 }
 
@@ -397,17 +423,32 @@ mod tests {
         assert_eq!(code(&pick("6m", "7m")), 2, "5-6-7: claimed is low");
     }
 
-    /// Call requests carry the consumed tiles' positions in the server-
+    /// Kan requests carry the consumed tiles' positions in the server-
     /// ordered hand; unresolvable positions omit the field instead of
-    /// sending nonsense.
+    /// sending nonsense. Chi and pon carry nothing but the variant code
+    /// and the claimed tile — the client's own claim buttons send exactly
+    /// that, and the server derives the meld from our hand.
     #[test]
     fn calls_carry_hand_positions_when_known() {
         let hand: Vec<String> = [
-            "1m", "2m", "4p", "5pr", "6s", "7s", "E", "E", "S", "W", "N", "P", "F",
+            "1m", "2m", "4p", "5pr", "6s", "7s", "E", "E", "E", "W", "N", "P", "F",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect();
+        let daiminkan = MjaiEvent::Daiminkan {
+            actor: 0,
+            target: 1,
+            pai: "E".into(),
+            consumed: ["E".into(), "E".into(), "E".into()],
+        };
+        let pkt = &WPacket::parse_frame(
+            &encode_action_with(&daiminkan, None, None, Some(&hand)).unwrap(),
+        )[0];
+        assert_eq!(pkt.body["data"]["move_cards_pos"], json!([6, 7, 8]));
+        assert_eq!(pkt.body["data"]["group_cards"], json!([0x31, 0x31, 0x31]));
+
+        // Chi and pon stay bare even with a hand available.
         let pon = MjaiEvent::Pon {
             actor: 0,
             target: 1,
@@ -416,9 +457,10 @@ mod tests {
         };
         let pkt =
             &WPacket::parse_frame(&encode_action_with(&pon, None, None, Some(&hand)).unwrap())[0];
-        assert_eq!(pkt.body["data"]["move_cards_pos"], json!([6, 7]));
+        assert_eq!(pkt.body["data"].as_object().unwrap().len(), 2);
+        assert_eq!(pkt.body["data"]["action"], 5);
+        assert_eq!(pkt.body["data"]["card"], 0x31);
 
-        // Tile not in hand → no field at all.
         let chi = MjaiEvent::Chi {
             actor: 0,
             target: 1,
@@ -430,6 +472,77 @@ mod tests {
             &WPacket::parse_frame(&encode_action_with(&chi, None, None, Some(&unknown)).unwrap())
                 [0];
         assert!(pkt.body["data"].get("move_cards_pos").is_none());
+        assert!(pkt.body["data"].get("group_cards").is_none());
+    }
+
+    /// Ankan carries three `group_cards` (the client's own comment: "the
+    /// server only needs three") with the positions of all four, and the
+    /// promoted-tile kakan carries only the tile and its position.
+    #[test]
+    fn kan_shapes_match_the_client_sender() {
+        let hand: Vec<String> = [
+            "1m", "2m", "5m", "5mr", "5m", "5m", "6s", "7s", "E", "S", "W", "N", "P",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let ankan = MjaiEvent::Ankan {
+            actor: 0,
+            consumed: ["5mr".into(), "5m".into(), "5m".into(), "5m".into()],
+        };
+        let pkt =
+            &WPacket::parse_frame(&encode_action_with(&ankan, None, None, Some(&hand)).unwrap())[0];
+        assert_eq!(pkt.body["data"]["action"], 8);
+        assert_eq!(pkt.body["data"]["card"], 0x125);
+        assert_eq!(pkt.body["data"]["group_cards"], json!([0x25, 0x25, 0x25]));
+        // Positions follow the consumed list's order (the red five is
+        // listed first and sits at hand index 3).
+        assert_eq!(pkt.body["data"]["move_cards_pos"], json!([3, 2, 4, 5]));
+
+        let kakan = MjaiEvent::Kakan {
+            actor: 0,
+            pai: "5p".into(),
+            consumed: ["5p".into(), "5p".into(), "5p".into()],
+        };
+        let hand2: Vec<String> = vec!["5p".to_string(); 14];
+        let pkt =
+            &WPacket::parse_frame(&encode_action_with(&kakan, None, None, Some(&hand2)).unwrap())
+                [0];
+        assert_eq!(pkt.body["data"]["action"], 9);
+        assert_eq!(pkt.body["data"]["card"], 0x05);
+        assert!(pkt.body["data"].get("group_cards").is_none());
+        assert_eq!(pkt.body["data"]["move_cards_pos"], json!([0]));
+    }
+
+    /// Kita is the bare north tile, per the client's `ActionPullNorth`
+    /// offer construction.
+    #[test]
+    fn kita_is_bare() {
+        let kita = MjaiEvent::Kita {
+            actor: 0,
+            pai: Some("N".into()),
+        };
+        let pkt = &WPacket::parse_frame(&encode_action(&kita).unwrap())[0];
+        assert_eq!(pkt.body["data"].as_object().unwrap().len(), 2);
+        assert_eq!(pkt.body["data"]["action"], 13);
+        assert_eq!(pkt.body["data"]["card"], 0x61);
+    }
+
+    /// A ron names the claimed discard, mirroring the tsumo's winning
+    /// tile — the client's claim buttons send `{action, card}`.
+    #[test]
+    fn ron_names_the_claimed_discard() {
+        let ron = MjaiEvent::Hora {
+            actor: 0,
+            target: 2,
+            deltas: None,
+            ura_markers: None,
+        };
+        let pkt =
+            &WPacket::parse_frame(&encode_action_with(&ron, None, Some("7s"), None).unwrap())[0];
+        assert_eq!(pkt.body["data"]["action"], 7);
+        assert_eq!(pkt.body["data"]["card"], 0x17);
+        assert_eq!(pkt.body["data"].as_object().unwrap().len(), 2);
     }
 
     /// Verbatim from the recording: a 6p self-draw win went out as
@@ -484,6 +597,41 @@ mod tests {
         assert_eq!(pkt.body["data"]["move_cards_pos"][0], 14);
         assert_eq!(pkt.body["data"]["move_cards_pos"][1], 13);
         assert_eq!(pkt.body["data"]["is_li_zhi"], false);
+    }
+
+    /// With the hand available, `move_cards_pos` follows the client's
+    /// formula: the tile's 1-based hand position (the drawn tile sits
+    /// last), and the client's own `hand.len() - 1` fallback for the
+    /// animation target slot.
+    #[test]
+    fn discard_positions_follow_the_client_formula() {
+        let hand: Vec<String> = [
+            "1m", "2m", "3m", "4p", "5p", "6s", "7s", "8s", "9s", "E", "S", "W", "N", "F",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // Tedashi of the 4p (0-based index 3 → 1-based 4).
+        let tedashi = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "4p".into(),
+            tsumogiri: false,
+        };
+        let pkt =
+            &WPacket::parse_frame(&encode_action_with(&tedashi, None, None, Some(&hand)).unwrap())
+                [0];
+        assert_eq!(pkt.body["data"]["move_cards_pos"], json!([4, 13]));
+
+        // Tsumogiri always names the last slot.
+        let tsumogiri = MjaiEvent::Dahai {
+            actor: 0,
+            pai: "F".into(),
+            tsumogiri: true,
+        };
+        let pkt = &WPacket::parse_frame(
+            &encode_action_with(&tsumogiri, None, None, Some(&hand)).unwrap(),
+        )[0];
+        assert_eq!(pkt.body["data"]["move_cards_pos"], json!([14, 13]));
     }
 
     /// The round-advance press must be a bare req_user_prepare on binary
