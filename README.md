@@ -154,7 +154,7 @@ https://github.com/user-attachments/assets/d5bc6ff6-6560-4365-ae55-660c9a522790
 |---|:---:|:---:|:---:|
 | **Mahjong Soul (Majsoul)** | &check; | &check; | &check; |
 | **Tenhou** | &check; | &check; | &check; |
-| **Riichi City** | &check; | &check; | &cross; |
+| **Riichi City** | &check; | &check; | &check; |
 | **Amatsuki** | (planned) | (planned) | &cross; |
 
 ---
