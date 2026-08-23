@@ -28,17 +28,17 @@ impl PlatformAutoplay for RiichiCityAutoplay {
             return PlanResult::default();
         }
         // A win names its tile: the drawn tile for a tsumo, the claimed
-        // discard for a ron. Call requests also carry the consumed tiles'
-        // hand positions, so pass our tehai through (see
-        // `build::encode_action_with`).
-        let hand = ctx
-            .snapshot
-            .players
-            .get(ctx.our_seat as usize)
-            .map(|p| p.tehai.clone());
+        // discard for a ron. Discards and calls carry rack positions, so
+        // pass our tehai and the held draw through (see
+        // `build::encode_action_with`). The snapshot's `drawn_tile` — not
+        // `last_self_tsumo`, which stays stale through a post-call
+        // discard — says whether a draw is actually in the rack now.
+        let player = ctx.snapshot.players.get(ctx.our_seat as usize);
+        let hand = player.map(|p| p.tehai.clone());
+        let drawn = player.and_then(|p| p.drawn_tile.clone());
         let Some(frame) = build::encode_action_with(
             ctx.action,
-            ctx.last_self_tsumo,
+            drawn.as_deref(),
             ctx.last_kawa_tile,
             hand.as_deref(),
         ) else {
