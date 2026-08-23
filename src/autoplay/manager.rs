@@ -33,7 +33,6 @@ use riichienv_core::state_3p::legal_actions::GameState3PLegalActions;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast::error::RecvError, Mutex, RwLock};
-use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 
 /// How long before a cached `CanvasRect` is treated as stale and re-queried.
@@ -1159,23 +1158,22 @@ async fn autoplay_enabled_for_riichi(cfg: &Arc<RwLock<AppConfig>>) -> bool {
 
 /// Dedicated round-advance loop, on its own `MjaiBus` subscription so
 /// end-of-hand plan backlogs cannot delay it. Advancing past the scoring
-/// screen is one `req_user_prepare` per `EndKyoku`, sent only after the
-/// client has actually rendered the OK button (sighted via
-/// `vision::capture_ok_button`, once a second). No timed fallback: if the
-/// button is never sighted, the server's own countdown advances the
-/// table. `EndGame` needs nothing — the client tears its end screens down
-/// when the next match's `cmd_enter_room` arrives.
+/// screen is one `req_user_prepare` per `EndKyoku`, sent after a human-like
+/// delay timed off the protocol event itself — no screen capture. The delay
+/// covers the score breakdown rendering plus a reading beat, and stays well
+/// under the client's own ~59s auto-advance countdown.
+///
+/// If any further mjai event arrives before the delay elapses, the round
+/// already moved on (the server countdown fired, the user clicked through,
+/// or the game ended with `cmd_room_end`/`EndGame`) — the cycle is voided so
+/// a stale advance never lands. `EndGame` needs nothing on its own: the
+/// client tears its end screens down when the next match's `cmd_enter_room`
+/// arrives.
 async fn round_advance_watcher(
     cfg: Arc<RwLock<AppConfig>>,
     inject: crate::autoplay::inject::SharedInjectBus,
     bus: MjaiBus,
 ) {
-    const POLL_INTERVAL: Duration = Duration::from_secs(1);
-    /// Give up on sighting after this long — the client's own countdown is
-    /// 59s, so anything past this means the window is gone or the detector
-    /// is broken, and we must not fire blind.
-    const SIGHTING_TIMEOUT: Duration = Duration::from_secs(90);
-
     let mut rx = bus.subscribe();
     loop {
         match rx.recv().await {
@@ -1185,62 +1183,23 @@ async fn round_advance_watcher(
                         continue;
                     }
                     let (_, yakus) = inject.settlement();
-                    let mut ticker = tokio::time::interval(POLL_INTERVAL);
-                    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-                    let deadline = tokio::time::Instant::now() + SIGHTING_TIMEOUT;
-                    let mut sighted = false;
-                    let mut aborted = false;
-                    loop {
-                        tokio::select! {
-                            _ = ticker.tick() => {
-                                if tokio::time::Instant::now() >= deadline {
-                                    break;
-                                }
-                                let hit = tauri::async_runtime::spawn_blocking(
-                                    crate::autoplay::riichi_city::vision::capture_ok_button,
-                                )
-                                .await
-                                .ok()
-                                .flatten();
-                                if let Some(sight) = hit {
-                                    debug!(
-                                        pixels = sight.pixels,
-                                        box = ?(sight.x0, sight.y0, sight.x1, sight.y1),
-                                        "autoplay: OK button sighted"
-                                    );
-                                    sighted = true;
-                                    break;
-                                }
-                            }
-                            msg = rx.recv() => match msg {
-                                // The round moved on without us (server
-                                // countdown, manual click) — void cycle.
-                                Ok(_) => {
-                                    aborted = true;
-                                    break;
-                                }
-                                Err(RecvError::Lagged(_)) => continue,
-                                Err(RecvError::Closed) => return,
+                    tokio::select! {
+                        _ = tokio::time::sleep(round_advance_delay(yakus)) => {
+                            info!("autoplay: sending round-advance (req_user_prepare)");
+                            if !inject.send(InjectFrame {
+                                gameplay: true,
+                                bytes: crate::bridge::riichi_city::build::user_prepare(),
+                            }) {
+                                warn!("autoplay: no injection relay for the round-advance press");
                             }
                         }
-                    }
-                    if aborted || !sighted {
-                        if !aborted {
-                            warn!(
-                                "autoplay: OK button never sighted within {}s; \
-                                 not advancing this round",
-                                SIGHTING_TIMEOUT.as_secs()
-                            );
+                        msg = rx.recv() => match msg {
+                            // The round already moved on (server countdown,
+                            // manual click, or game over) before our delay
+                            // elapsed — void this cycle.
+                            Ok(_) | Err(RecvError::Lagged(_)) => {}
+                            Err(RecvError::Closed) => return,
                         }
-                        continue;
-                    }
-                    tokio::time::sleep(Duration::from_millis(ok_button_beat_ms(yakus))).await;
-                    info!("autoplay: sending round-advance (req_user_prepare)");
-                    if !inject.send(InjectFrame {
-                        gameplay: true,
-                        bytes: crate::bridge::riichi_city::build::user_prepare(),
-                    }) {
-                        warn!("autoplay: no injection relay for the round-advance press");
                     }
                 }
                 MjaiEvent::EndGame { .. } => {}
@@ -1252,14 +1211,26 @@ async fn round_advance_watcher(
     }
 }
 
-/// Reading beat between sighting the OK button and pressing it: the button
-/// only renders once the breakdown is up, so this is pure viewing time,
-/// scaled by the number of yaku lines in the winning hand (each line past
-/// two adds half a second). Draws count as zero yakus.
-fn ok_button_beat_ms(yakus: u32) -> u64 {
-    const BASE: u64 = 1_500;
-    const CAP: u64 = 4_000;
-    (BASE + u64::from(yakus.saturating_sub(2)) * 500).min(CAP)
+/// Human-like wait before injecting the settlement OK (`req_user_prepare`),
+/// timed off `EndKyoku` with no screen capture. Two parts: a randomized
+/// render allowance (the score breakdown takes a beat to draw after
+/// `cmd_game_end`), plus a reading beat that scales with the number of yaku
+/// lines in the winning hand (each line past two adds half a second, capped;
+/// draws count as zero yakus). The total is always far below the client's
+/// ~59s auto-advance countdown, so we press before it, never after.
+fn round_advance_delay(yakus: u32) -> Duration {
+    /// Lower bound of the score-screen render allowance.
+    const RENDER_MIN_MS: u64 = 1_500;
+    /// Uniform jitter added on top, so the press timing is not a fixed
+    /// signature.
+    const RENDER_JITTER_MS: u64 = 1_000;
+    /// Reading-beat base and cap, scaled by yaku-line count.
+    const READ_BASE_MS: u64 = 1_500;
+    const READ_CAP_MS: u64 = 4_000;
+
+    let render = RENDER_MIN_MS + rand::random::<u64>() % (RENDER_JITTER_MS + 1);
+    let read = (READ_BASE_MS + u64::from(yakus.saturating_sub(2)) * 500).min(READ_CAP_MS);
+    Duration::from_millis(render + read)
 }
 
 /// Spawn point for the autoplay loop. Wired by `crate::lib::run` so the
@@ -1452,16 +1423,33 @@ mod tests {
         assert_eq!(retry_hold_ms(u32::MAX, 5), 2_000, "no overflow");
     }
 
-    /// Draws and ≤2-yaku hands get the flat base; each yaku line past two
-    /// adds half a second; capped.
+    /// The round-advance delay = render allowance [1500,2500] + a reading
+    /// beat that is flat for ≤2 yaku lines and grows half a second per extra
+    /// line (capped at 4000). Randomized, so assert the bounds over samples
+    /// and that more yaku lines shift the window up. Always well under the
+    /// client's ~59s countdown.
     #[test]
-    fn ok_button_beat_scales_with_yaku_count_only() {
-        assert_eq!(ok_button_beat_ms(0), 1_500, "draw");
-        assert_eq!(ok_button_beat_ms(1), 1_500, "one yaku");
-        assert_eq!(ok_button_beat_ms(2), 1_500, "two yaku lines");
-        assert_eq!(ok_button_beat_ms(3), 2_000, "one extra line");
-        assert_eq!(ok_button_beat_ms(5), 3_000, "three extra lines");
-        assert_eq!(ok_button_beat_ms(9), 4_000, "capped");
+    fn round_advance_delay_bounds_scale_with_yaku_count() {
+        let bounds = |yakus: u32| -> (u64, u64) {
+            let read = (1_500 + u64::from(yakus.saturating_sub(2)) * 500).min(4_000);
+            (1_500 + read, 2_500 + read)
+        };
+        for yakus in [0u32, 2, 3, 5, 9, 20] {
+            let (lo, hi) = bounds(yakus);
+            for _ in 0..200 {
+                let ms = round_advance_delay(yakus).as_millis() as u64;
+                assert!(
+                    (lo..=hi).contains(&ms),
+                    "yakus={yakus}: {ms} not in [{lo},{hi}]"
+                );
+            }
+            assert!(
+                hi < 59_000,
+                "yakus={yakus}: must fire before the server countdown"
+            );
+        }
+        // A draw (0 yaku) reads faster than a big hand.
+        assert!(bounds(0).1 < bounds(9).0);
     }
 
     /// Regression (stale discard into a live board): the client's discard

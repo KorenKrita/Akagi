@@ -9,8 +9,6 @@ use crate::bridge::riichi_city::build;
 use crate::config::DelayMode;
 use crate::schema::MjaiEvent;
 
-pub mod vision;
-
 #[derive(Default)]
 pub struct RiichiCityAutoplay;
 
