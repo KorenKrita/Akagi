@@ -148,7 +148,14 @@ impl RiichiCityBridge {
                 }
                 Vec::new()
             }
-            "cmd_enter_room" => self.on_enter_room(data),
+            "cmd_enter_room" => {
+                let room_id = pkt
+                    .body
+                    .get("room_id")
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_string);
+                self.on_enter_room(room_id, data)
+            }
             "cmd_game_start" => self.on_game_start(data),
             "cmd_in_card_brc" => self.on_in_card_brc(data),
             "cmd_send_current_action" => self.on_send_current_action(data),
@@ -161,12 +168,22 @@ impl RiichiCityBridge {
     }
 
     /// `cmd_enter_room` — collect players + table size; emits nothing. Dedups
-    /// repeated messages for the same room by `classify_id` (a latent no-op in
-    /// v2, where `classify_id` was never stored).
-    fn on_enter_room(&mut self, data: Option<&JsonValue>) -> Vec<MjaiEvent> {
+    /// repeated messages for the same room by `classify_id`. The wire sends
+    /// `classify_id` as a string; tolerate a number for older payloads.
+    fn on_enter_room(
+        &mut self,
+        room_id: Option<String>,
+        data: Option<&JsonValue>,
+    ) -> Vec<MjaiEvent> {
         let Some(data) = data else { return Vec::new() };
-        let classify_id = data.pointer("/options/classify_id").and_then(json_i64);
-        if let (Some(prev), Some(now)) = (self.status.classify_id, classify_id) {
+        let classify_id = data.pointer("/options/classify_id").and_then(|v| {
+            v.as_str()
+                .map(str::to_string)
+                .or_else(|| json_i64(v).map(|n| n.to_string()))
+        });
+        if let (Some(prev), Some(now)) =
+            (self.status.classify_id.as_deref(), classify_id.as_deref())
+        {
             if prev == now {
                 warn!(target: LOG, "duplicate cmd_enter_room for active room, ignored");
                 return Vec::new();
@@ -182,6 +199,9 @@ impl RiichiCityBridge {
             is_3p,
             num_players: if is_3p { 3 } else { 4 },
             classify_id,
+            room_id,
+            stage_type: data.pointer("/options/stage_type").and_then(json_i64),
+            game_play: data.pointer("/options/game_play").and_then(json_i64),
             ..GameStatus::default()
         };
         if let Some(players) = data.get("players").and_then(JsonValue::as_array) {
@@ -239,7 +259,10 @@ impl RiichiCityBridge {
                     game_id: None,
                     match_mode: None,
                     match_info: Some(MatchInfo::RiichiCity {
-                        room_id: self.status.classify_id,
+                        room_id: self.status.room_id.clone(),
+                        classify_id: self.status.classify_id.clone(),
+                        stage_type: self.status.stage_type,
+                        game_play: self.status.game_play,
                     }),
                 }),
             });
@@ -774,13 +797,20 @@ mod tests {
     }
 
     fn enter_room_4p(b: &mut RiichiCityBridge) {
+        // Mirrors the real wire shape: string ids, room token on the wrapper.
         feed(
             b,
             18,
             json!({
                 "cmd": "cmd_enter_room",
+                "room_id": "tabletoken0001",
                 "data": {
-                    "options": { "classify_id": 555, "player_count": 4 },
+                    "options": {
+                        "classify_id": "classifytoken0001",
+                        "player_count": 4,
+                        "stage_type": 1,
+                        "game_play": 1001
+                    },
                     "players": [
                         {"user": {"user_id": 1001}},
                         {"user": {"user_id": 1002}},
@@ -826,11 +856,26 @@ mod tests {
                 id,
                 num_players,
                 names,
+                game_meta,
                 ..
             } => {
                 assert_eq!(*id, Some(0));
                 assert_eq!(*num_players, 4);
                 assert_eq!(names.len(), 4);
+                match &game_meta.as_ref().expect("riichi city meta").match_info {
+                    Some(MatchInfo::RiichiCity {
+                        room_id,
+                        classify_id,
+                        stage_type,
+                        game_play,
+                    }) => {
+                        assert_eq!(room_id.as_deref(), Some("tabletoken0001"));
+                        assert_eq!(classify_id.as_deref(), Some("classifytoken0001"));
+                        assert_eq!(*stage_type, Some(1));
+                        assert_eq!(*game_play, Some(1001));
+                    }
+                    other => panic!("expected RiichiCity match_info, got {other:?}"),
+                }
             }
             other => panic!("expected StartGame, got {other:?}"),
         }

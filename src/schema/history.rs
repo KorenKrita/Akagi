@@ -84,11 +84,19 @@ pub enum MatchInfo {
         #[serde(default)]
         lobby: Option<u32>,
     },
-    /// Riichi City. Skeleton until the room/rank payload fields are mapped —
-    /// `room_id` is the raw room identifier from `cmd_enter_room`.
+    /// Riichi City. `stage_type` / `game_play` / `classify_id` come from
+    /// `cmd_enter_room.options` and identify the matchmaking room (rank
+    /// stage tier, game mode); `room_id` is the table-instance token from
+    /// the `cmd_enter_room` wrapper. All raw wire values.
     RiichiCity {
         #[serde(default)]
-        room_id: Option<i64>,
+        room_id: Option<String>,
+        #[serde(default)]
+        classify_id: Option<String>,
+        #[serde(default)]
+        stage_type: Option<i64>,
+        #[serde(default)]
+        game_play: Option<i64>,
     },
 }
 
@@ -316,7 +324,12 @@ mod tests {
                 go_type: Some(169),
                 lobby: Some(0),
             },
-            MatchInfo::RiichiCity { room_id: Some(4) },
+            MatchInfo::RiichiCity {
+                room_id: Some("tabletoken0001".into()),
+                classify_id: Some("classifytoken0001".into()),
+                stage_type: Some(1),
+                game_play: Some(1001),
+            },
         ];
         for info in infos {
             let j = serde_json::to_value(&info).unwrap();

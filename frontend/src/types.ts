@@ -565,8 +565,14 @@ export type MatchInfo =
     }
   | {
       platform: 'riichi_city'
-      /** Raw room identifier from `cmd_enter_room`. */
-      room_id?: number | null
+      /** Table-instance token from the `cmd_enter_room` wrapper. */
+      room_id?: string | null
+      /** Matchmaking classification id (wire string). */
+      classify_id?: string | null
+      /** Rank stage tier of the matchmaking room. */
+      stage_type?: number | null
+      /** Game mode id (e.g. 1001). */
+      game_play?: number | null
     }
 
 export type GameRecord = {

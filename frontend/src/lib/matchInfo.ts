@@ -89,9 +89,15 @@ export function matchGameId(info: MatchInfo | null | undefined): string | null {
     case 'tenhou':
       return info.log_id ?? null
     case 'riichi_city':
-      return null
+      // Table-instance token — not a replay id, but the closest the wire
+      // offers to a per-game identifier.
+      return info.room_id ?? null
   }
 }
+
+// Riichi City rooms stay unmapped in roomLabelKey until the stage_type /
+// game_play enumerations are confirmed from more captures — one observed
+// sample isn't enough to name tiers confidently.
 
 /**
  * Replay URL, when one can be built without guessing. Tenhou log links are
