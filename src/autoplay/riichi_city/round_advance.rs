@@ -91,7 +91,7 @@ pub async fn round_advance_watcher(
 /// auto-advance countdown, so we press before it, never after.
 fn round_advance_delay(yakus: u32) -> Duration {
     /// Floor covering the settlement animation; the press never lands sooner.
-    const FLOOR_MS: u64 = 10_000;
+    const FLOOR_MS: u64 = 15_000;
     /// Uniform jitter added on top of the floor.
     const JITTER_MS: u64 = 2_000;
     /// Extra reading time for bigger hands, capped.
