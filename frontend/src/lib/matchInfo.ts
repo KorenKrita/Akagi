@@ -42,6 +42,19 @@ const MAJSOUL_ROOM_TIERS: Record<number, string> = {
 }
 
 /**
+ * Riichi City `options.stage_type` → ranked room tier, lowest to highest.
+ * From the client's ranked-queue protocol (`readStageClassifies`
+ * `stageType` 1–4), verified against live `cmd_stagematch_run` pushes in
+ * PR #268.
+ */
+const RIICHI_CITY_ROOM_TIERS: Record<number, string> = {
+  1: 'star',
+  2: 'moon',
+  3: 'sun',
+  4: 'galaxy',
+}
+
+/**
  * Tenhou `<GO type=…>` room bits → tier key. 0x80 alone = Joukyuu, 0x20
  * alone = Tokujou, both = Houou, neither = Ippan (ranked lobby 0 only —
  * private lobbies use the lobby number instead).
@@ -75,8 +88,15 @@ export function roomLabelKey(
       if (info.go_type == null) return null
       return { key: `history.room.tenhou_${tenhouTier(info.go_type)}` }
     }
-    case 'riichi_city':
-      return null
+    case 'riichi_city': {
+      // stage_type is only meaningful for ranked queues; 0/absent (friend
+      // rooms, events) shows nothing rather than a wrong tier.
+      if (!info.stage_type) return null
+      const tier = RIICHI_CITY_ROOM_TIERS[info.stage_type]
+      return tier
+        ? { key: `history.room.rc_${tier}` }
+        : { key: 'history.room.raw', params: { id: info.stage_type } }
+    }
   }
 }
 
@@ -94,10 +114,6 @@ export function matchGameId(info: MatchInfo | null | undefined): string | null {
       return info.room_id ?? null
   }
 }
-
-// Riichi City rooms stay unmapped in roomLabelKey until the stage_type /
-// game_play enumerations are confirmed from more captures — one observed
-// sample isn't enough to name tiers confidently.
 
 /**
  * Replay URL, when one can be built without guessing. Tenhou log links are

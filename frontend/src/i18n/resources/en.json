@@ -107,6 +107,10 @@
       "tenhou_tokujou": "Expert",
       "tenhou_houou": "Phoenix",
       "tenhou_lobby": "Lobby {{lobby}}",
+      "rc_star": "Star Room",
+      "rc_moon": "Moon Room",
+      "rc_sun": "Sun Room",
+      "rc_galaxy": "Galaxy Room",
       "raw": "Room #{{id}}"
     }
   },

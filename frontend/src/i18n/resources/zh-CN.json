@@ -107,6 +107,10 @@
       "tenhou_tokujou": "特上桌",
       "tenhou_houou": "凤凰桌",
       "tenhou_lobby": "个室 {{lobby}}",
+      "rc_star": "星之间",
+      "rc_moon": "月之间",
+      "rc_sun": "日之间",
+      "rc_galaxy": "银河之间",
       "raw": "房间 #{{id}}"
     }
   },

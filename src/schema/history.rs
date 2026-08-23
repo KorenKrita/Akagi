@@ -85,9 +85,11 @@ pub enum MatchInfo {
         lobby: Option<u32>,
     },
     /// Riichi City. `stage_type` / `game_play` / `classify_id` come from
-    /// `cmd_enter_room.options` and identify the matchmaking room (rank
-    /// stage tier, game mode); `room_id` is the table-instance token from
-    /// the `cmd_enter_room` wrapper. All raw wire values.
+    /// `cmd_enter_room.options` and identify the matchmaking room;
+    /// `stage_type` 1..=4 = Star / Moon / Sun / Galaxy (the ranked room
+    /// tiers, per the client's `readStageClassifies` protocol). `room_id`
+    /// is the table-instance token from the `cmd_enter_room` wrapper. All
+    /// raw wire values.
     RiichiCity {
         #[serde(default)]
         room_id: Option<String>,
