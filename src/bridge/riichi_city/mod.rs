@@ -6,12 +6,12 @@
 //! …); the binary `cmd` field only matters for `CMDAuth`, which carries our
 //! `uid`. See [`packet`] for the framing and [`consts`] for the tile table.
 //!
-//! Faithful Rust port of the observation half of the original Akagi v2 Python
-//! Riichi City bridge (`mitm/bridge/riichi_city/bridge.py`). Riichi City has no
-//! web client and no autoplay, so this is observe-only: [`build`](Bridge::build)
-//! is a no-op and both wire directions are parsed (the `CMDAuth` `uid` packet is
-//! client→server while gameplay broadcasts are server→client; client request
-//! frames simply don't match any server `cmd_*` and fall through).
+//! Rust port of the observation half of the Akagi v2 Python Riichi City
+//! bridge, extended with the uplink half autoplay needs: [`build`](Bridge::build)
+//! encodes our actions as client frames injected onto the gameplay socket.
+//! Both wire directions are parsed (the `CMDAuth` packet is client→server
+//! while gameplay broadcasts are server→client; client request frames don't
+//! match any server `cmd_*` and fall through).
 //!
 //! Two intentional improvements over v2:
 //! - **Sanma** events use the native length 3 (no ghost-padding to 4); actor
@@ -28,6 +28,7 @@
 //! diff would double-count it. The action codes 7/10/12 in
 //! `cmd_game_action_brc` only flag the end — the scores live in `cmd_game_end`.
 
+pub mod build;
 pub mod consts;
 pub mod packet;
 pub mod state;
@@ -57,6 +58,10 @@ pub struct RiichiCityBridge {
     flow_log: Option<Arc<FlowLogger>>,
     session: Option<Arc<Session>>,
     mjai_log: Option<Arc<FlowLogger>>,
+    /// Frame-injection gate (see `autoplay::inject`): set while this
+    /// connection is inside a game, so injected gameplay frames only ride
+    /// the WS flow that is actually carrying one.
+    inject: Option<crate::autoplay::inject::SharedInjectBus>,
 }
 
 impl RiichiCityBridge {
@@ -67,7 +72,13 @@ impl RiichiCityBridge {
             flow_log,
             session,
             mjai_log: None,
+            inject: None,
         }
+    }
+
+    pub fn with_inject(mut self, inject: Option<crate::autoplay::inject::SharedInjectBus>) -> Self {
+        self.inject = inject;
+        self
     }
 
     /// Open a fresh `riichi_city_<ts>.mjai.jsonl` per game (Tenhou/Majsoul
@@ -102,7 +113,7 @@ impl RiichiCityBridge {
     }
 
     fn dispatch(&mut self, pkt: &WPacket) -> Vec<MjaiEvent> {
-        // The binary auth handshake carries our uid (client → server).
+        // The binary auth handshake (client → server) carries our uid.
         if pkt.cmd == CMD_AUTH {
             if let Some(uid) = pkt.body.get("uid").and_then(json_i64) {
                 self.uid = uid;
@@ -114,7 +125,29 @@ impl RiichiCityBridge {
             return Vec::new();
         };
         let data = pkt.body.get("data");
+        // Decision-window state: opened by the server's cmd_send_* offers,
+        // closed by anything that resolves play.
+        if let Some(inject) = &self.inject {
+            match cmd {
+                "cmd_send_current_action" | "cmd_send_other_action" => inject.note_window(),
+                "cmd_game_action_brc" | "cmd_game_end" | "cmd_room_end" | "cmd_game_start" => {
+                    inject.note_window_closed()
+                }
+                _ => {}
+            }
+        }
         match cmd {
+            // Per-request ack, counted for autoplay verification.
+            "rsp_game_action" => {
+                if let Some(inject) = &self.inject {
+                    let code = data
+                        .and_then(|d| d.get("code"))
+                        .and_then(json_i64)
+                        .unwrap_or(0);
+                    inject.note_rsp(code);
+                }
+                Vec::new()
+            }
             "cmd_enter_room" => self.on_enter_room(data),
             "cmd_game_start" => self.on_game_start(data),
             "cmd_in_card_brc" => self.on_in_card_brc(data),
@@ -159,6 +192,9 @@ impl RiichiCityBridge {
             }
         }
         self.status = status;
+        if let Some(inject) = &self.inject {
+            inject.set_in_game(true);
+        }
         Vec::new()
     }
 
@@ -454,6 +490,28 @@ impl RiichiCityBridge {
     /// deltas + ura-dora) or a `ryukyoku`, then `end_kyoku`.
     fn on_game_end(&mut self, data: Option<&JsonValue>) -> Vec<MjaiEvent> {
         let mut events = self.flush_pending_reach();
+        // Report the settlement's size for the round-advance pacing: the
+        // client's score screen renders progressively per yaku, and a
+        // mangan-plus takes visibly longer than five seconds to finish.
+        if let Some(inject) = &self.inject {
+            let hand = data
+                .and_then(|d| d.get("win_info"))
+                .and_then(JsonValue::as_array)
+                .and_then(|ws| {
+                    ws.iter()
+                        .find(|w| field_i64(w, "all_point").unwrap_or(0) > 0)
+                })
+                .map(|w| {
+                    let han = field_i64(w, "all_fang_num").unwrap_or(0).max(0) as u32;
+                    let yakus = w
+                        .get("fang_info")
+                        .and_then(JsonValue::as_array)
+                        .map_or(0, |a| a.len() as u32);
+                    (han, yakus)
+                })
+                .unwrap_or((0, 0));
+            inject.note_settlement(hand.0, hand.1);
+        }
         let Some(data) = data else {
             events.push(MjaiEvent::EndKyoku);
             return events;
@@ -548,6 +606,9 @@ impl RiichiCityBridge {
     /// `cmd_room_end` — game over.
     fn on_room_end(&mut self) -> Vec<MjaiEvent> {
         self.status = GameStatus::default();
+        if let Some(inject) = &self.inject {
+            inject.set_in_game(false);
+        }
         vec![MjaiEvent::end_game()]
     }
 
@@ -560,12 +621,21 @@ impl RiichiCityBridge {
 }
 
 impl Bridge for RiichiCityBridge {
-    fn parse(&mut self, _direction: Direction, content: &[u8]) -> ParseResult {
+    fn parse(&mut self, direction: Direction, content: &[u8]) -> ParseResult {
         // Both directions are parsed: the CMDAuth uid is client→server, gameplay
         // is server→client. A frame normally holds one packet.
         let packets = WPacket::parse_frame(content);
         if packets.is_empty() {
             return ParseResult::empty();
+        }
+        // Track the client's uplink request counter (injected frames are
+        // indexed past it).
+        if matches!(direction, Direction::Up) {
+            if let Some(bus) = &self.inject {
+                for pkt in &packets {
+                    bus.note_up_index(pkt.message_index);
+                }
+            }
         }
         let parsed = Some(ParsedFrame {
             method: packets[0].method_label(),
@@ -579,9 +649,8 @@ impl Bridge for RiichiCityBridge {
         ParseResult { events, parsed }
     }
 
-    fn build(&mut self, _command: &MjaiEvent) -> Option<Vec<u8>> {
-        // Observe-only — Riichi City has no autoplay.
-        None
+    fn build(&mut self, command: &MjaiEvent) -> Option<Vec<u8>> {
+        build::encode_action(command)
     }
 }
 
@@ -673,6 +742,29 @@ mod tests {
 
     fn auth(b: &mut RiichiCityBridge) {
         feed(b, CMD_AUTH, json!({ "uid": ME.to_string() }));
+    }
+
+    /// Every rsp_game_action must bump the ack counter autoplay verifies
+    /// its injected frames against.
+    #[test]
+    fn rsp_game_action_bumps_the_ack_counter() {
+        let inject = std::sync::Arc::new(crate::autoplay::inject::InjectBus::new());
+        let mut bridge = RiichiCityBridge::new(None, None).with_inject(Some(inject.clone()));
+        let ticket = inject.rsp_ticket();
+        feed(
+            &mut bridge,
+            6,
+            json!({ "cmd": "rsp_game_action", "data": { "code": 0 } }),
+        );
+        assert!(inject.rsp_since(ticket));
+        assert_eq!(inject.last_rsp_code(), 0);
+
+        feed(
+            &mut bridge,
+            6,
+            json!({ "cmd": "rsp_game_action", "data": { "code": 4001 } }),
+        );
+        assert_eq!(inject.last_rsp_code(), 4001);
     }
 
     fn enter_room_4p(b: &mut RiichiCityBridge) {

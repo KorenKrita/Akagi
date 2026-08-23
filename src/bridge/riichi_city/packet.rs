@@ -93,6 +93,32 @@ impl WPacket {
         ))
     }
 
+    /// Serialize into a full wire frame: 15-byte big-endian header + JSON
+    /// body. The inverse of [`WPacket::parse_one`] for frames we build
+    /// ourselves (autoplay injection).
+    pub fn encode(message_index: u32, cmd: u16, body: &serde_json::Value) -> Vec<u8> {
+        let json = serde_json::to_vec(body).unwrap_or_default();
+        let packet_size = (HEADER_LEN + json.len()) as u32;
+        let mut v = Vec::with_capacity(packet_size as usize);
+        v.extend_from_slice(&packet_size.to_be_bytes());
+        v.extend_from_slice(&MAGIC);
+        v.extend_from_slice(&message_index.to_be_bytes());
+        v.extend_from_slice(&cmd.to_be_bytes());
+        v.push(if json.is_empty() { 0 } else { 1 });
+        v.extend_from_slice(&json);
+        v
+    }
+
+    /// [`WPacket::encode`] with the next process-wide message index and the
+    /// given binary command. The message index is a placeholder: the inject
+    /// bus re-stamps it past the client's live counter before transmission
+    /// (see `autoplay::inject`).
+    pub fn encode_request(bin_cmd: u16, body: &serde_json::Value) -> Vec<u8> {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        let idx = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        WPacket::encode(idx, bin_cmd, body)
+    }
+
     /// Decode every WPacket in a WebSocket frame. Stops at the first packet
     /// that fails to decode (returning whatever decoded cleanly before it).
     pub fn parse_frame(buf: &[u8]) -> Vec<WPacket> {

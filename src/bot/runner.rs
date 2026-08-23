@@ -27,9 +27,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tracing::{info, warn};
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 /// Sentinel that marks a bot stderr line as a frontend notification rather
 /// than a diagnostic log line. The remainder of the line (after this exact
 /// prefix) must be a JSON [`Notification`] object. Kept deliberately

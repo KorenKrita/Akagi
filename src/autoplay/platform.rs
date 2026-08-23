@@ -54,6 +54,11 @@ pub enum Step {
     /// so it resolves the rest itself — including where the tile currently
     /// sits, which is why calls moving the hand cannot affect this.
     Discard { tile_index: u32 },
+    /// Transmit a pre-built wire frame to the game server through the MITM
+    /// proxy's injection channel (Riichi City: no browser page exists to
+    /// click, so the action goes out as the client's own protocol frame).
+    /// See `bridge::riichi_city::build` and `autoplay::inject`.
+    SendFrame(Vec<u8>),
 }
 
 /// Everything the platform impl needs to translate one bot decision

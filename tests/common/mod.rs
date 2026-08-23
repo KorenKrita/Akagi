@@ -182,6 +182,7 @@ impl Harness {
             None,
             None,
             Arc::new(Notify::new()),
+            None,
             async move {
                 stop_rx.await.unwrap_or_default();
             },

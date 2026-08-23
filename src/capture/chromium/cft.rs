@@ -495,6 +495,7 @@ fn installed_chrome_exists(install_dir: &Path) -> bool {
 /// binary behind. macOS Gatekeeper blocks unsigned binaries with the
 /// quarantine xattr — strip it so first launch doesn't show a
 /// "cannot verify developer" prompt.
+#[cfg_attr(not(unix), allow(unused_variables))]
 fn post_extract_fixup(exe: &Path, install_dir: &Path) {
     #[cfg(unix)]
     {

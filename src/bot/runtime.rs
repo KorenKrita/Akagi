@@ -331,7 +331,8 @@ fn try_system() -> Result<PythonRuntime> {
     Ok(PythonRuntime::from_paths(python, uv, RuntimeMode::System))
 }
 
-fn venv_python(venv: &Path) -> PathBuf {
+/// The venv's interpreter path for this platform's layout.
+pub(crate) fn venv_python(venv: &Path) -> PathBuf {
     if cfg!(windows) {
         venv.join("Scripts").join("python.exe")
     } else {

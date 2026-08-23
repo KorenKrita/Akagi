@@ -6,6 +6,14 @@ edition = "2021"
 [lib]
 name = "akagi"
 
+[features]
+# Without this, Tauri builds in dev mode and the window loads the Vite
+# dev server (`devUrl`) instead of the embedded `frontendDist` — a plain
+# `cargo build --release` then shows "localhost refused to connect".
+# `cargo tauri build` passes it automatically; plain cargo builds must say
+# `--features custom-protocol`.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 prost-build = "0.14"

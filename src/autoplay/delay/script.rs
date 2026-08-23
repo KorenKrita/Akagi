@@ -987,7 +987,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("delay.lua");
         let old = SUPERSEDED_DEFAULT_SCRIPTS.last().unwrap();
-        std::fs::write(&path, old.replace('\n', "\r\n")).unwrap();
+        // Normalize first: on an autocrlf checkout the compiled-in old
+        // default already carries CRLF, and a blind `\n → \r\n` pass would
+        // double the carriage returns into something no editor produces.
+        let crlf = old.replace("\r\n", "\n").replace('\n', "\r\n");
+        std::fs::write(&path, crlf).unwrap();
 
         let mut host = ScriptHost::default();
         host.ensure_default(&path);
@@ -1057,7 +1061,9 @@ mod tests {
         )
         .unwrap();
         let bumped = SystemTime::now() + Duration::from_secs(2);
-        let f = std::fs::File::open(&path).unwrap();
+        // Windows needs a handle with write access for SetFileTime; a
+        // read-only `File::open` yields ERROR_ACCESS_DENIED.
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         f.set_modified(bumped).unwrap();
         host.maybe_reload(&path, true);
         let cfg = MajsoulAutoplayConfig::default();
