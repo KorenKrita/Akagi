@@ -38,6 +38,9 @@ pub struct GameStatus {
     pub stage_type: Option<i64>,
     /// `options.game_play` — game mode id (e.g. 1001).
     pub game_play: Option<i64>,
+    /// `user_id → nickname` from `cmd_enter_room.players[].user`, used to
+    /// stamp real display names onto `start_game`.
+    pub nicknames: std::collections::HashMap<i64, String>,
     /// Actor of the most recent discard — the ron/pon/kan target.
     pub last_dahai_actor: Option<u8>,
     /// Deferred `reach_accepted`, emitted just before the next action so a
@@ -62,6 +65,7 @@ impl Default for GameStatus {
             room_id: None,
             stage_type: None,
             game_play: None,
+            nicknames: std::collections::HashMap::new(),
             last_dahai_actor: None,
             pending_reach: None,
             pending_dora: Vec::new(),

@@ -208,6 +208,9 @@ impl RiichiCityBridge {
             for p in players {
                 if let Some(uid) = p.pointer("/user/user_id").and_then(json_i64) {
                     status.player_list.push(uid);
+                    if let Some(name) = p.pointer("/user/nickname").and_then(JsonValue::as_str) {
+                        status.nicknames.insert(uid, name.to_string());
+                    }
                 }
             }
         }
@@ -246,9 +249,16 @@ impl RiichiCityBridge {
             self.status.seat = seat;
             self.status.shift = dealer_pos;
             self.rotate_mjai_log();
-            let names: Vec<String> = (0..self.status.num_players)
-                .map(|i| i.to_string())
+            // Display names in mjai-actor order (player_list is already
+            // dealer-rotated). A missing nickname becomes "" so the frontend
+            // falls back to its localized "Seat N" label.
+            let mut names: Vec<String> = self
+                .status
+                .player_list
+                .iter()
+                .map(|uid| self.status.nicknames.get(uid).cloned().unwrap_or_default())
                 .collect();
+            names.resize(self.status.num_players as usize, String::new());
             events.push(MjaiEvent::StartGame {
                 names,
                 kyoku_first: None,
@@ -812,10 +822,10 @@ mod tests {
                         "game_play": 1001
                     },
                     "players": [
-                        {"user": {"user_id": 1001}},
-                        {"user": {"user_id": 1002}},
-                        {"user": {"user_id": 1003}},
-                        {"user": {"user_id": 1004}}
+                        {"user": {"user_id": 1001, "nickname": "alice"}},
+                        {"user": {"user_id": 1002, "nickname": "bob"}},
+                        {"user": {"user_id": 1003, "nickname": "carol"}},
+                        {"user": {"user_id": 1004, "nickname": "dave"}}
                     ]
                 }
             }),
@@ -861,7 +871,17 @@ mod tests {
             } => {
                 assert_eq!(*id, Some(0));
                 assert_eq!(*num_players, 4);
-                assert_eq!(names.len(), 4);
+                // dealer_pos 0 → no rotation, so names stay in enter-room
+                // order.
+                assert_eq!(
+                    names,
+                    &vec![
+                        "alice".to_string(),
+                        "bob".to_string(),
+                        "carol".to_string(),
+                        "dave".to_string(),
+                    ]
+                );
                 match &game_meta.as_ref().expect("riichi city meta").match_info {
                     Some(MatchInfo::RiichiCity {
                         room_id,
