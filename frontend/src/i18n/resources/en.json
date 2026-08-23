@@ -384,19 +384,7 @@
       "min_delay": "Minimum delay (ms)",
       "min_delay_hint": "Safety floor for every action: Mahjong Soul needs time to render the UI, and a click issued too early is silently lost. Applies in both modes and cannot be undercut by the script.",
       "min_button_delay": "Minimum button delay (ms)",
-      "min_button_delay_hint": "Higher floor for chi/pon/kan/ron/skip/riichi buttons — they appear only after the discard animation plus their own pop-in, later than hand tiles. Raise this if buttons are still missing clicks.",
-      "inter_game_delay": "Inter-game delay (ms)",
-      "queue_room": "Room",
-      "queue_game_type": "Game length",
-      "queue_game_type_east_only": "East only",
-      "queue_game_type_hanchan": "Hanchan",
-      "queue_fallback_sun": "Find a Sun table after 2 minutes",
-      "session_games_placeholder": "Games (∞ if empty)",
-      "session_start": "Start session",
-      "session_stop": "Stop",
-      "session_started": "Autoplay session started",
-      "session_running": "Session running — games played: {{count}}",
-      "session_idle": "Riichi City auto-queue: play N games back to back (leave empty for endless), with the next match queued automatically after each game."
+      "min_button_delay_hint": "Higher floor for chi/pon/kan/ron/skip/riichi buttons — they appear only after the discard animation plus their own pop-in, later than hand tiles. Raise this if buttons are still missing clicks."
     },
     "overlay": "Suggestion overlay",
     "overlay_enabled": "Show overlay window",
@@ -651,12 +639,6 @@
   "game": {
     "bot_disabled_title": "Bot is disabled",
     "bot_disabled_desc": "Enable bots in Settings to receive recommendations.",
-    "fullauto_button": "Start full auto session",
-    "fullauto_running": "Full auto ({{count}})",
-    "fullauto_queued": "in queue {{time}}",
-    "fullauto_waiting": "waiting {{time}}",
-    "fullauto_room_auto_switched": "Switched to the highest room your rank allows",
-    "fullauto_title": "Full-auto session",
     "onboarding": {
       "title": "Customize your board",
       "intro": "Every panel is a movable tile. Here's how to arrange them the way you like.",

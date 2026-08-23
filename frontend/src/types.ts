@@ -143,33 +143,10 @@ export type DelayModelConfig = {
   no_budget_cap_ms: number
 }
 
-/** Riichi City ranked rooms, lowest to highest. Mirrors
- *  `src/config/autoplay.rs::RiichiRoom`. */
-export type RiichiRoom = 'star' | 'moon' | 'sun' | 'galaxy'
-
-/** Riichi City ranked game lengths. Mirrors
- *  `src/config/autoplay.rs::RiichiGameType`. */
-export type RiichiGameType = 'east_only' | 'hanchan'
-
-/** Riichi City autoplay session knobs. Mirrors
- *  `src/config/autoplay.rs::RiichiCityAutoplayConfig`. */
-export type RiichiCityAutoplayConfig = {
-  /** Room to queue ranked matches in. */
-  room: RiichiRoom
-  /** Game length to queue. */
-  game_type: RiichiGameType
-  /** Galaxy only: accept a Sun table if none is found within 2 minutes. */
-  galaxy_fallback_sun: boolean
-  /** Wait after a game ends before queueing the next (actual wait is
-   *  uniform in [x, 1.5x]), ms. */
-  inter_game_delay_ms: number
-}
-
 export type AutoplayConfig = {
   enabled: boolean
   majsoul: MajsoulAutoplayConfig
   delay: DelayModelConfig
-  riichi_city: RiichiCityAutoplayConfig
 }
 
 /** Optional cloud-inference settings for the built-in native bot.

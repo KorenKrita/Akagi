@@ -47,9 +47,6 @@ pub struct AutoplayContext {
     /// proxy's client→server relay transmits them. The `in_game` gate is
     /// maintained by the Riichi City bridge. See `autoplay::inject`.
     pub inject: crate::autoplay::inject::SharedInjectBus,
-    /// Auto-queue session (game count / stop / status), driven by the
-    /// manager on end-of-game. See `autoplay::session`.
-    pub session: crate::autoplay::session::SharedAutoplaySession,
 }
 
 impl AutoplayContext {

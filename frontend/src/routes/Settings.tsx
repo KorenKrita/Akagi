@@ -59,7 +59,6 @@ import {
 } from '@/types'
 import type {
   AppConfig,
-  AutoplayConfig,
   CaptureMode,
   DelayMode,
   DelayModelConfig,
@@ -846,7 +845,6 @@ function AutoplayCard({
       dealer_first_discard_extra_delay_ms: 2000,
     },
     delay: defaultDelayModel(),
-    riichi_city: defaultRiichiCityAutoplay(),
   }
   const delay = ap.delay ?? defaultDelayModel()
   const captureIsChromium = draft.capture?.mode === 'chromium'
@@ -1088,19 +1086,6 @@ function AutoplayCard({
       </CardContent>
     </Card>
   )
-}
-
-/** Full-auto moved to the Game tab: the `FullAutoDialog` component there
- *  owns the session start/stop flow and the queue options. */
-
-/** Mirror of `RiichiCityAutoplayConfig::default()` on the Rust side. */
-function defaultRiichiCityAutoplay(): AutoplayConfig['riichi_city'] {
-  return {
-    room: 'galaxy',
-    game_type: 'east_only',
-    galaxy_fallback_sun: false,
-    inter_game_delay_ms: 8000,
-  }
 }
 
 /** Mirror of `DelayModelConfig::default()` on the Rust side. */

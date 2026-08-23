@@ -384,19 +384,7 @@
       "min_delay": "最小延迟（ms）",
       "min_delay_hint": "所有动作的安全下限：雀魂需要时间渲染画面，过早点击会被吃掉。两种模式均适用，脚本无法低于此值。",
       "min_button_delay": "按钮最小延迟（ms）",
-      "min_button_delay_hint": "吃/碰/杠/和/跳过/立直等按钮的更高下限——按钮要等打牌动画结束加上自身弹出动画才会出现，比手牌渲染更晚。若仍出现按钮没点到的情况请调高此值。",
-      "inter_game_delay": "局间间隔（毫秒）",
-      "queue_room": "房间",
-      "queue_game_type": "对局长度",
-      "queue_game_type_east_only": "东风战",
-      "queue_game_type_hanchan": "半庄战",
-      "queue_fallback_sun": "2 分钟后接受日之房间",
-      "session_games_placeholder": "局数（留空为无限）",
-      "session_start": "开始会话",
-      "session_stop": "停止",
-      "session_started": "自动对局会话已开始",
-      "session_running": "会话进行中——已完成局数：{{count}}",
-      "session_idle": "麻雀一番街自动排赛：连续打 N 局（留空为无限），每局结束后自动排下一局。"
+      "min_button_delay_hint": "吃/碰/杠/和/跳过/立直等按钮的更高下限——按钮要等打牌动画结束加上自身弹出动画才会出现，比手牌渲染更晚。若仍出现按钮没点到的情况请调高此值。"
     },
     "overlay": "建议悬浮窗",
     "overlay_enabled": "显示悬浮窗",
@@ -651,12 +639,6 @@
   "game": {
     "bot_disabled_title": "Bot 已停用",
     "bot_disabled_desc": "请至「设置」启用 Bot 才能获得实时建议。",
-    "fullauto_button": "开始全自动会话",
-    "fullauto_running": "全自动（{{count}}）",
-    "fullauto_queued": "排赛中 {{time}}",
-    "fullauto_waiting": "等待中 {{time}}",
-    "fullauto_room_auto_switched": "已切换到段位允许的最高房间",
-    "fullauto_title": "全自动会话",
     "onboarding": {
       "title": "自定义你的面板",
       "intro": "每个面板都是可移动的区块，这里教你把它们排成喜欢的样子。",

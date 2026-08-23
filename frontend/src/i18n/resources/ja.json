@@ -384,19 +384,7 @@
       "min_delay": "最小遅延（ms）",
       "min_delay_hint": "すべての操作の安全下限：雀魂が画面を描画する前のクリックは無視されます。両モードに適用され、スクリプトでもこの値を下回れません。",
       "min_button_delay": "ボタン最小遅延（ms）",
-      "min_button_delay_hint": "チー/ポン/カン/ロン/スキップ/リーチなどのボタン用のより高い下限——ボタンは打牌アニメーションと自身のポップイン後にしか表示されず、手牌より遅れます。ボタンのクリックが外れる場合はこの値を上げてください。",
-      "inter_game_delay": "局間待機（ミリ秒）",
-      "queue_room": "部屋",
-      "queue_game_type": "対局の長さ",
-      "queue_game_type_east_only": "東風戦",
-      "queue_game_type_hanchan": "半荘戦",
-      "queue_fallback_sun": "2分後にサン部屋を許可",
-      "session_games_placeholder": "局数（空欄で無限）",
-      "session_start": "セッション開始",
-      "session_stop": "停止",
-      "session_started": "自動対局セッションを開始しました",
-      "session_running": "セッション実行中——完了局数：{{count}}",
-      "session_idle": "Riichi City 自動マッチング：N局を連続でプレイ（空欄で無限）。各局の終了後に次のマッチを自動で募集します。"
+      "min_button_delay_hint": "チー/ポン/カン/ロン/スキップ/リーチなどのボタン用のより高い下限——ボタンは打牌アニメーションと自身のポップイン後にしか表示されず、手牌より遅れます。ボタンのクリックが外れる場合はこの値を上げてください。"
     },
     "overlay": "推奨オーバーレイ",
     "overlay_enabled": "オーバーレイウィンドウを表示",
@@ -651,12 +639,6 @@
   "game": {
     "bot_disabled_title": "Bot は無効です",
     "bot_disabled_desc": "リアルタイムのアドバイスを受け取るには、設定で Bot を有効にしてください。",
-    "fullauto_button": "フルオートセッションを開始",
-    "fullauto_running": "フルオート（{{count}}）",
-    "fullauto_queued": "マッチング中 {{time}}",
-    "fullauto_waiting": "待機中 {{time}}",
-    "fullauto_room_auto_switched": "段位に合わせて利用可能な最高部屋に切り替えました",
-    "fullauto_title": "フルオートセッション",
     "onboarding": {
       "title": "ボードをカスタマイズ",
       "intro": "各パネルは移動できるタイルです。好みのレイアウトに並べ替える方法を紹介します。",

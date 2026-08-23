@@ -4,16 +4,14 @@
 //! over WebSocket. Gameplay messages carry a string `"cmd"` discriminator
 //! inside the JSON (`cmd_enter_room`, `cmd_game_start`, `cmd_game_action_brc`,
 //! …); the binary `cmd` field only matters for `CMDAuth`, which carries our
-//! `uid` and the lobby `sid`. See [`packet`] for the framing and [`consts`]
-//! for the tile table.
+//! `uid`. See [`packet`] for the framing and [`consts`] for the tile table.
 //!
 //! Rust port of the observation half of the Akagi v2 Python Riichi City
 //! bridge, extended with the uplink half autoplay needs: [`build`](Bridge::build)
-//! encodes our actions as client frames, and `parse` lifts the auth `sid`
-//! and every queue push onto the inject bus for the lobby HTTP client
-//! ([`lobby`]). Both wire directions are parsed (the `CMDAuth` packet is
-//! client→server while gameplay broadcasts are server→client; client
-//! request frames don't match any server `cmd_*` and fall through).
+//! encodes our actions as client frames injected onto the gameplay socket.
+//! Both wire directions are parsed (the `CMDAuth` packet is client→server
+//! while gameplay broadcasts are server→client; client request frames don't
+//! match any server `cmd_*` and fall through).
 //!
 //! Two intentional improvements over v2:
 //! - **Sanma** events use the native length 3 (no ghost-padding to 4); actor
@@ -32,7 +30,6 @@
 
 pub mod build;
 pub mod consts;
-pub mod lobby;
 pub mod packet;
 pub mod state;
 
@@ -116,30 +113,11 @@ impl RiichiCityBridge {
     }
 
     fn dispatch(&mut self, pkt: &WPacket) -> Vec<MjaiEvent> {
-        // The binary auth handshake (client → server) carries our uid and
-        // the `sid` the lobby HTTP API authenticates with.
+        // The binary auth handshake (client → server) carries our uid.
         if pkt.cmd == CMD_AUTH {
             if let Some(uid) = pkt.body.get("uid").and_then(json_i64) {
                 self.uid = uid;
                 info!(target: LOG, "captured player uid from auth");
-            }
-            if let Some(inject) = &self.inject {
-                if let Some(sid) = pkt.body.get("sid").and_then(JsonValue::as_str) {
-                    let field = |k: &str| {
-                        pkt.body
-                            .get(k)
-                            .and_then(JsonValue::as_str)
-                            .unwrap_or_default()
-                            .to_string()
-                    };
-                    inject.note_lobby_credentials(crate::autoplay::inject::LobbyCredentials {
-                        sid: sid.to_string(),
-                        lang: field("lang"),
-                        platform: field("platform"),
-                        version: field("version"),
-                    });
-                    info!(target: LOG, "captured lobby sid from auth");
-                }
             }
             return Vec::new();
         }
@@ -154,22 +132,6 @@ impl RiichiCityBridge {
                 "cmd_send_current_action" | "cmd_send_other_action" => inject.note_window(),
                 "cmd_game_action_brc" | "cmd_game_end" | "cmd_room_end" | "cmd_game_start" => {
                     inject.note_window_closed()
-                }
-                // Queue push: the matchID is what cancelStage needs.
-                "cmd_stagematch_run" => {
-                    let classify = data
-                        .and_then(|d| d.get("classifyID"))
-                        .and_then(JsonValue::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-                    let match_id = data
-                        .and_then(|d| d.get("matchID"))
-                        .and_then(JsonValue::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-                    if !classify.is_empty() && !match_id.is_empty() {
-                        inject.note_queue_state(classify, match_id);
-                    }
                 }
                 _ => {}
             }
@@ -780,88 +742,6 @@ mod tests {
 
     fn auth(b: &mut RiichiCityBridge) {
         feed(b, CMD_AUTH, json!({ "uid": ME.to_string() }));
-    }
-
-    /// The auth frame's sid (plus the client meta) must be lifted onto the
-    /// inject bus — it is what the lobby HTTP API authenticates with.
-    #[test]
-    fn auth_frame_lifts_lobby_credentials() {
-        let inject = std::sync::Arc::new(crate::autoplay::inject::InjectBus::new());
-        let mut bridge = RiichiCityBridge::new(None, None).with_inject(Some(inject.clone()));
-
-        assert!(inject.lobby_credentials().is_none(), "nothing before auth");
-        feed(
-            &mut bridge,
-            CMD_AUTH,
-            json!({
-                "uid": ME.to_string(),
-                "sid": "da3p6g8h8t2s5j53ggs03740f8",
-                "lang": "en",
-                "platform": "pc",
-                "version": "2.2.4.95474",
-            }),
-        );
-        let creds = inject
-            .lobby_credentials()
-            .expect("sid captured from the auth frame");
-        assert_eq!(creds.sid, "da3p6g8h8t2s5j53ggs03740f8");
-        assert_eq!(creds.lang, "en");
-        assert_eq!(creds.platform, "pc");
-        assert_eq!(creds.version, "2.2.4.95474");
-    }
-
-    /// Every `cmd_stagematch_run` push must land on the inject bus — the
-    /// matchIDs are what `cancelStage` needs to leave the queues, and the
-    /// galaxy + sun fallback runs two at once.
-    #[test]
-    fn stagematch_run_lands_on_the_inject_bus() {
-        let inject = std::sync::Arc::new(crate::autoplay::inject::InjectBus::new());
-        let mut bridge = RiichiCityBridge::new(None, None).with_inject(Some(inject.clone()));
-
-        assert!(inject.queue_states().is_empty());
-        feed(
-            &mut bridge,
-            0,
-            json!({
-                "cmd": "cmd_stagematch_run",
-                "data": {
-                    "classifyID": "bvgn113gm5c5il7c48rg7",
-                    "matchID": "da26fvro1kn6d935usfg",
-                    "round": 1,
-                    "stageType": 4,
-                },
-            }),
-        );
-        // A second, concurrent queue (the sun fallback) is tracked
-        // alongside, not instead of, the first.
-        feed(
-            &mut bridge,
-            0,
-            json!({
-                "cmd": "cmd_stagematch_run",
-                "data": {
-                    "classifyID": "bvgn113gm5c5il7c48rg5",
-                    "matchID": "da77sunqueue000000000",
-                    "round": 1,
-                    "stageType": 3,
-                },
-            }),
-        );
-        let mut queues = inject.queue_states();
-        queues.sort();
-        assert_eq!(
-            queues,
-            vec![
-                (
-                    "bvgn113gm5c5il7c48rg5".to_string(),
-                    "da77sunqueue000000000".to_string()
-                ),
-                (
-                    "bvgn113gm5c5il7c48rg7".to_string(),
-                    "da26fvro1kn6d935usfg".to_string()
-                ),
-            ]
-        );
     }
 
     /// Every rsp_game_action must bump the ack counter autoplay verifies

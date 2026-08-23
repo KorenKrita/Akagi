@@ -5,8 +5,7 @@
 //! discard (`action:11`, riichi = same request with `is_li_zhi:true`),
 //! pass (`action:1`), tsumo (`action:10`). Unverified (no sample): chi/
 //! pon/kan/kita shapes, ron, and the tedashi value of `move_cards_pos` —
-//! see the TODO(capture) notes inline. Matchmaking does not ride this
-//! WebSocket at all (see `super::lobby`).
+//! see the TODO(capture) notes inline.
 
 use crate::schema::MjaiEvent;
 use serde_json::{json, Value};
