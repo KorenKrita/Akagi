@@ -354,10 +354,6 @@
     "unsaved_title": "未保存の変更",
     "unsaved_desc": "未保存の設定変更があります。保存して離れる、変更を破棄する、またはこのページに留まるか選択してください。",
     "save_and_leave": "保存して離れる",
-    "fullauto": {
-      "title": "フルオート（Riichi City）",
-      "description": "対局終了後に次のマッチを自動で募集します：部屋と対局の長さ、局間の待機時間、マッチングの待ち耐心を設定します。上の自動打牌を有効化している必要があります。マッチ募集側はまだ開発中です。"
-    },
     "autoplay": {
       "title": "自動操作",
       "enable": "自動操作を有効化",
@@ -387,11 +383,8 @@
       "min_button_delay": "ボタン最小遅延（ms）",
       "min_button_delay_hint": "チー/ポン/カン/ロン/スキップ/リーチなどのボタン用のより高い下限——ボタンは打牌アニメーションと自身のポップイン後にしか表示されず、手牌より遅れます。ボタンのクリックが外れる場合はこの値を上げてください。",
       "inter_game_delay": "局間待機（ミリ秒）",
-      "inter_game_delay_hint": "Riichi City 自動マッチング：スコア画面表示後から次のマッチ募集までの待機時間（[x, 1.5x] の範囲でランダム、+10秒）。",
       "queue_room": "部屋",
-      "queue_room_hint": "Riichi City 自動マッチング：対局を募集する部屋（スター < ムーン < サン < ギャラクシー）。",
       "queue_game_type": "対局の長さ",
-      "queue_game_type_hint": "Riichi City 自動マッチング：東風戦は半荘戦の半分程度の時間で終わります。",
       "queue_game_type_east_only": "東風戦",
       "queue_game_type_hanchan": "半荘戦",
       "queue_fallback_sun": "2分後にサン部屋を許可",
@@ -400,7 +393,6 @@
       "session_stop": "停止",
       "session_started": "自動対局セッションを開始しました",
       "session_running": "セッション実行中——完了局数：{{count}}",
-      "session_stopped": "セッションを停止しました",
       "session_idle": "Riichi City 自動マッチング：N局を連続でプレイ（空欄で無限）。各局の終了後に次のマッチを自動で募集します。"
     },
     "overlay": "推奨オーバーレイ",

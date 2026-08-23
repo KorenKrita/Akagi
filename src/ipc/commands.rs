@@ -175,7 +175,7 @@ pub async fn riichi_city_available_rooms(
             .unwrap_or(lobby::DEFAULT_WEB_BASE),
         lobby::LobbyAuth::from_credentials(&creds, deviceid, rc.channel.clone()),
     );
-    let (classifies, user_info) = client
+    let (_classifies, user_info) = client
         .read_classifies_with_user()
         .await
         .map_err(|e| format!("could not read the ranked-room list: {e:#}"))?;

@@ -354,10 +354,6 @@
     "unsaved_title": "尚未儲存的變更",
     "unsaved_desc": "你有尚未儲存的設定變更。請選擇儲存後離開、放棄變更，或留在此頁繼續編輯。",
     "save_and_leave": "儲存並離開",
-    "fullauto": {
-      "title": "全自動（麻雀一番街）",
-      "description": "每局結束後自動排下一場：選擇房間與對局長度、局間等待時間，以及匹配耐心程度。需要先啟用上方的自動打牌；自動排賽部分仍在開發中。"
-    },
     "autoplay": {
       "title": "自動打牌",
       "enable": "啟用自動打牌",
@@ -387,11 +383,8 @@
       "min_button_delay": "按鈕最小延遲（ms）",
       "min_button_delay_hint": "吃/碰/槓/和/跳過/立直等按鈕的更高下限——按鈕要等打牌動畫結束加上自身彈出動畫才會出現，比手牌渲染更晚。若仍出現按鈕沒點到的情況請調高此值。",
       "inter_game_delay": "局間間隔（毫秒）",
-      "inter_game_delay_hint": "麻雀一番街自動排賽：結算畫面顯示後等待多久再排下一局（在 [x, 1.5x] 內隨機，另加 10 秒）。",
       "queue_room": "房間",
-      "queue_room_hint": "麻雀一番街自動排賽：排位對局所在的房間（星 < 月 < 日 < 銀河）。",
       "queue_game_type": "對局長度",
-      "queue_game_type_hint": "麻雀一番街自動排賽：東風戰耗時約為半莊戰的一半。",
       "queue_game_type_east_only": "東風戰",
       "queue_game_type_hanchan": "半莊戰",
       "queue_fallback_sun": "2 分鐘後接受日之房間",
@@ -400,7 +393,6 @@
       "session_stop": "停止",
       "session_started": "自動對局會話已開始",
       "session_running": "會話進行中——已完成局數：{{count}}",
-      "session_stopped": "會話已停止",
       "session_idle": "麻雀一番街自動排賽：連續打 N 局（留空為無限），每局結束後自動排下一局。"
     },
     "overlay": "建議懸浮視窗",

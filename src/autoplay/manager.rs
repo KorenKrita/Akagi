@@ -66,13 +66,6 @@ pub struct AutoplayManager {
 
 #[derive(Default)]
 struct ManagerState {
-    /// When the most recent mjai event arrived. The decision-window wait
-    /// anchors to this, NOT to when the bot response is handled: responses
-    /// queue behind earlier plans, and a handle-time anchor can land AFTER
-    /// the window already opened — the wait would then block on a condition
-    /// that can never become true and burn its full 15s bound (the round-
-    /// opening freezes of 2026-08-20).
-    last_event_at: Option<Instant>,
     last_kawa_tile: Option<String>,
     last_self_tsumo: Option<String>,
     self_riichi_accepted: bool,
@@ -929,10 +922,6 @@ impl AutoplayManager {
     }
 
     fn handle_mjai_event(&mut self, ev: &MjaiEvent) {
-        // Every event refreshes the decision-window anchor (see
-        // `ManagerState::last_event_at`).
-        let now = Instant::now();
-        self.state.last_event_at = Some(now);
         match ev {
             MjaiEvent::StartGame { id, .. } => {
                 // Capture our seat directly from the StartGame event rather
@@ -942,11 +931,9 @@ impl AutoplayManager {
                 let seat = *id;
                 self.state = ManagerState::default();
                 self.state.cached_our_seat = seat;
-                self.state.last_event_at = Some(now);
             }
             MjaiEvent::EndGame { .. } => {
                 self.state = ManagerState::default();
-                self.state.last_event_at = Some(now);
             }
             MjaiEvent::StartKyoku { .. } | MjaiEvent::EndKyoku => {
                 // Per-kyoku reset: keep last seen rect cache and cached seat,
@@ -963,7 +950,6 @@ impl AutoplayManager {
                 self.state.canvas_rect_at = canvas_at;
                 self.state.cached_our_seat = cached_seat;
                 self.state.dead_clicks = dead_clicks;
-                self.state.last_event_at = Some(now);
             }
             MjaiEvent::Tsumo { actor, pai } => {
                 if let Some(seat) = self.our_seat_cached() {

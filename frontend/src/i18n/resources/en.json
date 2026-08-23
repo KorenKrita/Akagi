@@ -354,10 +354,6 @@
     "unsaved_title": "Unsaved changes",
     "unsaved_desc": "You have unsaved settings changes. Save them before leaving, discard them, or stay on this page.",
     "save_and_leave": "Save & leave",
-    "fullauto": {
-      "title": "Full Auto (Riichi City)",
-      "description": "Queue matches automatically after each game ends: pick the room and game length, how long to wait between games, and how patiently to wait for a table. Requires autoplay above to be enabled; the match-queueing side is still in development."
-    },
     "autoplay": {
       "title": "Autoplay",
       "enable": "Enable autoplay",
@@ -387,11 +383,8 @@
       "min_button_delay": "Minimum button delay (ms)",
       "min_button_delay_hint": "Higher floor for chi/pon/kan/ron/skip/riichi buttons — they appear only after the discard animation plus their own pop-in, later than hand tiles. Raise this if buttons are still missing clicks.",
       "inter_game_delay": "Inter-game delay (ms)",
-      "inter_game_delay_hint": "Riichi City auto-queue: wait after the score screen before queueing the next (randomized within [x, 1.5x], plus 10s).",
       "queue_room": "Room",
-      "queue_room_hint": "Riichi City auto-queue: the ranked room matches are queued in (Star < Moon < Sun < Galaxy).",
       "queue_game_type": "Game length",
-      "queue_game_type_hint": "Riichi City auto-queue: east-only games finish in roughly half the time of a hanchan.",
       "queue_game_type_east_only": "East only",
       "queue_game_type_hanchan": "Hanchan",
       "queue_fallback_sun": "Find a Sun table after 2 minutes",
@@ -400,7 +393,6 @@
       "session_stop": "Stop",
       "session_started": "Autoplay session started",
       "session_running": "Session running — games played: {{count}}",
-      "session_stopped": "Session stopped",
       "session_idle": "Riichi City auto-queue: play N games back to back (leave empty for endless), with the next match queued automatically after each game."
     },
     "overlay": "Suggestion overlay",
