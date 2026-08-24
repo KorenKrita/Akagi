@@ -1013,7 +1013,9 @@ fn retry_hold_ms(base: u32, attempt: u32) -> u32 {
 /// a timed-out claim from ever landing in the next window.
 fn future_window_grace(action: &MjaiEvent) -> Duration {
     match action {
-        MjaiEvent::Dahai { .. } | MjaiEvent::Reach { .. } => Duration::from_secs(15),
+        MjaiEvent::Dahai { .. }
+        | MjaiEvent::Reach { .. }
+        | MjaiEvent::Ryukyoku { deltas: None } => Duration::from_secs(15),
         _ => Duration::from_secs(3),
     }
 }
@@ -1387,6 +1389,12 @@ mod tests {
         assert_eq!(
             future_window_grace(&MjaiEvent::None),
             Duration::from_secs(3)
+        );
+        // Kyuushu rides our own first-turn draw, so it gets the own-turn
+        // grace — not the claim-tight one.
+        assert_eq!(
+            future_window_grace(&MjaiEvent::Ryukyoku { deltas: None }),
+            Duration::from_secs(15)
         );
     }
 

@@ -70,7 +70,9 @@ fn is_our_decision(ev: &MjaiEvent, our_seat: u8) -> bool {
         | MjaiEvent::Hora { actor, .. }
         | MjaiEvent::Kita { actor, .. } => Some(*actor),
         // `None` is the bot declining *our* call window — ours to send.
-        MjaiEvent::None => None,
+        // `Ryukyoku` (kyuushu, `deltas: None`) is the bot declaring on
+        // *our* first-turn draw — no actor field, inherently ours.
+        MjaiEvent::None | MjaiEvent::Ryukyoku { deltas: None } => None,
         _ => return false,
     };
     actor.is_none_or(|a| a == our_seat)
@@ -87,6 +89,7 @@ fn decision_kind(ev: &MjaiEvent) -> DecisionKind {
         MjaiEvent::Kakan { .. } => DecisionKind::Kakan,
         MjaiEvent::Hora { .. } => DecisionKind::Hora,
         MjaiEvent::Kita { .. } => DecisionKind::Kita,
+        MjaiEvent::Ryukyoku { .. } => DecisionKind::Ryukyoku,
         _ => DecisionKind::Pass,
     }
 }
@@ -246,5 +249,34 @@ mod tests {
             panic!("expected sleep");
         };
         assert!(duration_ms > 0);
+    }
+
+    /// A kyuushu declaration is ours to send (no actor field — it can
+    /// only come from the bot's own decision) and plans like any button
+    /// decision: think, then frame. Regression for the live timeout where
+    /// the declaration fell through `is_our_decision` and the server's
+    /// countdown had to auto-discard for us.
+    #[test]
+    fn kyuushu_declaration_plans_a_frame() {
+        let ev = MjaiEvent::Ryukyoku { deltas: None };
+        let f = CtxFixture::new();
+        let plan = RiichiCityAutoplay::new().plan(&f.ctx(&ev));
+        assert_eq!(plan.steps.len(), 2, "sleep then frame");
+        let Step::SendFrame(frame) = &plan.steps[1] else {
+            panic!("expected a frame step");
+        };
+        let pkts = WPacket::parse_frame(frame);
+        assert_eq!(pkts[0].body["data"]["action"], 12);
+    }
+
+    /// An observed exhaustive draw (deltas present) is not a decision —
+    /// it must not plan, let alone send.
+    #[test]
+    fn observed_draw_does_not_plan() {
+        let ev = MjaiEvent::Ryukyoku {
+            deltas: Some(vec![1500, -500, -500, -500]),
+        };
+        let f = CtxFixture::new();
+        assert!(RiichiCityAutoplay::new().plan(&f.ctx(&ev)).steps.is_empty());
     }
 }
