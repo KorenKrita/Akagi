@@ -38,6 +38,12 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 /// session from `bot.api.react_timeout_ms` via [`ApiClient::with_react_timeout`].
 pub const REACT_TIMEOUT: Duration = Duration::from_millis(3_000);
 
+/// Timeout for `POST /v3/review`. A submit uploads a whole game (hundreds of
+/// KB gzipped) and the server replays the entire stream through its rules
+/// engine before answering `202` — comfortably slower than the management
+/// endpoints, and never on a game's critical path, so give it real headroom.
+const REVIEW_SUBMIT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Response from `POST /v3/react`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReactResponse {
@@ -80,6 +86,14 @@ pub struct KeyStatus {
     pub rpm: f64,
     #[serde(default)]
     pub topk: u32,
+    /// Whole-game reviews submitted today. Separate meter from `usage_today`
+    /// (resets at UTC midnight, not server-local). Absent on older servers ⇒ 0.
+    #[serde(default)]
+    pub reviews_today: u64,
+    /// Review jobs the plan allows per day. `0` ⇒ the plan has no review
+    /// access (`POST /v3/review` answers 403). Absent on older servers ⇒ 0.
+    #[serde(default)]
+    pub reviews_per_day: u64,
 }
 
 /// One model the key's plan may use (`GET /v3/models`).
@@ -134,6 +148,85 @@ fn default_true() -> bool {
     true
 }
 
+// ---------- Whole-game review (`/v3/review*`, `/v3/shares`, `/v3/shared/*`) ----------
+
+/// Response from `POST /v3/review` — the queued background job.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewSubmitted {
+    pub review_id: String,
+    #[serde(default)]
+    pub status: String,
+}
+
+/// Response from `GET /v3/review/{review_id}` — job progress, meta-only.
+/// A `done` job carries the share URL; the result body itself is only ever
+/// served through that URL (`GET /v3/shared/{share_id}`, no auth).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewJobStatus {
+    /// `queued` | `running` | `failed` | `done`.
+    #[serde(default)]
+    pub status: String,
+    /// 0.0..=1.0 while queued/running.
+    #[serde(default)]
+    pub progress: Option<f64>,
+    /// Failure reason when `status == "failed"`.
+    #[serde(default)]
+    pub error: Option<String>,
+    /// Set when `done`; `None` after a revoke (re-issue via
+    /// [`ApiClient::review_share`]).
+    #[serde(default)]
+    pub share_id: Option<String>,
+    /// Public viewer URL for the result when `done` (and not revoked).
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Response from `POST /v3/review/{review_id}/share` — the review's public
+/// link (re-issued with a fresh id after a revoke).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareIssued {
+    pub share_id: String,
+    pub url: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub anonymized: bool,
+}
+
+/// Aggregate result numbers carried by the share listing, so a list can be
+/// labelled without fetching result bodies.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ShareSummary {
+    #[serde(default)]
+    pub n_decisions: u64,
+    #[serde(default)]
+    pub n_match: u64,
+    #[serde(default)]
+    pub match_rate: f64,
+    #[serde(default)]
+    pub avg_actual_prob: f64,
+}
+
+/// One live share link from `GET /v3/shares` (newest first).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareEntry {
+    pub share_id: String,
+    /// The review job this share serves — the join key back to a submit.
+    #[serde(default)]
+    pub review_id: String,
+    /// The review's submit time (RFC 3339).
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub anonymized: bool,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub player_id: Option<u8>,
+    #[serde(default)]
+    pub summary: Option<ShareSummary>,
+}
+
 /// Accept the aggregate integer or the legacy per-model map (summed).
 fn queue_depth_total<'de, D>(de: D) -> Result<i64, D::Error>
 where
@@ -156,6 +249,15 @@ struct ReactRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<&'a str>,
     player_id: u8,
+    events: Vec<Value>,
+}
+
+#[derive(Serialize)]
+struct ReviewRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    player_id: Option<u8>,
     events: Vec<Value>,
 }
 
@@ -277,6 +379,147 @@ impl ApiClient {
             .context("parse /v3/models response")?
             .models)
     }
+
+    /// `POST /v3/review` — queue a whole-game background review. `events` is
+    /// the full game from the reviewed seat's censored perspective (same
+    /// shaping as [`Self::react`]); `player_id` pins the seat the server
+    /// infers, as a consistency check. The body is gzipped — the server
+    /// auto-detects the magic bytes, no `Content-Encoding` needed.
+    ///
+    /// Rate limits worth surfacing to the user: one accepted submit per key
+    /// per 10 minutes, `reviews_per_day` per UTC day, and one queued/running
+    /// job per key at a time — all answered as `429` with `Retry-After`,
+    /// which [`check`] folds into the error message.
+    pub async fn submit_review(
+        &self,
+        model: Option<&str>,
+        player_id: Option<u8>,
+        events: Vec<Value>,
+    ) -> Result<ReviewSubmitted> {
+        let url = format!("{}/v3/review", self.base);
+        let body = ReviewRequest {
+            model: model.filter(|m| !m.is_empty()),
+            player_id,
+            events,
+        };
+        let raw = serde_json::to_vec(&body).context("encode /v3/review body")?;
+        let gz = gzip(&raw).context("gzip /v3/review body")?;
+        let resp = self
+            .http
+            .post(&url)
+            .timeout(REVIEW_SUBMIT_TIMEOUT)
+            .bearer_auth(&self.key)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(gz)
+            .send()
+            .await
+            .context("POST /v3/review")?;
+        let resp = check(resp, "review submit").await?;
+        resp.json::<ReviewSubmitted>()
+            .await
+            .context("parse /v3/review response")
+    }
+
+    /// `GET /v3/review/{review_id}` — poll a review job (meta-only; the
+    /// result body is served exclusively through the share URL). Polls draw
+    /// on a separate per-key read bucket (20/min, burst 40) shared with
+    /// [`Self::shares`] and [`Self::revoke_share`] — poll at a 4-5 s cadence.
+    pub async fn review_status(&self, review_id: &str) -> Result<ReviewJobStatus> {
+        let id = validate_id(review_id, "review id")?;
+        let url = format!("{}/v3/review/{id}", self.base);
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.key)
+            .send()
+            .await
+            .context("GET /v3/review/<id>")?;
+        let resp = check(resp, "review status").await?;
+        resp.json::<ReviewJobStatus>()
+            .await
+            .context("parse review status response")
+    }
+
+    /// `POST /v3/review/{review_id}/share` — the review's public link.
+    /// Answers `409 review_not_done` while the job is still queued/running;
+    /// after a revoke it re-issues a fresh link under a **new** id.
+    pub async fn review_share(&self, review_id: &str) -> Result<ShareIssued> {
+        let id = validate_id(review_id, "review id")?;
+        let url = format!("{}/v3/review/{id}/share", self.base);
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.key)
+            .send()
+            .await
+            .context("POST /v3/review/<id>/share")?;
+        let resp = check(resp, "review share").await?;
+        resp.json::<ShareIssued>()
+            .await
+            .context("parse review share response")
+    }
+
+    /// `GET /v3/shares` — this key's live share links, newest first. Works
+    /// for an expired key too (expiry gates inference, not share management).
+    pub async fn shares(&self) -> Result<Vec<ShareEntry>> {
+        let url = format!("{}/v3/shares", self.base);
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.key)
+            .send()
+            .await
+            .context("GET /v3/shares")?;
+        let resp = check(resp, "shares").await?;
+        #[derive(Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            shares: Vec<ShareEntry>,
+        }
+        Ok(resp
+            .json::<Wrap>()
+            .await
+            .context("parse /v3/shares response")?
+            .shares)
+    }
+
+    /// `DELETE /v3/shared/{share_id}` — revoke a share link (creator key
+    /// only). Unpublishes the result body for everyone including us; the
+    /// review itself stays stored and [`Self::review_share`] can re-issue a
+    /// fresh link later.
+    pub async fn revoke_share(&self, share_id: &str) -> Result<()> {
+        let id = validate_id(share_id, "share id")?;
+        let url = format!("{}/v3/shared/{id}", self.base);
+        let resp = self
+            .http
+            .delete(&url)
+            .bearer_auth(&self.key)
+            .send()
+            .await
+            .context("DELETE /v3/shared/<id>")?;
+        check(resp, "share revoke").await?;
+        Ok(())
+    }
+}
+
+/// Guard an id that gets interpolated into a URL path. Server-issued ids are
+/// plain ASCII alphanumerics (32-hex review ids, base62 share ids); anything
+/// else — and in particular `/`, `?`, `#`, `..` — must never reach the URL,
+/// where it would address a different route.
+fn validate_id<'a>(id: &'a str, what: &str) -> Result<&'a str> {
+    let id = id.trim();
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        bail!("invalid {what}");
+    }
+    Ok(id)
+}
+
+/// Gzip `raw` at the default compression level.
+fn gzip(raw: &[u8]) -> Result<Vec<u8>> {
+    use std::io::Write;
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    enc.write_all(raw)?;
+    Ok(enc.finish()?)
 }
 
 /// `POST /v3/redeem` (no auth). By default mints a **new** key; pass
@@ -786,6 +1029,161 @@ mod tests {
         );
     }
 
+    /// `/v3/key` now reports the review quota; older servers omit the fields
+    /// and must parse with 0 (⇒ "no review access") rather than fail.
+    #[test]
+    fn key_status_parses_review_quota_and_defaults_it() {
+        let raw = r#"{"plan":"pro","expires_at":"2026-08-01 00:00:00","usage_today":1423,"rpd":200000,"rpm":240.0,"topk":5,"reviews_today":2,"reviews_per_day":10}"#;
+        let k: KeyStatus = serde_json::from_str(raw).unwrap();
+        assert_eq!(k.reviews_today, 2);
+        assert_eq!(k.reviews_per_day, 10);
+
+        let raw =
+            r#"{"plan":"basic","expires_at":"x","usage_today":3,"rpd":6000,"rpm":10.0,"topk":3}"#;
+        let k: KeyStatus = serde_json::from_str(raw).unwrap();
+        assert_eq!(k.reviews_today, 0);
+        assert_eq!(k.reviews_per_day, 0);
+    }
+
+    #[test]
+    fn share_entry_and_job_status_parse_the_documented_shapes() {
+        let raw = r#"{"shares":[{"share_id":"aZ3kQ9mB2xLp","review_id":"9f2c","created_at":"2026-08-24T07:12:03Z","anonymized":true,"model":"4p-ot2","player_id":2,"summary":{"n_decisions":161,"n_match":128,"match_rate":0.795,"avg_actual_prob":0.62}}]}"#;
+        #[derive(Deserialize)]
+        struct Wrap {
+            shares: Vec<ShareEntry>,
+        }
+        let w: Wrap = serde_json::from_str(raw).unwrap();
+        let s = &w.shares[0];
+        assert_eq!(s.share_id, "aZ3kQ9mB2xLp");
+        assert_eq!(s.review_id, "9f2c");
+        assert_eq!(s.player_id, Some(2));
+        assert_eq!(s.summary.as_ref().unwrap().n_decisions, 161);
+
+        // The poll's four states, incl. the revoked-share null.
+        let st: ReviewJobStatus =
+            serde_json::from_str(r#"{"status":"queued","progress":0.0}"#).unwrap();
+        assert_eq!(st.status, "queued");
+        let st: ReviewJobStatus =
+            serde_json::from_str(r#"{"status":"failed","error":"could not process event stream"}"#)
+                .unwrap();
+        assert!(st.error.is_some());
+        let st: ReviewJobStatus =
+            serde_json::from_str(r#"{"status":"done","share_id":null,"url":null}"#).unwrap();
+        assert_eq!(st.status, "done");
+        assert!(st.share_id.is_none());
+    }
+
+    /// Ids are interpolated into URL paths: anything but plain ASCII
+    /// alphanumerics must be rejected before a request is made, or a crafted
+    /// id could address a different route (`../`, `?`, `#`).
+    #[tokio::test]
+    async fn path_ids_are_validated_before_any_request() {
+        // Unreachable base: if validation let the id through, the call would
+        // fail with a *connect* error instead of "invalid".
+        let client = ApiClient::new(crate::bot::test_http::UNREACHABLE_BASE_URL, "K", "").unwrap();
+        for bad in ["", "  ", "a/b", "..", "x?y", "x#y", "id%2e%2e"] {
+            for err in [
+                client.review_status(bad).await.unwrap_err(),
+                client.review_share(bad).await.unwrap_err(),
+                client.revoke_share(bad).await.unwrap_err(),
+            ] {
+                let msg = format!("{err:#}");
+                assert!(msg.contains("invalid"), "id {bad:?} gave: {msg}");
+            }
+        }
+        // A trimmed valid id passes validation (and then fails on connect).
+        let err = client.review_status(" 3f2a9c ").await.unwrap_err();
+        assert!(
+            !format!("{err:#}").contains("invalid"),
+            "trimmed alnum id must pass validation"
+        );
+    }
+
+    #[test]
+    fn gzip_round_trips() {
+        use std::io::Read;
+        let raw = br#"{"player_id":2,"events":[{"type":"start_game"}]}"#;
+        let gz = gzip(raw).unwrap();
+        assert_eq!(&gz[..2], &[0x1f, 0x8b], "missing gzip magic");
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(&gz[..])
+            .read_to_end(&mut out)
+            .unwrap();
+        assert_eq!(out, raw);
+    }
+
+    /// The review submit must go out gzipped (the server auto-detects the
+    /// magic bytes) with the bearer header; the plaintext JSON must never be
+    /// on the wire.
+    #[tokio::test]
+    async fn submit_review_gzips_the_body_and_authenticates() {
+        let (base, served) = mock_http(vec![(
+            "202 Accepted",
+            r#"{"review_id":"3f2a9c","status":"queued"}"#.into(),
+        )]);
+        let client = ApiClient::new(&base, "SECRETKEY", "").unwrap();
+        let resp = client
+            .submit_review(
+                Some("4p-ot2"),
+                Some(2),
+                vec![serde_json::json!({"type": "start_game"})],
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.review_id, "3f2a9c");
+        assert_eq!(resp.status, "queued");
+
+        let reqs = served.join().unwrap();
+        let r = &reqs[0];
+        assert!(r.starts_with("POST /v3/review "), "wrong request line: {r}");
+        assert_eq!(header(r, "authorization"), Some("Bearer SECRETKEY"));
+        assert!(
+            !r.contains(r#""events""#) && !r.contains(r#""player_id""#),
+            "body must be gzipped, not plaintext JSON: {r}"
+        );
+    }
+
+    #[tokio::test]
+    async fn review_status_share_revoke_and_shares_hit_the_expected_routes() {
+        let (base, served) = mock_http(vec![
+            (
+                "200 OK",
+                r#"{"status":"done","share_id":"aZ3kQ9mB2xLp","url":"https://viewer/preview/s/aZ3kQ9mB2xLp"}"#.into(),
+            ),
+            (
+                "201 Created",
+                r#"{"share_id":"bY4lR0nC3yMq","url":"https://viewer/preview/s/bY4lR0nC3yMq","created_at":"2026-08-24T07:12:03Z","anonymized":true}"#.into(),
+            ),
+            ("200 OK", r#"{"shares":[]}"#.into()),
+            ("204 No Content", String::new()),
+        ]);
+        let client = ApiClient::new(&base, "SECRETKEY", "").unwrap();
+
+        let st = client.review_status("3f2a9c").await.unwrap();
+        assert_eq!(st.share_id.as_deref(), Some("aZ3kQ9mB2xLp"));
+        let sh = client.review_share("3f2a9c").await.unwrap();
+        assert_eq!(sh.share_id, "bY4lR0nC3yMq");
+        assert!(client.shares().await.unwrap().is_empty());
+        client.revoke_share("aZ3kQ9mB2xLp").await.unwrap();
+
+        let reqs = served.join().unwrap();
+        assert!(reqs[0].starts_with("GET /v3/review/3f2a9c "), "{}", reqs[0]);
+        assert!(
+            reqs[1].starts_with("POST /v3/review/3f2a9c/share "),
+            "{}",
+            reqs[1]
+        );
+        assert!(reqs[2].starts_with("GET /v3/shares "), "{}", reqs[2]);
+        assert!(
+            reqs[3].starts_with("DELETE /v3/shared/aZ3kQ9mB2xLp "),
+            "{}",
+            reqs[3]
+        );
+        for r in &reqs {
+            assert_eq!(header(r, "authorization"), Some("Bearer SECRETKEY"));
+        }
+    }
+
     /// A non-2xx surfaces the server's `error` message and the `Retry-After` hint.
     #[tokio::test]
     async fn http_error_carries_the_server_message() {
@@ -799,5 +1197,130 @@ mod tests {
         assert!(msg.contains("429"), "{msg}");
         assert!(msg.contains("rate limited"), "{msg}");
         let _ = served.join();
+    }
+
+    /// Manual smoke test against a **live** inference server — ignored by
+    /// default, never run in CI. Opt in with env vars (the key is passed via
+    /// env precisely so it never lands in a file):
+    ///
+    /// ```sh
+    /// AKAGI_LIVE_BASE_URL=https://<host> \
+    /// AKAGI_LIVE_API_KEY=<key> \
+    /// AKAGI_LIVE_MJAI_LOG=/path/to/full-game.mjai.jsonl \  # optional
+    /// AKAGI_LIVE_SEAT=0 \                                  # optional (default 0)
+    /// AKAGI_LIVE_SUBMIT=1 \                                # optional; submits!
+    /// cargo test --lib live_review_smoke -- --ignored --nocapture
+    /// ```
+    ///
+    /// Without `AKAGI_LIVE_SUBMIT=1` it only reads (`/v3/key`, `/v3/shares`).
+    /// With it, the given mjai log (full-view or perspective; it is censored
+    /// through `build_api_events` first, exactly like the app) is submitted
+    /// as one review job — mind the server's **one submit per key per 10
+    /// minutes** cooldown — then polled to completion, and the share link is
+    /// revoked and re-issued to exercise the whole surface.
+    #[tokio::test]
+    #[ignore = "hits a live server; needs AKAGI_LIVE_* env vars"]
+    async fn live_review_smoke() {
+        let base = match std::env::var("AKAGI_LIVE_BASE_URL") {
+            Ok(v) if !v.trim().is_empty() => v,
+            _ => {
+                eprintln!("AKAGI_LIVE_BASE_URL not set; skipping");
+                return;
+            }
+        };
+        let key = std::env::var("AKAGI_LIVE_API_KEY").expect("AKAGI_LIVE_API_KEY not set");
+        let client = ApiClient::new(&base, &key, "").unwrap();
+
+        let st = client.key_status().await.expect("GET /v3/key");
+        println!(
+            "key: plan={} expires={} reviews_today={}/{} topk={}",
+            st.plan, st.expires_at, st.reviews_today, st.reviews_per_day, st.topk
+        );
+
+        let shares = client.shares().await.expect("GET /v3/shares");
+        println!("shares: {}", shares.len());
+        for s in &shares {
+            println!(
+                "  {} review={} created={} model={:?}",
+                s.share_id, s.review_id, s.created_at, s.model
+            );
+        }
+
+        if std::env::var("AKAGI_LIVE_SUBMIT").ok().as_deref() != Some("1") {
+            println!("AKAGI_LIVE_SUBMIT != 1 — read-only smoke done");
+            return;
+        }
+        let log_path = std::env::var("AKAGI_LIVE_MJAI_LOG").expect("AKAGI_LIVE_MJAI_LOG not set");
+        let seat: u8 = std::env::var("AKAGI_LIVE_SEAT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        let raw = std::fs::read_to_string(&log_path).expect("read mjai log");
+        let events: Vec<crate::schema::MjaiEvent> = raw
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).expect("parse mjai line"))
+            .collect();
+        let num_players = events
+            .iter()
+            .find_map(|e| match e {
+                crate::schema::MjaiEvent::StartGame { num_players, .. } => Some(*num_players),
+                _ => None,
+            })
+            .unwrap_or(4);
+        let api_events = crate::bot::native::build_api_events(&events, seat, num_players);
+        println!(
+            "submitting {} events, seat {seat}, {num_players}p",
+            api_events.len()
+        );
+
+        let submitted = client
+            .submit_review(None, Some(seat), api_events)
+            .await
+            .expect("POST /v3/review");
+        println!(
+            "review_id={} status={}",
+            submitted.review_id, submitted.status
+        );
+
+        let mut url = None;
+        let mut share_id = None;
+        for i in 0..180 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let st = client
+                .review_status(&submitted.review_id)
+                .await
+                .expect("poll review");
+            println!("poll {i}: status={} progress={:?}", st.status, st.progress);
+            match st.status.as_str() {
+                "done" => {
+                    url = st.url;
+                    share_id = st.share_id;
+                    break;
+                }
+                "failed" => panic!("review failed: {:?}", st.error),
+                _ => {}
+            }
+        }
+        let share_id = share_id.expect("review did not finish in time");
+        println!("done: url={url:?}");
+
+        // Revoke, then re-issue: the fresh link must carry a NEW id.
+        client.revoke_share(&share_id).await.expect("revoke");
+        println!("revoked {share_id}");
+        let reissued = client
+            .review_share(&submitted.review_id)
+            .await
+            .expect("re-share");
+        println!("re-issued: {} -> {}", reissued.share_id, reissued.url);
+        assert_ne!(reissued.share_id, share_id, "revoked id must not come back");
+
+        let shares = client.shares().await.expect("GET /v3/shares (after)");
+        assert!(
+            shares.iter().any(|s| s.share_id == reissued.share_id),
+            "re-issued share must appear in the listing"
+        );
+        println!("live smoke OK");
     }
 }

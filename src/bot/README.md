@@ -74,6 +74,17 @@ bridge to them.
   the client-wide `REQUEST_TIMEOUT`. Building an `ApiClient` builds a fresh
   connection pool, so hold one and reuse it. Consumed by `NativeBot` and by the
   `native_api_*` IPC commands (redeem a code, check a key, list models).
+  Also wraps the whole-game review surface behind the Review page:
+  `submit_review` (gzipped `POST /v3/review`, its own generous
+  `REVIEW_SUBMIT_TIMEOUT` — the server replays the full game at submit),
+  `review_status` (job poll; meta-only — result bodies are served solely
+  through the share URL), `review_share` (issue/re-issue the public link),
+  `shares` (list) and `revoke_share`. Ids interpolated into URL paths are
+  validated to ASCII alphanumerics first. The submit IPC command
+  (`native_api_review_history_game`) loads the recorded history log in Rust
+  and shapes it with `native::build_api_events`, so `/v3/review` sees the
+  identical censored perspective `/v3/react` does and the whole-game log
+  never round-trips through the webview.
 - `purchase` — the unauthenticated payment handshakes used by the in-app "Buy
   key" flow, one per provider. PayPal: `create_order` / `create_subscription`
   return an `approve_url` plus a `claim_secret`, and `order_result` /
