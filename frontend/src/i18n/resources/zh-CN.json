@@ -874,6 +874,13 @@
       "settings_button": "公告"
     },
     "entries": {
+      "v3_7_0": {
+        "title": "麻雀一番街自动打牌,对局复盘(Beta)",
+        "rc_autoplay_title": "麻雀一番街自动打牌",
+        "rc_autoplay_desc": "让 Akagi 在麻雀一番街自动帮你出牌、鸣牌与立直,全程免动手,四麻与三麻均支持。",
+        "review_title": "对局复盘(Beta)",
+        "review_desc": "将历史记录中的对局提交给 AI 进行整场复盘,在 MJOT 查看器中查看每一手与 AI 选择的一致程度,并可生成链接分享结果。"
+      },
       "v3_6_0": {
         "title": "天凤自动打牌,更新来源可选择",
         "tenhou_autoplay_title": "天凤自动打牌",

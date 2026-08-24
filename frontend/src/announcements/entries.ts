@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { AppWindow, Bot, CloudCog, CreditCard, Download, Gamepad2, Zap } from 'lucide-react'
+import { AppWindow, Bot, CloudCog, CreditCard, Download, Gamepad2, SearchCheck, Zap } from 'lucide-react'
 
 import { AKAGIMS_DOWNLOAD_URL } from '@/lib/external'
 import akagimsScreenshot from '@/assets/akagims-fullauto.jpg'
@@ -46,6 +46,15 @@ export type AnnouncementEntry = {
  * committed entry here. See README.md in this directory for the workflow.
  */
 export const ANNOUNCEMENTS: AnnouncementEntry[] = [
+  {
+    id: 'v3_7_0',
+    date: '2026-08-25',
+    version: '3.7.0',
+    features: [
+      { icon: Bot, key: 'rc_autoplay' },
+      { icon: SearchCheck, key: 'review' },
+    ],
+  },
   {
     id: 'v3_6_0',
     date: '2026-08-14',

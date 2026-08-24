@@ -874,6 +874,13 @@
       "settings_button": "公告"
     },
     "entries": {
+      "v3_7_0": {
+        "title": "麻雀一番街自動打牌,對局覆盤(Beta)",
+        "rc_autoplay_title": "麻雀一番街自動打牌",
+        "rc_autoplay_desc": "讓 Akagi 在麻雀一番街自動幫你出牌、鳴牌與立直,全程免動手,四麻與三麻皆支援。",
+        "review_title": "對局覆盤(Beta)",
+        "review_desc": "將歷史紀錄中的對局送交 AI 進行整場覆盤,在 MJOT 檢視器中查看每一手與 AI 選擇的一致程度,並可產生連結分享結果。"
+      },
       "v3_6_0": {
         "title": "天鳳自動打牌,更新來源可選擇",
         "tenhou_autoplay_title": "天鳳自動打牌",

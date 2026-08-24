@@ -874,6 +874,13 @@
       "settings_button": "Announcements"
     },
     "entries": {
+      "v3_7_0": {
+        "title": "Riichi City autoplay & whole-game review (Beta)",
+        "rc_autoplay_title": "Riichi City autoplay",
+        "rc_autoplay_desc": "Let Akagi play your turns on Riichi City automatically — discards, calls and riichi, all hands-free. Works in both four-player and three-player games.",
+        "review_title": "Whole-game review (Beta)",
+        "review_desc": "Submit any recorded game for a full AI review and see where your play matched — or missed — the AI's choice in the MJOT viewer, with a shareable result link."
+      },
       "v3_6_0": {
         "title": "Tenhou autoplay & selectable update sources",
         "tenhou_autoplay_title": "Tenhou autoplay",
