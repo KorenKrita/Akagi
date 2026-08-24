@@ -28,6 +28,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "flate2",
  "form_urlencoded",
  "futures-util",
  "globset",

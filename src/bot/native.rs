@@ -668,7 +668,12 @@ fn local_reply(local: &Decision, seat: u8) -> (MjaiEvent, Option<Value>) {
 /// Shape the accumulated Akagi mjai stream into the API's expected JSON:
 /// censor other seats' hidden info to `?`, pad 3p `start_game`/`start_kyoku`
 /// arrays to length 4, strip player-count / predicted-reach extensions.
-fn build_api_events(stream: &[MjaiEvent], seat: u8, num_players: u8) -> Vec<Value> {
+///
+/// `pub(crate)` because the whole-game review submit
+/// (`crate::ipc::commands::native_api_review_history_game`) reuses it: a
+/// recorded history log is the same bridge stream this bot accumulates live,
+/// and `/v3/review` wants the identical censored perspective as `/v3/react`.
+pub(crate) fn build_api_events(stream: &[MjaiEvent], seat: u8, num_players: u8) -> Vec<Value> {
     stream
         .iter()
         .map(|ev| to_api_event(ev, seat, num_players))

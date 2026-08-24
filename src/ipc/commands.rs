@@ -1452,6 +1452,142 @@ pub async fn native_api_health(
         .map_err(|e| format!("{e:#}"))
 }
 
+// ---------- Whole-game review (native API, `/v3/review*`) ----------
+//
+// Same family as the commands above: server URL / key travel as explicit
+// args from the frontend's config store. The submit is the one exception to
+// "thin passthrough" — it loads the recorded mjai log server-side (Rust) so
+// a whole game never round-trips through the webview, and reuses the native
+// bot's censor/shaping helper so `/v3/review` sees the exact same
+// perspective stream `/v3/react` does.
+
+/// Hard cap `POST /v3/review` places on a submitted stream. Checked here so
+/// an oversized log fails with a clear local message instead of a generic
+/// server `400`.
+const REVIEW_MAX_EVENTS: usize = 4096;
+
+/// Submit a recorded history game for whole-game review. `id` is the
+/// history record's ULID; `model` optionally pins the model (empty ⇒ the
+/// server default for the game's player count).
+#[tauri::command]
+pub async fn native_api_review_history_game(
+    base_url: String,
+    proxy: Option<String>,
+    key: String,
+    id: String,
+    model: Option<String>,
+    state: State<'_, AppState>,
+) -> CmdResult<crate::bot::api::ReviewSubmitted> {
+    let store = state.history_store.clone();
+    let record_id = id.clone();
+    let loaded = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        Ok((store.get(&record_id)?, store.get_events(&record_id)?))
+    })
+    .await
+    .map_err(|e| format!("history review join error: {e}"))?
+    .map_err(|e| format!("{e:#}"))?;
+    let (record, events) = loaded;
+    let Some(record) = record else {
+        return Err(format!("history record {id:?} not found"));
+    };
+    // Index entry present but the games/<id>.mjai.jsonl copy is gone —
+    // distinct message so the user isn't told the record doesn't exist.
+    let Some(events) = events else {
+        return Err(format!("event log for history record {id:?} is missing"));
+    };
+    // Observer / replay recordings carry no own-seat; there is no perspective
+    // to review from (and no hand visible to build one).
+    let Some(seat) = record.our_seat else {
+        return Err("record has no player seat; cannot review an observed game".into());
+    };
+
+    let events = crate::bot::native::build_api_events(&events, seat, record.num_players);
+    if events.len() > REVIEW_MAX_EVENTS {
+        return Err(format!(
+            "game log has {} events, over the review limit of {REVIEW_MAX_EVENTS}",
+            events.len()
+        ));
+    }
+
+    // An omitted model resolves to the server's default **4p** model, which
+    // rejects a sanma stream — so a 3p game with no configured model falls
+    // back to the id `"3p"`, which the server documents as resolving to its
+    // default 3p model.
+    let configured = model.as_deref().map(str::trim).filter(|m| !m.is_empty());
+    let model = match configured {
+        Some(m) => Some(m.to_string()),
+        None if record.num_players == 3 => Some("3p".to_string()),
+        None => None,
+    };
+
+    crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
+        .map_err(|e| format!("{e:#}"))?
+        .submit_review(model.as_deref(), Some(seat), events)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Poll a review job (`GET /v3/review/{review_id}`). Meta-only — a `done`
+/// job answers with its share URL, which is where the result body lives.
+#[tauri::command]
+pub async fn native_api_review_status(
+    base_url: String,
+    proxy: Option<String>,
+    key: String,
+    review_id: String,
+) -> CmdResult<crate::bot::api::ReviewJobStatus> {
+    crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
+        .map_err(|e| format!("{e:#}"))?
+        .review_status(&review_id)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// (Re-)issue a review's public share link (`POST /v3/review/{id}/share`).
+#[tauri::command]
+pub async fn native_api_review_share(
+    base_url: String,
+    proxy: Option<String>,
+    key: String,
+    review_id: String,
+) -> CmdResult<crate::bot::api::ShareIssued> {
+    crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
+        .map_err(|e| format!("{e:#}"))?
+        .review_share(&review_id)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// List this key's live share links (`GET /v3/shares`), newest first.
+#[tauri::command]
+pub async fn native_api_list_shares(
+    base_url: String,
+    proxy: Option<String>,
+    key: String,
+) -> CmdResult<Vec<crate::bot::api::ShareEntry>> {
+    crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
+        .map_err(|e| format!("{e:#}"))?
+        .shares()
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Revoke a share link (`DELETE /v3/shared/{share_id}`). The review stays
+/// stored; `native_api_review_share` can re-issue a fresh link later.
+#[tauri::command]
+pub async fn native_api_revoke_share(
+    base_url: String,
+    proxy: Option<String>,
+    key: String,
+    share_id: String,
+) -> CmdResult<()> {
+    crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
+        .map_err(|e| format!("{e:#}"))?
+        .revoke_share(&share_id)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 // ---------- Self-serve key purchase (PayPal, `/paypal/*`) ----------
 //
 // Thin passthroughs to `crate::bot::purchase`. The purchase state machine
@@ -1647,6 +1783,11 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::native_api_key_status,
             $crate::ipc::commands::native_api_models,
             $crate::ipc::commands::native_api_health,
+            $crate::ipc::commands::native_api_review_history_game,
+            $crate::ipc::commands::native_api_review_status,
+            $crate::ipc::commands::native_api_review_share,
+            $crate::ipc::commands::native_api_list_shares,
+            $crate::ipc::commands::native_api_revoke_share,
             $crate::ipc::commands::native_api_create_order,
             $crate::ipc::commands::native_api_order_result,
             $crate::ipc::commands::native_api_create_subscription,

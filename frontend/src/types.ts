@@ -224,6 +224,10 @@ export type KeyStatus = {
   rpd: number
   rpm: number
   topk: number
+  /** Whole-game reviews submitted today (own meter, resets at UTC midnight). */
+  reviews_today: number
+  /** Review jobs the plan allows per day. 0 ⇒ no review access. */
+  reviews_per_day: number
 }
 
 /** One model a key's plan may use (`GET /v3/models`). */
@@ -248,6 +252,55 @@ export type ApiHealth = {
   /** Total pending + in-flight inference rows. */
   queue_depth: number
   workers_alive: boolean
+}
+
+// ---------- Whole-game review (native API) ----------
+// Mirror the response shapes from `crate::bot::api`.
+
+/** `POST /v3/review` — the queued background job. */
+export type ReviewSubmitted = {
+  review_id: string
+  status: string
+}
+
+/** `GET /v3/review/{id}` — job progress. Meta-only: a `done` job carries the
+ *  share URL, and the result body is only ever served through that URL. */
+export type ReviewJobStatus = {
+  status: 'queued' | 'running' | 'failed' | 'done' | string
+  progress?: number | null
+  error?: string | null
+  /** Null after a revoke — re-issue via `native_api_review_share`. */
+  share_id?: string | null
+  url?: string | null
+}
+
+/** `POST /v3/review/{id}/share` — the review's public link. */
+export type ShareIssued = {
+  share_id: string
+  url: string
+  created_at: string
+  anonymized: boolean
+}
+
+/** Aggregate result numbers carried by the share listing. */
+export type ShareSummary = {
+  n_decisions: number
+  n_match: number
+  match_rate: number
+  avg_actual_prob: number
+}
+
+/** One live share link from `GET /v3/shares` (newest first). */
+export type ShareEntry = {
+  share_id: string
+  /** The review job this share serves — joins a listing row back to a submit. */
+  review_id: string
+  /** The review's submit time (RFC 3339). */
+  created_at: string
+  anonymized: boolean
+  model?: string | null
+  player_id?: number | null
+  summary?: ShareSummary | null
 }
 
 // ---------- Self-serve key purchase (PayPal) ----------
