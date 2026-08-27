@@ -29,6 +29,10 @@ pub struct BotSelectionConfig {
     pub randomize_level: u8,
 }
 
+// Not derived: the struct carries `#[serde(default)]`, whose derive consumes
+// the `#[default]` field attribute before std's Default could, so a manual
+// impl is the only way to keep both.
+#[allow(clippy::derivable_impls)]
 impl Default for BotSelectionConfig {
     fn default() -> Self {
         Self { randomize_level: 0 }

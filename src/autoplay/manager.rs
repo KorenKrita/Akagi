@@ -13,10 +13,7 @@
 //! manager logs a warning and skips the click. The bot pipeline is
 //! untouched; the user can still play the round manually.
 
-use crate::autoplay::cdp_input::{
-    dispatch_click, dispatch_click_shaped, dispatch_mouse_move, dispatch_ws_binary,
-    evaluate_canvas_rect,
-};
+use crate::autoplay::cdp_input::{dispatch_click_shaped, dispatch_ws_binary, evaluate_canvas_rect};
 use crate::autoplay::context::{AutoplayContext, CanvasRect};
 use crate::autoplay::inject::InjectFrame;
 use crate::autoplay::majsoul::{is_dealer_first_discard, MajsoulAutoplay};
@@ -613,18 +610,6 @@ impl AutoplayManager {
         }
     }
 
-    /// Wait until the client is taking input, or give up.
-    ///
-    /// The turn does not begin when the frame arrives. Tenhou's server sends
-    /// as fast as the seats answer — against instant opponents that means
-    /// three seats' actions in one burst — and the client then animates them
-    /// for seconds before drawing its buttons and starting its clock. Timing
-    /// anything from frame arrival times it from the wrong instant, which is
-    /// why fixed delays kept landing either side of the window.
-    ///
-    /// The client raises its clock display and its highlight together, so the
-    /// highlight appearing is the readiness signal.
-
     /// Packet-mode Majsoul path: build a wire frame for the bot's action
     /// and dispatch it through the game's WebSocket bridge (see
     /// `try_packet_action`). Falls back to nothing — packet mode never
@@ -638,7 +623,7 @@ impl AutoplayManager {
         legal_actions: Vec<Action>,
         snapshot: &crate::game_state::snapshot::GameStateSnapshot,
     ) {
-        let action_retry_guard = retry_guard_for_action(&resp.action, our_seat, &snapshot);
+        let action_retry_guard = retry_guard_for_action(&resp.action, our_seat, snapshot);
 
         let use_packet = matches!(cfg.mode, MajsoulAutoplayMode::Packet);
         let allow_click = matches!(cfg.mode, MajsoulAutoplayMode::Click);
@@ -646,14 +631,13 @@ impl AutoplayManager {
         let packet_action = normalize_packet_action(
             &resp.action,
             our_seat,
-            &snapshot,
+            snapshot,
             self.state.last_self_tsumo.as_deref(),
         );
-        if use_packet && packet_action_allowed(&packet_action, our_seat, &snapshot, &legal_actions)
-        {
+        if use_packet && packet_action_allowed(&packet_action, our_seat, snapshot, &legal_actions) {
             let dealer_first_discard = matches!(packet_action, MjaiEvent::Dahai { .. })
-                && is_dealer_first_discard(&snapshot, our_seat);
-            let packet_delay_ms = sample_packet_delay(&cfg, dealer_first_discard);
+                && is_dealer_first_discard(snapshot, our_seat);
+            let packet_delay_ms = sample_packet_delay(cfg, dealer_first_discard);
             tokio::time::sleep(Duration::from_millis(packet_delay_ms.into())).await;
             if planned_budget.is_some() {
                 let current = self.ctx.time_budget.read().ok().and_then(|g| *g);
@@ -674,7 +658,7 @@ impl AutoplayManager {
             let packet_hints = packet_build_hints(
                 &packet_action,
                 our_seat,
-                &snapshot,
+                snapshot,
                 &legal_actions,
                 self.state.last_self_tsumo.as_deref(),
             );
@@ -696,7 +680,7 @@ impl AutoplayManager {
                                 snapshot.current_player,
                                 our_seat,
                                 legal_actions_summary(&legal_actions),
-                                player_snapshot_summary(&snapshot, our_seat),
+                                player_snapshot_summary(snapshot, our_seat),
                                 guard.before,
                                 packet_hints
                             );
@@ -723,7 +707,7 @@ impl AutoplayManager {
                         snapshot.current_player,
                         our_seat,
                         legal_actions_summary(&legal_actions),
-                        player_snapshot_summary(&snapshot, our_seat),
+                        player_snapshot_summary(snapshot, our_seat),
                         packet_hints
                     );
                     return;
@@ -762,7 +746,6 @@ impl AutoplayManager {
 
         if !allow_click {
             debug!("autoplay: packet-only mode did not send {:?}", resp.action);
-            return;
         }
     }
 

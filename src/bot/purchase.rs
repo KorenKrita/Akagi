@@ -36,15 +36,8 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
-use super::api::{check, configure_proxy, normalize_base};
-
-/// `create-*` calls block on PayPal upstream (the server creates the order /
-/// subscription there before answering), so give them more headroom than the
-/// inference client's tight game-path timeout. Result polls share the client;
-/// they are idempotent and cheap, so the generous ceiling is harmless.
-const PURCHASE_TIMEOUT: Duration = Duration::from_secs(20);
+use super::api::{check, normalize_base};
 
 /// `POST /paypal/create-order` result — a pending one-time purchase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -358,12 +351,6 @@ pub async fn checkout_result(
     resp.json::<OrderResult>()
         .await
         .context("parse /creem/result response")
-}
-
-fn build_http(use_system_proxy: bool) -> Result<reqwest::Client> {
-    let builder = reqwest::Client::builder().timeout(PURCHASE_TIMEOUT);
-    let builder = configure_proxy(builder, use_system_proxy)?;
-    builder.build().context("build purchase http client")
 }
 
 #[cfg(test)]
