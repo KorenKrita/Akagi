@@ -217,6 +217,73 @@ System-wide proxy with a self-signed root CA at `./ca/`:
 
 ---
 
+## Configuration
+
+Configuration lives in `config.toml` next to the binary (or wherever
+you point `--config`). Edits saved through the Settings UI hot-reload
+the affected subsystem — capture / proxy / bot active slots restart
+without an app relaunch.
+
+```toml
+[general]
+language = "en"
+
+[logging]
+dir       = "./logs"
+level     = "info"
+all_level = "warn"
+
+[platform]
+kind = "Majsoul"
+
+[proxy]
+enabled = true
+addr    = "127.0.0.1:23410"
+ca_dir  = "./ca"
+upstream_enabled = false     # true = route proxy-to-server traffic through upstream
+upstream = ""                # optional, e.g. "http://127.0.0.1:7890"
+force_mitm_all = false       # true = disable raw CONNECT tunneling for IP literals
+
+[capture]
+mode = "mitm"               # or "chromium"
+
+[capture.chromium]
+executable    = ""          # blank = auto-detect
+user_data_dir = ""          # blank = <config_root>/chrome-profile
+start_url     = "https://game.maj-soul.com/1/"
+cft_channel   = "stable"
+force_cft     = false
+extra_args    = []
+
+[bot]
+enabled   = true
+active_4p = "mortal"        # used in 4-player (yonma) games
+active_3p = "mortal3p"      # used in 3-player (sanma); empty = none
+auto_sync = true
+dir       = "./mjai_bot"
+
+[bot.api]
+enabled  = false
+base_url = "https://mjapi.shinkuan.me"
+key      = ""
+model_4p = ""
+model_3p = ""
+```
+
+<details>
+<summary>Where the config file lives (resolution order)</summary>
+
+1. `--config <path>` CLI flag.
+2. `<exe_dir>/configs/config.toml`.
+3. `./configs.toml` in the current working directory.
+4. If none of the above exist, defaults are auto-written to
+   `<exe_dir>/configs/config.toml` on first launch.
+
+Pre-3p configs that still use a single `active = "..."` key are
+auto-migrated into `active_4p` on load.
+</details>
+
+---
 ## Bots
 
 ### Built-in bot (no install)
@@ -648,6 +715,7 @@ Tags must be on the `v3` branch.
 | [`eric200203/mahgen`](https://github.com/eric200203/mahgen) (mahjong-tile rendering DSL) | `src/game_state/mahgen_view.rs`, frontend `<mah-gen>` | DSL syntax for pre-encoding hand / meld / river strings backend-side. |
 | [`smly/mjai.app`](https://github.com/smly/mjai.app) (mahjong AI competition platform) | `mjai_bot/`, `src/bot/` | Bot subprocess convention — JSONL stdin/stdout, argv `python bot.py <player_id>`, `AKAGI_PLAYER_ID` env, end-of-batch flush points. |
 | [`shinkuan/Akagi`](https://github.com/shinkuan/Akagi/tree/v2) | Architecture / behaviour parity | The original feature set we are reproducing: MITM proxy, mjai bridge, pluggable bots, recommendation HUD. |
+| [`SpCoGov/MahjongCopilotRezetyan`](https://github.com/SpCoGov/MahjongCopilotRezetyan/tree/df9a1532fb0d61875a1b15a1259ef2d23665eaf7) (**GPL-3.0**) | `src/autoplay/majsoul/rematch.rs`, `src/autoplay/majsoul/coords.rs`, `assets/autoplay/majsoul/` | Auto-rematch flow, ranked-menu coordinates, image comparison, and the copied `mainmenu.png` / `mainmenu_mask.png` templates. Source commit: `df9a1532`. |
 
 ## License & Attribution
 
@@ -661,6 +729,14 @@ Apache-2.0 §4(d), redistributions must include both files.
 - **mahjong-helper** (MIT) — `src/analysis/` is a Rust port of `util/`.
 - **riichienv-core** / RiichiEnv (Apache-2.0) — Cargo dependency.
 - **mahgen** (MIT) — DSL + `<mah-gen>` custom element.
+
+**GPL-3.0 code and assets copied into this tree**
+
+- **MahjongCopilotRezetyan** — the auto-rematch flow, coordinates, image
+  comparison, and main-menu templates are copied/ported from commit
+  [`df9a1532`](https://github.com/SpCoGov/MahjongCopilotRezetyan/commit/df9a1532fb0d61875a1b15a1259ef2d23665eaf7).
+  Its license is bundled at
+  [`assets/autoplay/majsoul/LICENSE`](./assets/autoplay/majsoul/LICENSE).
 
 **Reference-only** (no code copied; listed in `NOTICE` for credit)
 

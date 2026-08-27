@@ -98,6 +98,9 @@ async fn loopback_connect_is_refused_without_blocking() {
         ca_dir: tmp.path().join("ca"),
         rewrite_certificate_report: true,
         block_telemetry: true,
+        force_mitm_all: false,
+        upstream_enabled: false,
+        upstream: None,
     };
 
     let notify = notify_bus();
@@ -112,6 +115,7 @@ async fn loopback_connect_is_refused_without_blocking() {
         None,
         Some(notify),
         Arc::new(Notify::new()),
+        None,
         None,
         async move {
             stop_rx.await.unwrap_or_default();

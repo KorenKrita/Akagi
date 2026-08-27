@@ -171,6 +171,9 @@ impl Harness {
             addr: format!("127.0.0.1:{proxy_port}"),
             ca_dir: tmp.path().join("ca"),
             rewrite_certificate_report: true,
+            force_mitm_all: false,
+            upstream_enabled: false,
+            upstream: None,
             block_telemetry,
         };
         let (stop, stop_rx) = oneshot::channel::<()>();
@@ -182,6 +185,7 @@ impl Harness {
             None,
             None,
             Arc::new(Notify::new()),
+            None,
             None,
             async move {
                 stop_rx.await.unwrap_or_default();

@@ -148,24 +148,30 @@ impl Default for LiqiParser {
 
 /// Wrapper { string name = 1; bytes data = 2; } — decoded inline to avoid
 /// needing the prost-generated module.
+#[derive(::prost::Message)]
 struct Wrapper {
+    #[prost(string, tag = "1")]
     name: String,
+    #[prost(bytes = "vec", tag = "2")]
     data: Vec<u8>,
 }
 
 fn decode_wrapper(buf: &[u8]) -> Result<Wrapper> {
-    #[derive(::prost::Message)]
-    struct Raw {
-        #[prost(string, tag = "1")]
-        name: ::prost::alloc::string::String,
-        #[prost(bytes = "vec", tag = "2")]
-        data: ::prost::alloc::vec::Vec<u8>,
-    }
-    let raw = Raw::decode(buf).context("failed to decode Wrapper")?;
-    Ok(Wrapper {
-        name: raw.name,
-        data: raw.data,
-    })
+    Wrapper::decode(buf).context("failed to decode Wrapper")
+}
+
+pub fn build_request_frame(msg_id: u16, method_name: &str, payload: Vec<u8>) -> Vec<u8> {
+    let wrapper = Wrapper {
+        name: method_name.to_string(),
+        data: payload,
+    };
+    let mut out = Vec::with_capacity(3 + wrapper.encoded_len());
+    out.push(2);
+    out.extend_from_slice(&msg_id.to_le_bytes());
+    wrapper
+        .encode(&mut out)
+        .expect("Vec encode for liqi wrapper cannot fail");
+    out
 }
 
 fn lookup_notify_type(name: &str) -> Result<MessageDescriptor> {

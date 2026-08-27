@@ -1,0 +1,12 @@
+# Runtime files written while the app is running. Tauri's dev watcher
+# otherwise sees these as source changes and restarts the backend.
+mjai_bot/*/.akagi/
+mjai_bot/**/.akagi/
+mjai_bot/*/settings.toml
+mjai_bot/*/uv.lock
+mjai_bot/*/.venv/
+mjai_bot/**/.venv/
+
+logs/
+ca/
+chrome-profile/

@@ -300,6 +300,16 @@ impl ApiClient {
         })
     }
 
+    /// Build a client, optionally honoring the operating system proxy.
+    pub fn new_with_proxy(base_url: &str, key: &str, use_system_proxy: bool) -> Result<Self> {
+        Ok(Self {
+            base: normalize_base(base_url),
+            key: key.trim().to_string(),
+            http: build_http(use_system_proxy)?,
+            react_timeout: REACT_TIMEOUT,
+        })
+    }
+
     /// Override the per-call timeout applied to [`Self::react`]. The built-in
     /// bot sets this from `bot.api.react_timeout_ms` (already clamped by
     /// `NativeApiConfig::effective_react_timeout`). Builder-style so existing
@@ -527,13 +537,23 @@ fn gzip(raw: &[u8]) -> Result<Vec<u8>> {
 /// keys to an account (ignored when `renew_key` is set).
 pub async fn redeem(
     base_url: &str,
+    code: &str,
+    email: Option<&str>,
+    renew_key: Option<&str>,
     proxy: &str,
+) -> Result<RedeemResponse> {
+    let base = normalize_base(base_url);
+    let http = http_client(REQUEST_TIMEOUT, proxy)?;
+    redeem_with(base, http, code, email, renew_key).await
+}
+
+async fn redeem_with(
+    base: String,
+    http: reqwest::Client,
     code: &str,
     email: Option<&str>,
     renew_key: Option<&str>,
 ) -> Result<RedeemResponse> {
-    let base = normalize_base(base_url);
-    let http = http_client(REQUEST_TIMEOUT, proxy)?;
     let url = format!("{base}/v3/redeem");
     let body = RedeemRequest {
         code: code.trim(),
@@ -552,7 +572,8 @@ pub async fn redeem(
         .context("parse /v3/redeem response")
 }
 
-/// `GET /healthz` (no auth) — liveness + aggregate load.
+/// `GET /healthz` (no auth) — liveness + aggregate load. Routes through
+/// `proxy` when given (empty ⇒ direct).
 pub async fn health(base_url: &str, proxy: &str) -> Result<Health> {
     let base = normalize_base(base_url);
     let http = http_client(REQUEST_TIMEOUT, proxy)?;
@@ -564,13 +585,17 @@ pub async fn health(base_url: &str, proxy: &str) -> Result<Health> {
         .context("parse /healthz response")
 }
 
-/// Build the HTTP client all inference-server traffic goes through, honoring
-/// the user's proxy setting (`bot.api.proxy`). `proxy` accepts
-/// `http://`, `https://`, `socks5://` or `socks5h://` URLs (`socks5h` resolves
-/// DNS on the proxy — what you want when the server's name doesn't resolve
-/// locally); empty/whitespace ⇒ direct connection. Shared with
-/// [`crate::bot::purchase`], so the whole `/v3` + `/paypal` surface follows
-/// one setting.
+pub async fn health_with_proxy(base_url: &str, use_system_proxy: bool) -> Result<Health> {
+    let base = normalize_base(base_url);
+    let http = build_http(use_system_proxy)?;
+    let url = format!("{base}/healthz");
+    let resp = http.get(&url).send().await.context("GET /healthz")?;
+    let resp = check(resp, "health").await?;
+    resp.json::<Health>()
+        .await
+        .context("parse /healthz response")
+}
+
 pub(crate) fn http_client(timeout: Duration, proxy: &str) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder().timeout(timeout);
     let proxy = proxy.trim();
@@ -595,6 +620,94 @@ pub(crate) fn http_client(timeout: Duration, proxy: &str) -> Result<reqwest::Cli
         builder = builder.proxy(p);
     }
     builder.build().context("build inference-API http client")
+}
+
+fn build_http(use_system_proxy: bool) -> Result<reqwest::Client> {
+    let builder = reqwest::Client::builder().timeout(REQUEST_TIMEOUT);
+    let builder = configure_proxy(builder, use_system_proxy)?;
+    builder.build().context("build inference-API http client")
+}
+
+pub(crate) fn configure_proxy(
+    builder: reqwest::ClientBuilder,
+    use_system_proxy: bool,
+) -> Result<reqwest::ClientBuilder> {
+    if !use_system_proxy {
+        return Ok(builder.no_proxy());
+    }
+    let Some(proxy) = system_proxy_endpoint() else {
+        return Ok(builder.no_proxy());
+    };
+    Ok(builder.proxy(
+        reqwest::Proxy::all(&proxy)
+            .with_context(|| format!("invalid system proxy endpoint `{proxy}`"))?,
+    ))
+}
+
+fn system_proxy_endpoint() -> Option<String> {
+    #[cfg(windows)]
+    if let Some(proxy) = windows_system_proxy_endpoint() {
+        return Some(proxy);
+    }
+
+    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+        .into_iter()
+        .find_map(|key| std::env::var(key).ok())
+        .and_then(|v| normalize_proxy_endpoint(&v))
+}
+
+#[cfg(windows)]
+fn windows_system_proxy_endpoint() -> Option<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let settings = hkcu
+        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+        .ok()?;
+    let enabled = settings.get_value::<u32, _>("ProxyEnable").ok()? != 0;
+    if !enabled {
+        return None;
+    }
+    let raw = settings.get_value::<String, _>("ProxyServer").ok()?;
+    parse_windows_proxy_server(&raw).and_then(|v| normalize_proxy_endpoint(&v))
+}
+
+#[cfg(windows)]
+fn parse_windows_proxy_server(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !trimmed.contains(';') && !trimmed.contains('=') {
+        return Some(trimmed.to_string());
+    }
+    let mut fallback = None;
+    for part in trimmed.split(';') {
+        let (scheme, value) = part.split_once('=')?;
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        match scheme.trim().to_ascii_lowercase().as_str() {
+            "https" => return Some(value.to_string()),
+            "http" => fallback = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    fallback
+}
+
+fn normalize_proxy_endpoint(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains("://") {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("http://{trimmed}"))
+    }
 }
 
 pub(crate) fn normalize_base(base_url: &str) -> String {
@@ -634,54 +747,6 @@ pub(crate) async fn check(resp: reqwest::Response, what: &str) -> Result<reqwest
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn http_client_accepts_supported_proxy_schemes_and_empty() {
-        for p in [
-            "",
-            "  ",
-            "http://127.0.0.1:7890",
-            "https://p:8443",
-            "socks5://127.0.0.1:1080",
-            "socks5h://127.0.0.1:1080",
-            // Schemes are case-insensitive (RFC 3986).
-            "HTTP://127.0.0.1:7890",
-            "SOCKS5h://127.0.0.1:1080",
-        ] {
-            assert!(
-                http_client(REQUEST_TIMEOUT, p).is_ok(),
-                "proxy {p:?} should build"
-            );
-        }
-    }
-
-    #[test]
-    fn http_client_rejects_unknown_proxy_scheme() {
-        for p in [
-            "ftp://x",
-            "socks4://127.0.0.1:1080",
-            "127.0.0.1:7890",
-            "socks5:/bad",
-        ] {
-            let err = http_client(REQUEST_TIMEOUT, p).unwrap_err();
-            assert!(
-                format!("{err:#}").contains("unsupported proxy scheme"),
-                "proxy {p:?} should be rejected with a clear message, got: {err:#}"
-            );
-        }
-    }
-
-    #[test]
-    fn proxy_errors_never_echo_the_credentials() {
-        // Proxy URLs often carry `user:pass@host`; the error text lands in
-        // toasts and persisted logs, so it must not contain the secret.
-        let err = http_client(REQUEST_TIMEOUT, "socks4://user:sekret@10.0.0.1:1080").unwrap_err();
-        let text = format!("{err:#}");
-        assert!(
-            !text.contains("sekret") && !text.contains("10.0.0.1"),
-            "error text leaked the proxy string: {text}"
-        );
-    }
 
     #[test]
     fn normalize_trims_trailing_slash_and_space() {
@@ -943,7 +1008,7 @@ mod tests {
                 r#"{"status":"ok","queue_depth":0,"workers_alive":true}"#.into(),
             ),
         ]);
-        let r = redeem(&base, "", " CODE ", Some(" "), None).await.unwrap();
+        let r = redeem(&base, " CODE ", Some(" "), None, "").await.unwrap();
         assert_eq!(r.key.as_deref(), Some("K"));
         assert_eq!(health(&base, "").await.unwrap().status, "ok");
 

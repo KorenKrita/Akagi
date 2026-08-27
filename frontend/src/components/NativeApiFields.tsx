@@ -538,6 +538,7 @@ export function NativeApiFields({
         <PurchaseDialog
           baseUrl={value.base_url}
           proxy={effectiveProxy(value)}
+          useSystemProxy={value.use_system_proxy}
           currentKey={value.key}
           onClose={() => setBuyOpen(false)}
           onNewKey={(key) => void adoptNewKey(key)}

@@ -20,8 +20,9 @@
 //! page-scoped WS today. If real-world testing shows otherwise, expand
 //! the polling to include `browser.targets()` and filter on type.
 
-use crate::autoplay::AutoplayContext;
+use crate::autoplay::{cdp_input::install_ws_hook, AutoplayContext};
 use crate::bridge::Direction;
+use crate::capture::chromium::visuals::{self, VisualContext};
 use crate::capture::flow::{slugify, FlowBridges};
 use crate::config::HttpCaptureConfig;
 use crate::event_bus::{MjaiBus, NotifyBus};
@@ -112,21 +113,6 @@ pub fn diff_pages(prev: &HashSet<String>, current: &HashSet<String>) -> (Vec<Str
     (adds, removes)
 }
 
-/// Decide whether the autoplay page handle — currently owned by tab
-/// `owner` (its `TargetId`, if any) — must be cleared when the page-poll
-/// loop reaps the `removed` tabs this tick.
-///
-/// The handle tracks the browser **tab**, not any single WebSocket, so it
-/// is cleared only when its owning tab disappears from the snapshot. This
-/// is the crux of the "autoplay silently stops mid-game" fix: Majsoul
-/// opens and closes many short-lived Route-probe / lobby-reconnect sockets
-/// to `*.maj-soul.com` while a game runs on a separate `game-gateway`
-/// socket, and those socket closures must **not** drop the handle. Pure so
-/// the decision is unit-testable without a live `Page`.
-pub fn page_handle_cleared_by_removal(owner: Option<&str>, removed: &[String]) -> bool {
-    matches!(owner, Some(o) if removed.iter().any(|r| r == o))
-}
-
 /// Hosts whose WebSocket creation hands the page handle to autoplay.
 /// `maj-soul.com` covers en/cn/jp portals; `mahjongsoul.com` is the
 /// Yostar mirror. `tenhou.net` and `mjv.jp` are Tenhou's portal and its
@@ -154,6 +140,7 @@ pub async fn run(
     autoplay: Option<Arc<AutoplayContext>>,
     http_cfg: HttpCaptureConfig,
     notify: NotifyBus,
+    visuals: Option<VisualContext>,
 ) -> Result<()> {
     info!("CDP connecting to {endpoint}");
     let (browser_owned, mut handler) = Browser::connect(endpoint)
@@ -197,31 +184,10 @@ pub async fn run(
 
             // Reap closed tabs first so we don't leak resources during
             // long sessions where users open + close many tabs.
-            for id in &removes {
-                if let Some(h) = subscribed.remove(id) {
+            for id in removes {
+                if let Some(h) = subscribed.remove(&id) {
                     h.abort();
                     debug!("CDP: dropped subscription for closed target {id}");
-                }
-            }
-
-            // The autoplay page handle tracks the browser *tab*, not any
-            // single WebSocket, so it is cleared here — when its owning tab
-            // is actually gone — rather than on `webSocketClosed`. Majsoul
-            // opens and closes many short-lived Route-probe / lobby-reconnect
-            // sockets to *.maj-soul.com while a game runs on a separate
-            // game-gateway socket; clearing the handle on those closes was
-            // silently stopping autoplay mid-game.
-            if let (Some(ctx), false) = (&autoplay, removes.is_empty()) {
-                // Hold the write lock across the check + clear so a
-                // concurrent rebind from another tab's task can't slip
-                // between reading the owner and nulling the handle.
-                let mut guard = ctx.page.write().await;
-                let owner = guard.as_ref().map(|p| p.target_id().inner().clone());
-                if page_handle_cleared_by_removal(owner.as_deref(), &removes) {
-                    *guard = None;
-                    drop(guard);
-                    *ctx.canvas_rect.write().await = None;
-                    info!("autoplay: page handle cleared — owning Majsoul tab closed");
                 }
             }
 
@@ -240,6 +206,7 @@ pub async fn run(
                     autoplay.clone(),
                     http_cfg.clone(),
                     notify.clone(),
+                    visuals.clone(),
                 )
                 .await
                 {
@@ -460,6 +427,7 @@ async fn attach_page(
     autoplay: Option<Arc<AutoplayContext>>,
     http_cfg: HttpCaptureConfig,
     notify: NotifyBus,
+    visuals: Option<VisualContext>,
 ) -> Result<JoinHandle<()>> {
     page.execute(NetworkEnableParams::default())
         .await
@@ -481,6 +449,22 @@ async fn attach_page(
     } else if let Err(e) = reload_if_uninstrumented(&page).await {
         warn!("CDP: could not re-load the client for instrumentation: {e:#}");
     }
+    if autoplay.is_some() {
+        if let Err(e) = install_ws_hook(&page).await {
+            warn!("autoplay: failed to install WebSocket hook: {e:#}");
+        }
+    }
+    let visuals_task = if let Some(ctx) = visuals.clone() {
+        match visuals::install(&page, ctx).await {
+            Ok(task) => Some(task),
+            Err(e) => {
+                warn!("failed to install game visuals: {e:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut on_created = page
         .event_listener::<EventWebSocketCreated>()
         .await
@@ -510,6 +494,11 @@ async fn attach_page(
         .context("subscribe responseReceived")?;
 
     let handle = tokio::spawn(async move {
+        // Track the most recent autoplay-target request id for this page,
+        // so we know which WS close to react to when clearing the page
+        // handle from the autoplay context.
+        let mut autoplay_request_id: Option<String> = None;
+        let mut autoplay_urls: HashMap<String, String> = HashMap::new();
         loop {
             tokio::select! {
                 Some(ev) = on_paused.next() => {
@@ -523,48 +512,32 @@ async fn attach_page(
                     };
                     let label = format!("ws {}", ev.url);
                     let slug = slugify(&ev.url);
-                    let _ = bridges.acquire(key, &slug, &label);
+                    let bridge = bridges.acquire(key, &slug, &label);
+                    autoplay_urls.insert(ev.request_id.inner().clone(), ev.url.clone());
                     debug!("ws created: {} (target {target_id} request {})", ev.url, ev.request_id.inner());
 
                     // If this is the platform's WS (Majsoul), capture
                     // the owning page so autoplay can dispatch input
-                    // into it. The handle is bound to the *tab* and lives
-                    // until the tab closes (see the poll loop); a new WS on
-                    // the same tab just refreshes it. Multi-tab user:
-                    // most-recent wins, per the plan.
+                    // into it. Multi-tab user: most-recent wins, per
+                    // the plan.
                     if let Some(ctx) = &autoplay {
                         if is_autoplay_target_url(&ev.url) {
-                            let mut guard = ctx.page.write().await;
-                            let prev_target =
-                                guard.as_ref().map(|p| p.target_id().inner().clone());
-                            let same_tab = prev_target.as_deref() == Some(target_id.as_str());
-                            *guard = Some(page.clone());
-                            drop(guard);
-                            if same_tab {
-                                // Majsoul re-opens sockets (Route probes,
-                                // lobby reconnects) constantly on the same
-                                // tab; refreshing the handle is a no-op and
-                                // must not spam warnings.
-                                debug!(
-                                    "autoplay: page handle refreshed on new WS for target {target_id} ({})",
-                                    ev.url
-                                );
-                            } else {
-                                if let Some(prev) = &prev_target {
-                                    warn!(
-                                        "autoplay: page handle moving from tab {prev} to {target_id}"
-                                    );
-                                    // The cached canvas rect belonged to the
-                                    // old tab; a different tab may have
-                                    // different geometry, so drop it and let
-                                    // the manager re-query against the new page.
-                                    *ctx.canvas_rect.write().await = None;
-                                }
-                                info!(
-                                    "autoplay: page handle bound to target {target_id} via WS {}",
-                                    ev.url
-                                );
+                            *ctx.fallback_page.write().await = Some(page.clone());
+                            *ctx.fallback_packet_bridge.write().await = Some(bridge.clone());
+                            *ctx.fallback_packet_ws_url.write().await = Some(ev.url.clone());
+                            // Until a gameplay ActionPrototype identifies a
+                            // better flow, the last connected flow remains
+                            // the packet-dispatch target.
+                            if ctx.preferred_packet_flow.read().await.is_none() {
+                                *ctx.page.write().await = Some(page.clone());
+                                *ctx.packet_bridge.write().await = Some(bridge.clone());
+                                *ctx.packet_ws_url.write().await = Some(ev.url.clone());
                             }
+                            autoplay_request_id = Some(ev.request_id.inner().clone());
+                            info!(
+                                "autoplay: page handle bound to target {target_id} via WS {}",
+                                ev.url
+                            );
                         }
                     }
                 }
@@ -588,6 +561,42 @@ async fn attach_page(
                         let mut b = bridge.lock().expect("bridge mutex poisoned");
                         b.parse(Direction::Down, &payload)
                     };
+                    if visuals.as_ref().is_some_and(|ctx| ctx.show_recommendation)
+                        && !result.events.is_empty()
+                    {
+                        visuals::clear_recommendation(&page).await;
+                    }
+                    if visuals.as_ref().is_some_and(|ctx| ctx.show_danger)
+                        && result.events.iter().any(|event| {
+                            matches!(
+                                event,
+                                crate::schema::MjaiEvent::Hora { .. }
+                                    | crate::schema::MjaiEvent::Ryukyoku { .. }
+                                    | crate::schema::MjaiEvent::EndKyoku
+                                    | crate::schema::MjaiEvent::EndGame { .. }
+                            )
+                        })
+                    {
+                        visuals::clear_risk(&page).await;
+                    }
+                    if let Some(ctx) = &autoplay {
+                        if result
+                            .parsed
+                            .as_ref()
+                            .is_some_and(|p| p.method == ".lq.ActionPrototype")
+                        {
+                            *ctx.preferred_packet_flow.write().await = Some(flow_id.clone());
+                            *ctx.page.write().await = Some(page.clone());
+                            *ctx.packet_bridge.write().await = Some(bridge.clone());
+                            *ctx.packet_ws_url.write().await = Some(
+                                autoplay_urls
+                                    .get(ev.request_id.inner())
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            );
+                            info!("autoplay: packet target selected from ActionPrototype flow {flow_id}");
+                        }
+                    }
                     record_frame(
                         &inspector,
                         FrameDirection::Down,
@@ -596,6 +605,7 @@ async fn attach_page(
                         &payload,
                         &ev.response.payload_data,
                         &result,
+                        false,
                     );
                     for e in result.events {
                         let _ = mjai_bus.send(e);
@@ -621,6 +631,10 @@ async fn attach_page(
                         let mut b = bridge.lock().expect("bridge mutex poisoned");
                         b.parse(Direction::Up, &payload)
                     };
+                    let injected = match &autoplay {
+                        Some(ctx) => ctx.take_injected_ws_frame_mark(&payload).await,
+                        None => false,
+                    };
                     record_frame(
                         &inspector,
                         FrameDirection::Up,
@@ -629,6 +643,7 @@ async fn attach_page(
                         &payload,
                         &ev.response.payload_data,
                         &result,
+                        injected,
                     );
                     for e in result.events {
                         let _ = mjai_bus.send(e);
@@ -639,6 +654,7 @@ async fn attach_page(
                         target: target_id.clone(),
                         request: ev.request_id.inner().clone(),
                     };
+                    let flow_id = format_flow_id(&key);
                     debug!("ws closed: target={target_id} request={}", ev.request_id.inner());
                     // Synthetic empty bridge ref so we can call release.
                     // FlowBridges::release reaps the entry when no other
@@ -646,13 +662,24 @@ async fn attach_page(
                     let bridge = bridges.acquire(key.clone(), "ws", "ws frame");
                     bridges.release(&key, bridge);
 
-                    // NB: we deliberately do NOT touch the autoplay page
-                    // handle here. Majsoul closes short-lived Route-probe /
-                    // lobby-reconnect sockets to *.maj-soul.com throughout a
-                    // game while the real game-gateway socket stays open;
-                    // dropping the handle on those closes silently stopped
-                    // autoplay mid-game. The handle is tied to the tab and
-                    // cleared by the poll loop when the tab itself closes.
+                    // If this is the autoplay-target WS, drop our hold
+                    // on the page handle. The next reconnection (game
+                    // restart, network blip) re-binds it from `on_created`.
+                    if let (Some(ctx), Some(req)) = (&autoplay, &autoplay_request_id) {
+                        if *req == *ev.request_id.inner() {
+                            let preferred = ctx.preferred_packet_flow.read().await.clone();
+                            if preferred.as_deref() == Some(flow_id.as_str()) {
+                                *ctx.preferred_packet_flow.write().await = None;
+                                *ctx.page.write().await = ctx.fallback_page.read().await.clone();
+                                *ctx.packet_bridge.write().await =
+                                    ctx.fallback_packet_bridge.read().await.clone();
+                                *ctx.packet_ws_url.write().await =
+                                    ctx.fallback_packet_ws_url.read().await.clone();
+                            }
+                            autoplay_request_id = None;
+                            debug!("autoplay: page handle cleared on WS close for target {target_id}");
+                        }
+                    }
                 }
                 Some(ev) = on_request.next() => {
                     // Fires for every subresource the page loads — the
@@ -733,6 +760,9 @@ async fn attach_page(
                 else => break,
             }
         }
+        if let Some(task) = visuals_task {
+            task.abort();
+        }
     });
     Ok(handle)
 }
@@ -797,6 +827,7 @@ fn format_flow_id(key: &FlowKey) -> String {
 /// frames (`opcode == 2`) we re-emit the original base64 (`payload_data`)
 /// rather than re-encoding `payload`, which is identical content but
 /// avoids a copy.
+#[allow(clippy::too_many_arguments)]
 fn record_frame(
     inspector: &InspectorWriter,
     direction: FrameDirection,
@@ -805,6 +836,7 @@ fn record_frame(
     payload: &[u8],
     payload_data: &str,
     result: &crate::bridge::ParseResult,
+    injected: bool,
 ) {
     let raw = if opcode == 1 {
         FrameRaw::Text(payload_data.to_string())
@@ -819,6 +851,7 @@ fn record_frame(
         raw,
         parsed: result.parsed.clone(),
         emitted: result.events.len(),
+        injected,
     });
 }
 
@@ -867,27 +900,6 @@ mod tests {
         adds.sort();
         assert_eq!(adds, vec!["a", "b"]);
         assert!(removes.is_empty());
-    }
-
-    /// Regression: a Majsoul Route-probe / lobby-reconnect socket closing
-    /// must NOT clear the autoplay page handle — that was making autoplay
-    /// silently stop mid-game. The handle is tied to the browser tab, so
-    /// only the owning tab's removal from the page snapshot clears it.
-    #[test]
-    fn page_handle_cleared_only_when_owning_tab_closes() {
-        let owner = Some("TAB_A");
-        // A *different* tab closing (or a WS closing, which never reaches
-        // this predicate at all) leaves our handle intact.
-        assert!(!page_handle_cleared_by_removal(owner, &["TAB_B".into()]));
-        // Nothing reaped this tick — keep the handle.
-        assert!(!page_handle_cleared_by_removal(owner, &[]));
-        // The owning tab itself disappearing is the only trigger.
-        assert!(page_handle_cleared_by_removal(
-            owner,
-            &["TAB_B".into(), "TAB_A".into()]
-        ));
-        // No handle bound → nothing to clear regardless of what closed.
-        assert!(!page_handle_cleared_by_removal(None, &["TAB_A".into()]));
     }
 
     /// Regression: prior code dropped every non-binary frame, which

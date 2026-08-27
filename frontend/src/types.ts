@@ -78,6 +78,8 @@ export type ChromiumConfig = {
   start_url: string
   cft_channel: string
   force_cft: boolean
+  show_danger_overlay: boolean
+  show_recommendation_overlay: boolean
   extra_args: string[]
 }
 
@@ -98,8 +100,11 @@ export type DetectedBrowser = {
 export type PlatformKind = 'Majsoul' | 'Tenhou' | 'RiichiCity'
 
 export type MajsoulAutoplayConfig = {
+  mode: 'packet' | 'click'
   pre_click_delay_min_ms: number
   pre_click_delay_max_ms: number
+  packet_delay_min_ms: number
+  packet_delay_max_ms: number
   inter_click_delay_ms: number
   hover_delay_ms: number
   click_hold_ms: number
@@ -111,6 +116,23 @@ export type MajsoulAutoplayConfig = {
   /** Reload the game page after this many dead decisions in a row; 0 = off. */
   reload_after_failures: number
   dealer_first_discard_extra_delay_ms: number
+  packet_dealer_first_discard_extra_delay_ms: number
+  auto_join_game: boolean
+  auto_join_level: number
+  auto_join_mode: '4e' | '4s' | '3e' | '3s'
+  auto_join_stop_after_games: number
+  auto_join_stop_after_minutes: number
+}
+
+export type AutoJoinStatus = {
+  enabled: boolean
+  running: boolean
+  phase: 'disabled' | 'waiting_for_lobby' | 'settling' | 'joining' | 'matching' | 'in_game' | 'stopped'
+  stop_reason: 'game_limit' | 'time_limit' | null
+  completed_games: number
+  max_games: number | null
+  remaining_games: number | null
+  remaining_seconds: number | null
 }
 
 /** Pre-click delay model parameters. Mirrors
@@ -153,6 +175,7 @@ export type AutoplayConfig = {
  *  Mirrors `crate::config::NativeApiConfig`. */
 export type NativeApiConfig = {
   enabled: boolean
+  /** Existing configs default to OT3 in the backend. */
   base_url: string
   key: string
   model_4p: string
@@ -165,6 +188,7 @@ export type NativeApiConfig = {
   /** Per-decision timeout for POST /v3/react, in milliseconds. Clamped to
    *  500–10000ms on the backend before use. Default 3000. */
   react_timeout_ms: number
+  use_system_proxy: boolean
 }
 
 /** The always-on-top suggestion overlay. Mirrors `crate::config::OverlayConfig`. */
@@ -198,7 +222,15 @@ export type AppConfig = {
   general: { first_run_completed: boolean; developer_mode: boolean }
   logging: { dir: string; level: string; all_level: string }
   platform: { kind: PlatformKind }
-  proxy: { enabled: boolean; addr: string; ca_dir: string; block_telemetry: boolean }
+  proxy: {
+    enabled: boolean
+    addr: string
+    ca_dir: string
+    block_telemetry: boolean
+    upstream_enabled?: boolean
+    upstream?: string | null
+    force_mitm_all?: boolean
+  }
   bot: {
     enabled: boolean
     active_4p: string
@@ -776,6 +808,7 @@ export type InspectorEntry =
       raw: FrameRaw
       parsed?: ParsedFrame
       emitted: number
+      injected?: boolean
     }
   | {
       kind: 'mjai_event'
@@ -820,6 +853,7 @@ export type ReadInspectorRequest = {
   offset?: number
   limit?: number
   kinds?: InspectorKind[]
+  directions?: FrameDirection[]
   actor?: number
   search?: string
 }

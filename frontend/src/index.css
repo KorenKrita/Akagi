@@ -311,6 +311,10 @@
     --sidebar-ring: oklch(0.78 0.10 250);
 }
 
+/* ---------------- FlyA — light ---------------- */
+
+/* ---------------- FlyA — dark ---------------- */
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

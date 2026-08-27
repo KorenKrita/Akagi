@@ -50,6 +50,19 @@ pub const ACTIONS: [(f64, f64); 9] = [
     (6.4, 4.8),
 ];
 
+// GPL-3.0 port from SpCoGov/MahjongCopilotRezetyan `game/automation.py`.
+// See README.md and assets/autoplay/majsoul/LICENSE.
+pub const GAMEOVER_OK: (f64, f64) = (14.35, 8.12);
+pub const RANKED_MENU: (f64, f64) = (11.5, 2.75);
+pub const RANKED_LEVELS: [(f64, f64); 5] = [
+    (11.5, 3.375),
+    (11.5, 4.825),
+    (11.5, 6.15),
+    (11.5, 5.425),
+    (11.5, 6.825),
+];
+pub const RANKED_MODES: [(f64, f64); 4] = [(11.6, 3.325), (11.6, 4.675), (11.6, 6.1), (11.6, 7.35)];
+
 /// Candidate-selection row for chi/pon disambiguation. Index formula
 /// from the Python reference: `idx = int((-(len/2) + i + 0.5)*2 + 5)`.
 pub const CANDIDATES: [(f64, f64); 11] = [

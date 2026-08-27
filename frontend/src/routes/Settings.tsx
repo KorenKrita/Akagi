@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { Slider } from '@/components/ui/slider'
 import {
   Select,
   SelectContent,
@@ -26,9 +27,9 @@ import {
 import { HAS_TAURI, invoke } from '@/lib/tauri'
 import { openExternal } from '@/lib/external'
 import { useSidebar } from '@/hooks/useSidebar'
-import { useAnnouncementStore } from '@/stores/announcementStore'
 import { useCaptureStore } from '@/stores/captureStore'
 import { useConfigStore } from '@/stores/configStore'
+import { useAnnouncementStore } from '@/stores/announcementStore'
 import { selectHasNotifiableUpdate, useUpdaterStore } from '@/stores/updaterStore'
 import {
   SCALE_DEFAULT,
@@ -76,11 +77,6 @@ export function Settings() {
   const [draft, setDraft] = useState<AppConfig | null>(stored)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  // Riichi City autoplay is MITM frame injection — pop a risk warning the
-  // moment the draft combines the two, from either direction (platform
-  // switched to Riichi City while autoplay is on, or autoplay switched on
-  // while the platform is Riichi City).
-  const [rcAutoplayWarnOpen, setRcAutoplayWarnOpen] = useState(false)
 
   useEffect(() => {
     // Sync the editable draft from the store when it (re)loads.
@@ -215,11 +211,7 @@ export function Settings() {
 
       <OverlayCard draft={draft} setDraft={setDraft} />
 
-      <PlatformCard
-        draft={draft}
-        setDraft={setDraft}
-        onRiichiCityAutoplay={() => setRcAutoplayWarnOpen(true)}
-      />
+      <PlatformCard draft={draft} setDraft={setDraft} />
 
       <CaptureCard draft={draft} setDraft={setDraft} />
 
@@ -289,14 +281,7 @@ export function Settings() {
         </CardContent>
       </Card>
 
-      <AutoplayCard
-        draft={draft}
-        setDraft={setDraft}
-        onRiichiCityAutoplay={() => setRcAutoplayWarnOpen(true)}
-      />
-
       <NetworkCard draft={draft} setDraft={setDraft} />
-
       <UpdatesCard />
 
       <Dialog
@@ -321,22 +306,6 @@ export function Settings() {
             </Button>
             <Button size="sm" onClick={saveAndLeave} disabled={saving}>
               {saving ? t('common.saving') : t('settings.save_and_leave')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={rcAutoplayWarnOpen} onOpenChange={setRcAutoplayWarnOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('settings.autoplay.rc_warning_title')}</DialogTitle>
-            <DialogDescription>
-              {t('settings.autoplay.rc_warning_desc')}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="bg-transparent p-0 border-0 mx-0 mb-0">
-            <Button size="sm" onClick={() => setRcAutoplayWarnOpen(false)}>
-              {t('settings.autoplay.rc_warning_ack')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -682,10 +651,54 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+function TimeSlider({
+  label,
+  hint,
+  value,
+  max,
+  step,
+  unit,
+  onChange,
+}: {
+  label: string
+  hint?: string
+  value: number
+  max: number
+  step: number
+  unit: string
+  onChange: (value: number) => void
+}) {
   return (
-    <div className="flex items-center justify-between">
-      <Label>{label}</Label>
+    <Field label={`${label}: ${value} ${unit}`} hint={hint}>
+      <Slider
+        aria-label={label}
+        min={0}
+        max={Math.max(max, Math.ceil(value / step) * step)}
+        step={step}
+        value={[value]}
+        onValueChange={([next]) => onChange(next)}
+      />
+    </Field>
+  )
+}
+
+function Toggle({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string
+  value: boolean
+  onChange: (v: boolean) => void
+  hint?: string
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="grid gap-1">
+        <Label>{label}</Label>
+        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      </div>
       <Switch checked={value} onCheckedChange={onChange} />
     </div>
   )
@@ -757,18 +770,17 @@ function UiScaleField() {
 function PlatformCard({
   draft,
   setDraft,
-  onRiichiCityAutoplay,
 }: {
   draft: AppConfig
   setDraft: (c: AppConfig) => void
-  onRiichiCityAutoplay: () => void
 }) {
   const { t } = useTranslation()
   const current = draft.platform.kind
+  const [rcAutoplayWarnOpen, setRcAutoplayWarnOpen] = useState(false)
   const setKind = (kind: PlatformKind) => {
     if (kind === current) return
     if (kind === 'RiichiCity' && (draft.autoplay?.enabled ?? false)) {
-      onRiichiCityAutoplay()
+      setRcAutoplayWarnOpen(true)
     }
     // If the user hasn't customised the Chromium start URL, swap it to
     // the new platform's default so the next launch lands on the right
@@ -817,25 +829,42 @@ function PlatformCard({
         </Field>
         <p className="text-xs text-muted-foreground">{t(info.descriptionKey)}</p>
       </CardContent>
+
+      <Dialog open={rcAutoplayWarnOpen} onOpenChange={setRcAutoplayWarnOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settings.autoplay.rc_warning_title')}</DialogTitle>
+            <DialogDescription>
+              {t('settings.autoplay.rc_warning_desc')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="bg-transparent p-0 border-0 mx-0 mb-0">
+            <Button size="sm" onClick={() => setRcAutoplayWarnOpen(false)}>
+              {t('settings.autoplay.rc_warning_ack')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
 
-function AutoplayCard({
+export function AutoplayCard({
   draft,
   setDraft,
-  onRiichiCityAutoplay,
 }: {
   draft: AppConfig
   setDraft: (c: AppConfig) => void
-  onRiichiCityAutoplay: () => void
 }) {
   const { t } = useTranslation()
   const ap = draft.autoplay ?? {
     enabled: false,
     majsoul: {
+      mode: 'packet',
       pre_click_delay_min_ms: 1000,
       pre_click_delay_max_ms: 3000,
+      packet_delay_min_ms: 1000,
+      packet_delay_max_ms: 3000,
       inter_click_delay_ms: 300,
       hover_delay_ms: 150,
       click_hold_ms: 50,
@@ -843,16 +872,33 @@ function AutoplayCard({
       click_retries: 2,
       reload_after_failures: 3,
       dealer_first_discard_extra_delay_ms: 2000,
+      packet_dealer_first_discard_extra_delay_ms: 2000,
+      auto_join_game: false,
+      auto_join_level: 2,
+      auto_join_mode: '3e' as const,
+      auto_join_stop_after_games: 0,
+      auto_join_stop_after_minutes: 0,
     },
     delay: defaultDelayModel(),
   }
   const delay = ap.delay ?? defaultDelayModel()
+  const preClickDelay = [
+    Math.min(ap.majsoul.pre_click_delay_min_ms, ap.majsoul.pre_click_delay_max_ms),
+    Math.max(ap.majsoul.pre_click_delay_min_ms, ap.majsoul.pre_click_delay_max_ms),
+  ]
+  const preClickDelaySliderMax = Math.max(
+    10_000,
+    Math.ceil(preClickDelay[1] / 1000) * 1000,
+  )
+  const packetDelay = [
+    Math.min(ap.majsoul.packet_delay_min_ms, ap.majsoul.packet_delay_max_ms),
+    Math.max(ap.majsoul.packet_delay_min_ms, ap.majsoul.packet_delay_max_ms),
+  ]
+  const packetDelaySliderMax = Math.max(
+    10_000,
+    Math.ceil(packetDelay[1] / 1000) * 1000,
+  )
   const captureIsChromium = draft.capture?.mode === 'chromium'
-  // Riichi City autoplay runs through the MITM proxy (frame injection), so
-  // the Chromium-mode requirement only applies to the click platforms.
-  const platformIsRiichiCity = draft.platform?.kind === 'RiichiCity'
-  const setApField = (patch: Partial<typeof ap>) =>
-    setDraft({ ...draft, autoplay: { ...ap, ...patch } })
   const setMajsoulField = (patch: Partial<typeof ap.majsoul>) =>
     setDraft({
       ...draft,
@@ -869,220 +915,202 @@ function AutoplayCard({
         <CardTitle>{t('settings.autoplay.title')}</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <Toggle
-          label={t('settings.autoplay.enable')}
-          value={ap.enabled}
-          onChange={(v) => {
-            setApField({ enabled: v })
-            if (v && platformIsRiichiCity) onRiichiCityAutoplay()
-          }}
-        />
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.enable_help')}
         </p>
-        {ap.enabled && !captureIsChromium && !platformIsRiichiCity && (
+        {ap.enabled &&
+          !captureIsChromium &&
+          (ap.majsoul.mode ?? 'packet') === 'click' && (
           <p className="text-xs text-amber-500">
             {t('settings.autoplay.requires_chromium')}
           </p>
         )}
-        {/* Delay policy: exactly one of legacy (fixed uniform) or the
-            Lua-scripted human-like model is active. */}
-        <Field label={t('settings.autoplay.delay_mode')}>
+        <Field label={t('settings.autoplay.mode')}>
           <Select
-            value={delay.mode}
-            onValueChange={(v) => setDelayField({ mode: v as DelayMode })}
+            value={ap.majsoul.mode ?? 'packet'}
+            onValueChange={(v) =>
+              setMajsoulField({
+                mode: v as typeof ap.majsoul.mode,
+              })
+            }
           >
-            <SelectTrigger className="w-full">
+            <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="lua">
-                {t('settings.autoplay.delay_mode_lua')}
+              <SelectItem value="packet">
+                {t('settings.autoplay.mode_packet')}
               </SelectItem>
-              <SelectItem value="legacy">
-                {t('settings.autoplay.delay_mode_legacy')}
+              <SelectItem value="click">
+                {t('settings.autoplay.mode_click')}
               </SelectItem>
             </SelectContent>
           </Select>
         </Field>
-        {delay.mode === 'lua' && (
-          <p className="text-xs text-muted-foreground">
-            {t('settings.autoplay.delay_mode_lua_help')}
-          </p>
-        )}
-        {delay.mode === 'legacy' && (
+        {ap.majsoul.mode === 'packet' ? (
           <>
-            <Field label={t('settings.autoplay.pre_click_delay_min')}>
-              <Input
-                type="number"
-                inputMode="numeric"
+            <Field
+              label={`${t('settings.autoplay.pre_click_delay_range')}: ${packetDelay[0]}–${packetDelay[1]} ms`}
+            >
+              <Slider
                 min={0}
-                value={ap.majsoul.pre_click_delay_min_ms}
-                onChange={(e) =>
-                  setMajsoulField({
-                    pre_click_delay_min_ms: Number(e.target.value || 0),
-                  })
+                max={packetDelaySliderMax}
+                step={100}
+                value={packetDelay}
+                onValueChange={([min, max]) =>
+                  setMajsoulField({ packet_delay_min_ms: min, packet_delay_max_ms: max })
                 }
               />
             </Field>
-            <Field label={t('settings.autoplay.pre_click_delay_max')}>
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                value={ap.majsoul.pre_click_delay_max_ms}
-                onChange={(e) =>
-                  setMajsoulField({
-                    pre_click_delay_max_ms: Number(e.target.value || 0),
-                  })
-                }
-              />
+            <TimeSlider
+              label={t('settings.autoplay.dealer_first_discard_extra_delay')}
+              hint={t('settings.autoplay.dealer_first_discard_extra_delay_hint')}
+              value={ap.majsoul.packet_dealer_first_discard_extra_delay_ms}
+              max={10_000}
+              step={100}
+              unit="ms"
+              onChange={(value) =>
+                setMajsoulField({ packet_dealer_first_discard_extra_delay_ms: value })
+              }
+            />
+          </>
+        ) : (
+          <>
+            <Field label={t('settings.autoplay.delay_mode')}>
+              <Select
+                value={delay.mode}
+                onValueChange={(v) => setDelayField({ mode: v as DelayMode })}
+              >
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="lua">{t('settings.autoplay.delay_mode_lua')}</SelectItem>
+                  <SelectItem value="legacy">{t('settings.autoplay.delay_mode_legacy')}</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
+            {delay.mode === 'lua' && (
+              <p className="text-xs text-muted-foreground">
+                {t('settings.autoplay.delay_mode_lua_help')}
+              </p>
+            )}
+            {delay.mode === 'legacy' && (
+              <Field
+                label={`${t('settings.autoplay.pre_click_delay_range')}: ${preClickDelay[0]}–${preClickDelay[1]} ms`}
+              >
+                <Slider
+                  min={0}
+                  max={preClickDelaySliderMax}
+                  step={100}
+                  value={preClickDelay}
+                  onValueChange={([min, max]) =>
+                    setMajsoulField({
+                      pre_click_delay_min_ms: min,
+                      pre_click_delay_max_ms: max,
+                    })
+                  }
+                />
+              </Field>
+            )}
+            <TimeSlider label={t('settings.autoplay.min_delay')} hint={t('settings.autoplay.min_delay_hint')} value={delay.min_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setDelayField({ min_delay_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.min_button_delay')} hint={t('settings.autoplay.min_button_delay_hint')} value={delay.min_button_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setDelayField({ min_button_delay_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.inter_click_delay')} value={ap.majsoul.inter_click_delay_ms} max={2_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ inter_click_delay_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.hover_delay')} hint={t('settings.autoplay.hover_delay_hint')} value={ap.majsoul.hover_delay_ms} max={1_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ hover_delay_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.click_hold')} value={ap.majsoul.click_hold_ms} max={1_000} step={10} unit="ms" onChange={(value) => setMajsoulField({ click_hold_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.verify_input')} hint={t('settings.autoplay.verify_input_hint')} value={ap.majsoul.verify_input_ms} max={2_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ verify_input_ms: value })} />
+            <TimeSlider label={t('settings.autoplay.click_retries')} hint={t('settings.autoplay.click_retries_hint')} value={ap.majsoul.click_retries} max={10} step={1} unit="" onChange={(value) => setMajsoulField({ click_retries: value })} />
+            <TimeSlider label={t('settings.autoplay.reload_after_failures')} hint={t('settings.autoplay.reload_after_failures_hint')} value={ap.majsoul.reload_after_failures} max={10} step={1} unit="" onChange={(value) => setMajsoulField({ reload_after_failures: value })} />
+            <TimeSlider label={t('settings.autoplay.dealer_first_discard_extra_delay')} hint={t('settings.autoplay.dealer_first_discard_extra_delay_hint')} value={ap.majsoul.dealer_first_discard_extra_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setMajsoulField({ dealer_first_discard_extra_delay_ms: value })} />
           </>
         )}
-        <Field
-          label={t('settings.autoplay.min_delay')}
-          hint={t('settings.autoplay.min_delay_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={delay.min_delay_ms}
-            onChange={(e) =>
-              // Clamp: a typed negative would fail u32 deserialization
-              // on save (min={0} doesn't block typing a minus sign).
-              setDelayField({
-                min_delay_ms: Math.max(0, Number(e.target.value || 0)),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label={t('settings.autoplay.min_button_delay')}
-          hint={t('settings.autoplay.min_button_delay_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={delay.min_button_delay_ms}
-            onChange={(e) =>
-              setDelayField({
-                min_button_delay_ms: Math.max(0, Number(e.target.value || 0)),
-              })
-            }
-          />
-        </Field>
-        <Field label={t('settings.autoplay.inter_click_delay')}>
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.inter_click_delay_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                inter_click_delay_ms: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label={t('settings.autoplay.hover_delay')}
-          hint={t('settings.autoplay.hover_delay_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.hover_delay_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                hover_delay_ms: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
-        <Field label={t('settings.autoplay.click_hold')}>
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.click_hold_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                click_hold_ms: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label={t('settings.autoplay.verify_input')}
-          hint={t('settings.autoplay.verify_input_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.verify_input_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                verify_input_ms: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label={t('settings.autoplay.click_retries')}
-          hint={t('settings.autoplay.click_retries_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.click_retries}
-            onChange={(e) =>
-              setMajsoulField({
-                click_retries: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label={t('settings.autoplay.reload_after_failures')}
-          hint={t('settings.autoplay.reload_after_failures_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.reload_after_failures}
-            onChange={(e) =>
-              setMajsoulField({
-                reload_after_failures: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label={t('settings.autoplay.dealer_first_discard_extra_delay')}
-          hint={t('settings.autoplay.dealer_first_discard_extra_delay_hint')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            value={ap.majsoul.dealer_first_discard_extra_delay_ms}
-            onChange={(e) =>
-              setMajsoulField({
-                dealer_first_discard_extra_delay_ms: Number(e.target.value || 0),
-              })
-            }
-          />
-        </Field>
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.platform_note')}
         </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+export function AutoJoinCard({
+  draft,
+  setDraft,
+}: {
+  draft: AppConfig
+  setDraft: (c: AppConfig) => void
+}) {
+  const { t } = useTranslation()
+  const ap = draft.autoplay
+  const setMajsoulField = (patch: Partial<typeof ap.majsoul>) =>
+    setDraft({
+      ...draft,
+      autoplay: { ...ap, majsoul: { ...ap.majsoul, ...patch } },
+    })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('game.auto_join.title')}</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <Field label={t('settings.autoplay.auto_join_level')}>
+          <Select
+            value={String(ap.majsoul.auto_join_level ?? 2)}
+            onValueChange={(v) => setMajsoulField({ auto_join_level: Number(v) })}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {[0, 1, 2, 3, 4].map((level) => (
+                <SelectItem key={level} value={String(level)}>
+                  {t(`settings.autoplay.auto_join_level_${level}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label={t('settings.autoplay.auto_join_mode')}>
+          <Select
+            value={ap.majsoul.auto_join_mode ?? '3e'}
+            onValueChange={(v) =>
+              setMajsoulField({
+                auto_join_mode: v as typeof ap.majsoul.auto_join_mode,
+              })
+            }
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {(['4e', '4s', '3e', '3s'] as const).map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {t(`settings.autoplay.auto_join_mode_${mode}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field
+          label={t('settings.autoplay.auto_join_stop_after_games')}
+          hint={t('settings.autoplay.auto_join_zero_unlimited')}
+        >
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            value={ap.majsoul.auto_join_stop_after_games ?? 0}
+            onChange={(e) =>
+              setMajsoulField({
+                auto_join_stop_after_games: Math.max(0, Math.floor(Number(e.target.value || 0))),
+              })
+            }
+          />
+        </Field>
+        <TimeSlider
+          label={t('settings.autoplay.auto_join_stop_after_minutes')}
+          hint={t('settings.autoplay.auto_join_zero_unlimited')}
+          value={ap.majsoul.auto_join_stop_after_minutes ?? 0}
+          max={1_440}
+          step={1}
+          unit="min"
+          onChange={(value) => setMajsoulField({ auto_join_stop_after_minutes: value })}
+        />
       </CardContent>
     </Card>
   )
@@ -1131,6 +1159,8 @@ function CaptureCard({
     start_url: platformInfo(draft.platform.kind).defaultStartUrl,
     cft_channel: 'stable',
     force_cft: false,
+    show_danger_overlay: false,
+    show_recommendation_overlay: false,
     extra_args: [],
   }
   const [detected, setDetected] = useState<DetectedBrowser[] | null>(null)
@@ -1207,11 +1237,29 @@ function CaptureCard({
               value={draft.proxy.enabled}
               onChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, enabled: v } })}
             />
+            <Toggle
+              label={t('settings.force_mitm_all')}
+              value={draft.proxy.force_mitm_all ?? false}
+              onChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, force_mitm_all: v } })}
+              hint={t('settings.force_mitm_all_hint')}
+            />
             <Field label={t('settings.address')}>
               <Input
                 value={draft.proxy.addr}
                 onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, addr: e.target.value } })}
                 placeholder="127.0.0.1:23410"
+              />
+            </Field>
+            <Field label={t('settings.upstream_proxy')} hint={t('settings.upstream_proxy_hint')}>
+              <Toggle
+                label={t('settings.upstream_proxy_enabled')}
+                value={draft.proxy.upstream_enabled ?? false}
+                onChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, upstream_enabled: v } })}
+              />
+              <Input
+                value={draft.proxy.upstream ?? ''}
+                onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, upstream: e.target.value } })}
+                placeholder="http://127.0.0.1:7890"
               />
             </Field>
             <Field label={t('settings.ca_dir')} hint={t('settings.ca_dir_hint')}>
@@ -1220,14 +1268,6 @@ function CaptureCard({
                 onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, ca_dir: e.target.value } })}
               />
             </Field>
-            <Toggle
-              label={t('settings.block_telemetry')}
-              value={draft.proxy.block_telemetry}
-              onChange={(v) => setDraft({ ...draft, proxy: { ...draft.proxy, block_telemetry: v } })}
-            />
-            <span className="text-xs text-muted-foreground">
-              {t('settings.block_telemetry_hint')}
-            </span>
           </>
         )}
 
@@ -1278,6 +1318,18 @@ function CaptureCard({
               label={t('settings.force_cft')}
               value={chromium.force_cft}
               onChange={(v) => setChromium({ force_cft: v })}
+            />
+            <Toggle
+              label={t('settings.show_danger_overlay')}
+              hint={t('settings.show_danger_overlay_hint')}
+              value={chromium.show_danger_overlay ?? false}
+              onChange={(v) => setChromium({ show_danger_overlay: v })}
+            />
+            <Toggle
+              label={t('settings.show_recommendation_overlay')}
+              hint={t('settings.show_recommendation_overlay_hint')}
+              value={chromium.show_recommendation_overlay ?? false}
+              onChange={(v) => setChromium({ show_recommendation_overlay: v })}
             />
             <CftPanel chromium={chromium} setChromium={setChromium} />
           </>
@@ -1505,7 +1557,7 @@ function UpdatesCard() {
             )}
           </div>
         </Field>
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between">
           <span className="text-xs text-muted-foreground">{lastCheckedLabel}</span>
           <div className="flex items-center gap-2">
             <Button

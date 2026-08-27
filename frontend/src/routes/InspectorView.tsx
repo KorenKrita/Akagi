@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useInspectorStore } from '@/stores/inspectorStore'
 import { useInspectorStream } from '@/hooks/useInspectorStream'
-import type { InspectorEntry, InspectorKind } from '@/types'
+import type { FrameDirection, InspectorEntry, InspectorKind } from '@/types'
 
 const KIND_BADGE: Record<InspectorKind, string> = {
   ws_frame: 'bg-cyan-500/15 text-cyan-700 border-cyan-500/30 dark:text-cyan-300',
@@ -109,6 +109,7 @@ export function InspectorView({ liveEnabled, autoScroll, onUserScrolledAway }: I
     const search = filter.search.trim().toLowerCase()
     return entries.filter((e) => {
       if (!filter.kinds.has(e.kind)) return false
+      if (e.kind === 'ws_frame' && !filter.directions.has(e.direction)) return false
       if (filter.actor != null && !entryHasActor(e, filter.actor)) return false
       if (search.length > 0) {
         // Build a cheap haystack per row. Pre-stringifying every entry
@@ -158,6 +159,29 @@ export function InspectorView({ liveEnabled, autoScroll, onUserScrolledAway }: I
             <KindToggle kind="mjai_event" label={t('inspector.kind_mjai_event')} icon={<Zap className="h-3 w-3" />} active={filter.kinds.has('mjai_event')} onToggle={toggleKind} />
             <KindToggle kind="bot_reaction" label={t('inspector.kind_bot_reaction')} icon={<Bot className="h-3 w-3" />} active={filter.kinds.has('bot_reaction')} onToggle={toggleKind} />
             <KindToggle kind="http" label={t('inspector.kind_http')} icon={<Globe className="h-3 w-3" />} active={filter.kinds.has('http')} onToggle={toggleKind} />
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm text-muted-foreground whitespace-nowrap">
+              {t('inspector.direction')}
+            </span>
+            <DirectionToggle
+              label={t('inspector.direction_all')}
+              active={filter.directions.size === 2}
+              onClick={() => setFilter({ directions: new Set<FrameDirection>(['up', 'down']) })}
+            />
+            <DirectionToggle
+              label="up"
+              icon={<ArrowUp className="h-3 w-3" />}
+              active={filter.directions.size === 1 && filter.directions.has('up')}
+              onClick={() => setFilter({ directions: new Set<FrameDirection>(['up']) })}
+            />
+            <DirectionToggle
+              label="down"
+              icon={<ArrowDown className="h-3 w-3" />}
+              active={filter.directions.size === 1 && filter.directions.has('down')}
+              onClick={() => setFilter({ directions: new Set<FrameDirection>(['down']) })}
+            />
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -264,6 +288,33 @@ export function InspectorView({ liveEnabled, autoScroll, onUserScrolledAway }: I
   )
 }
 
+function DirectionToggle({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string
+  icon?: React.ReactNode
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-2 py-0.5 text-xs font-mono rounded border transition-colors cursor-pointer flex items-center gap-1 ${
+        active
+          ? 'border-primary text-primary bg-primary/10'
+          : 'border-muted text-muted-foreground hover:bg-muted/40'
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
+  )
+}
+
 function KindToggle({
   kind,
   label,
@@ -332,6 +383,11 @@ function RowSummary({ entry }: { entry: InspectorEntry }) {
             </span>
           )}
         </span>
+        {entry.injected && (
+          <Badge variant="outline" className="ml-2 font-mono text-[10px] py-0 border-amber-500/40 text-amber-700 dark:text-amber-300">
+            AKAGI
+          </Badge>
+        )}
         <span className="ml-2">{summary}</span>
       </span>
     )
@@ -393,6 +449,7 @@ function DetailPanel({ entry }: { entry: InspectorEntry }) {
         <DetailRow label={t('inspector.detail_flow')} value={entry.flow_id} mono />
         <DetailRow label={t('inspector.detail_size')} value={formatBytes(entry.size)} />
         <DetailRow label={t('inspector.detail_emitted')} value={`${entry.emitted}`} />
+        <DetailRow label={t('inspector.detail_injected')} value={entry.injected ? 'yes' : 'no'} />
         {entry.parsed && (
           <>
             <div>

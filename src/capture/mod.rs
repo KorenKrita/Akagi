@@ -15,9 +15,11 @@ pub mod flow;
 pub mod http;
 pub mod hudsucker_backend;
 
+use crate::analysis::runner::AnalysisCache;
 use crate::autoplay::AutoplayContext;
 use crate::config::Platform;
-use crate::event_bus::{MjaiBus, NotifyBus};
+use crate::event_bus::{AnalysisBus, BotResponseBus, MjaiBus, NotifyBus};
+use crate::game_state::GameTracker;
 use crate::logger::Session;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -82,12 +84,16 @@ pub struct CaptureCtx {
     pub session: Arc<Session>,
     pub platform: Platform,
     pub mjai_bus: MjaiBus,
+    pub bot_response_bus: BotResponseBus,
+    pub analysis_bus: AnalysisBus,
     pub notify_bus: NotifyBus,
     /// Shared with the autoplay manager. The chromium backend writes the
     /// per-tab `Page` handle here when it observes a Majsoul WS;
     /// autoplay reads it to dispatch `Input.dispatchMouseEvent`. The
     /// MITM backend simply ignores this — it has no `Page`.
     pub autoplay: Option<Arc<AutoplayContext>>,
+    pub analysis_cache: AnalysisCache,
+    pub game_tracker: Arc<tokio::sync::Mutex<GameTracker>>,
     /// What to record of the HTTP traffic this backend intercepts. Both
     /// backends honour it; `static_assets` is chromium-only.
     pub http: crate::config::HttpCaptureConfig,

@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+/// Remote inference protocol selected by the user.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiProvider {
+    #[default]
+    #[serde(other)]
+    Ot3,
+}
+
 /// Optional cloud-inference settings for the built-in (native) bot.
 ///
 /// When [`NativeApiConfig::is_active`] is true, the built-in bot proxies each
@@ -20,6 +29,9 @@ pub struct NativeApiConfig {
     /// Route built-in-bot decisions through the remote API. Ignored unless a
     /// `base_url` and `key` are also set (see [`NativeApiConfig::is_active`]).
     pub enabled: bool,
+    /// Which remote protocol to use. Existing configs omit this field and
+    /// therefore remain on OT3.
+    pub provider: ApiProvider,
     /// Base URL of the inference server, e.g. `https://host` or
     /// `http://127.0.0.1:8080`. A trailing slash is tolerated.
     pub base_url: String,
@@ -49,6 +61,8 @@ pub struct NativeApiConfig {
     /// every decision. Bounded by [`Self::effective_react_timeout`]; the raw
     /// value is stored so the UI round-trips exactly what the user typed.
     pub react_timeout_ms: u32,
+    /// Use the operating system proxy for online API and key-purchase traffic.
+    pub use_system_proxy: bool,
 }
 
 /// Default inference server. Pre-filled so users don't have to type it; the API
@@ -70,6 +84,7 @@ impl Default for NativeApiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            provider: ApiProvider::Ot3,
             base_url: DEFAULT_API_BASE_URL.to_string(),
             key: String::new(),
             model_4p: String::new(),
@@ -77,6 +92,7 @@ impl Default for NativeApiConfig {
             proxy_enabled: false,
             proxy: String::new(),
             react_timeout_ms: DEFAULT_REACT_TIMEOUT_MS,
+            use_system_proxy: false,
         }
     }
 }
@@ -86,21 +102,33 @@ impl NativeApiConfig {
     /// server URL and a key). The manager uses this to decide whether to build
     /// the API-backed runner or the local one.
     pub fn is_active(&self) -> bool {
-        self.enabled && !self.base_url.trim().is_empty() && !self.key.trim().is_empty()
+        self.enabled
+            && !self.active_base_url().trim().is_empty()
+            && !self.active_key().trim().is_empty()
+    }
+
+    pub fn active_base_url(&self) -> &str {
+        match self.provider {
+            ApiProvider::Ot3 => &self.base_url,
+        }
+    }
+
+    pub fn active_key(&self) -> &str {
+        match self.provider {
+            ApiProvider::Ot3 => &self.key,
+        }
     }
 
     /// Model id to request for the given player count. Empty string ⇒ omit the
     /// `model` field and let the server pick its game default.
     pub fn model_for(&self, num_players: u8) -> &str {
-        if num_players == 3 {
-            &self.model_3p
-        } else {
-            &self.model_4p
+        match (self.provider, num_players) {
+            (ApiProvider::Ot3, 3) => &self.model_3p,
+            (ApiProvider::Ot3, _) => &self.model_4p,
         }
     }
 
     /// The proxy actually used for inference-server traffic: the trimmed
-    /// [`Self::proxy`] when [`Self::proxy_enabled`], else `""` (direct). Keeps
     /// the toggle authoritative in one place so a disabled-but-nonempty `proxy`
     /// never leaks into a client build.
     pub fn effective_proxy(&self) -> &str {

@@ -19,7 +19,9 @@
 //! write and is never held across an await.
 
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+const INACTIVITY_WARNING_AFTER: Duration = Duration::from_secs(5);
 
 /// Which action type carried the operation list. Debug/telemetry only —
 /// the delay model keys off the mjai action, not off this.
@@ -55,6 +57,13 @@ pub struct TimeBudget {
     pub opened_at: Instant,
     /// Which action carried the operation list.
     pub source: BudgetSource,
+    /// One-based discard turn (巡目) when this window opened.
+    pub jun: u32,
+    /// Honba counter for the current hand.
+    pub honba: u8,
+    /// Round wind (`E`, `S`, `W`, `N`) and one-based hand number.
+    pub bakaze: char,
+    pub kyoku: u8,
 }
 
 impl TimeBudget {
@@ -70,4 +79,71 @@ pub type SharedTimeBudget = Arc<RwLock<Option<TimeBudget>>>;
 /// Fresh empty slot.
 pub fn new_shared() -> SharedTimeBudget {
     Arc::new(RwLock::new(None))
+}
+
+/// Log once if this exact decision window is still open after five seconds.
+pub(crate) fn warn_if_still_open(slot: SharedTimeBudget, budget: TimeBudget) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        tokio::time::sleep(INACTIVITY_WARNING_AFTER.saturating_sub(budget.opened_at.elapsed()))
+            .await;
+        if window_is_still_open(&slot, budget.opened_at) {
+            tracing::warn!(
+                target: "akagi::autoplay",
+                source = ?budget.source,
+                round = %format_args!("{}{}", wind_zh(budget.bakaze), budget.kyoku),
+                jun = budget.jun,
+                honba = budget.honba,
+                "decision window has been open for 5 seconds without an operation"
+            );
+        }
+    });
+}
+
+fn wind_zh(bakaze: char) -> char {
+    match bakaze {
+        'E' => '东',
+        'S' => '南',
+        'W' => '西',
+        'N' => '北',
+        _ => '?',
+    }
+}
+
+fn window_is_still_open(slot: &SharedTimeBudget, opened_at: Instant) -> bool {
+    slot.read()
+        .ok()
+        .and_then(|guard| *guard)
+        .is_some_and(|current| current.opened_at == opened_at)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_same_open_window_is_considered_inactive() {
+        let slot = new_shared();
+        let opened_at = Instant::now();
+        *slot.write().unwrap() = Some(TimeBudget {
+            fixed_ms: 5_000,
+            add_ms: 0,
+            opened_at,
+            source: BudgetSource::DealTile,
+            jun: 3,
+            honba: 2,
+            bakaze: 'S',
+            kyoku: 1,
+        });
+
+        assert!(window_is_still_open(&slot, opened_at));
+        assert!(!window_is_still_open(
+            &slot,
+            opened_at.checked_sub(Duration::from_millis(1)).unwrap()
+        ));
+        *slot.write().unwrap() = None;
+        assert!(!window_is_still_open(&slot, opened_at));
+    }
 }

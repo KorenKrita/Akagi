@@ -1,4 +1,5 @@
 use crate::{
+    autoplay::AutoplayContext,
     bridge::{self, Bridge, Direction},
     capture::http::{self as httpcap, BodyPlan, ExchangePairing, HttpCapturePolicy},
     config::Platform,
@@ -31,7 +32,7 @@ use std::{
         Arc, Mutex as StdMutex,
     },
 };
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, Notify};
 use tracing::{debug, error, info, warn};
 
 const TAG_CLIENT_TO_SERVER: u8 = 0;
@@ -76,6 +77,9 @@ pub struct ProxyHandler {
     /// connections; existing ones would drain naturally and the game
     /// client would never see a disconnect.
     force_close: Arc<Notify>,
+    /// When true, disables compatibility raw-tunneling for IP-literal
+    /// CONNECT flows so everything hudsucker can parse is MITM'd.
+    force_mitm_all: bool,
     /// How much of the intercepted HTTP traffic to record.
     http_policy: HttpCapturePolicy,
     /// Request↔response pairing state. See `capture::http`.
@@ -94,6 +98,9 @@ pub struct ProxyHandler {
     /// bridge's `in_game` flag). `None` in "log only" mode / tests.
     /// See `autoplay::inject`.
     inject: Option<crate::autoplay::inject::SharedInjectBus>,
+    /// MITM uplink sinks, keyed like `bridges`, for packet autoplay.
+    packet_senders: Arc<StdMutex<HashMap<SocketAddr, mpsc::UnboundedSender<Vec<u8>>>>>,
+    autoplay: Option<Arc<AutoplayContext>>,
 }
 
 impl ProxyHandler {
@@ -107,11 +114,13 @@ impl ProxyHandler {
         mjai_tx: Option<MjaiBus>,
         notify_tx: Option<NotifyBus>,
         force_close: Arc<Notify>,
+        force_mitm_all: bool,
         http_policy: HttpCapturePolicy,
         certs: Arc<CertStore>,
         rewrite_cert_report: bool,
         block_telemetry: bool,
         inject: Option<crate::autoplay::inject::SharedInjectBus>,
+        autoplay: Option<Arc<AutoplayContext>>,
     ) -> anyhow::Result<Self> {
         let binary = session.binary_logger("proxy")?;
         let inspector = session.inspector();
@@ -127,12 +136,15 @@ impl ProxyHandler {
             inspector,
             inspector_flow_ids: Arc::new(StdMutex::new(HashMap::new())),
             force_close,
+            force_mitm_all,
             http_policy,
             pairing: Arc::new(ExchangePairing::default()),
             certs,
             rewrite_cert_report,
             block_telemetry,
             inject,
+            packet_senders: Arc::new(StdMutex::new(HashMap::new())),
+            autoplay,
         })
     }
 
@@ -409,17 +421,19 @@ impl ProxyHandler {
                             None
                         }
                     };
-                // No time-budget slot and no input watch: the MITM path
-                // has no `Page` handle, so click-based autoplay can never
-                // run here. The one slot the MITM path DOES wire is Riichi
-                // City's frame-injection gate — its autoplay transmits
-                // protocol frames rather than clicking a page.
+                // The MITM path has no `Page` handle, so click-based
+                // autoplay can never run here. The slots it CAN wire:
+                // Riichi City's frame-injection gate (its autoplay
+                // transmits protocol frames rather than clicking a page),
+                // and Majsoul packet-mode's time budget + input watch.
                 let hooks = bridge::BridgeHooks {
                     riichi_inject: if self.platform == Platform::RiichiCity {
                         self.inject.clone()
                     } else {
                         None
                     },
+                    time_budget: self.autoplay.as_ref().map(|ctx| ctx.time_budget.clone()),
+                    input_watch: self.autoplay.as_ref().map(|ctx| ctx.input_watch.clone()),
                     ..bridge::BridgeHooks::default()
                 };
                 Arc::new(StdMutex::new(bridge::for_platform(
@@ -722,6 +736,15 @@ impl HttpHandler for ProxyHandler {
     /// Hostnames are always MITM'd; the maj-soul hostname endpoints
     /// (`mjusgs.mahjongsoul.com`, etc.) don't hit this code path.
     async fn should_intercept(&mut self, _ctx: &HttpContext, req: &Request<Body>) -> bool {
+        if self.force_mitm_all {
+            info!(
+                target: "akagi::proxy::forward",
+                "force-MITM enabled; intercepting CONNECT to {}",
+                req.uri()
+            );
+            return true;
+        }
+
         let Some(host) = req.uri().host() else {
             return true;
         };
@@ -846,6 +869,14 @@ impl WebSocketHandler for ProxyHandler {
         let server_uri = server_uri(&ctx);
         let bridge = self.acquire_bridge(client, &server_uri);
         let force_close = self.force_close.clone();
+        let (packet_tx, mut packet_rx) = mpsc::unbounded_channel();
+        let is_uplink = matches!(ctx, WebSocketContext::ClientToServer { .. });
+        if is_uplink {
+            self.packet_senders
+                .lock()
+                .expect("packet senders mutex poisoned")
+                .insert(client, packet_tx.clone());
+        }
 
         // Riichi City autoplay injects on the client→server leg only — that
         // sink leads to the game server. The bridge's `in_game` gate keeps
@@ -910,6 +941,7 @@ impl WebSocketHandler for ProxyHandler {
                                 raw: FrameRaw::Binary(b64(&frame.bytes)),
                                 parsed,
                                 emitted: 0,
+                                injected: true,
                             });
                         }
                         Err(tungstenite::Error::ConnectionClosed)
@@ -920,11 +952,24 @@ impl WebSocketHandler for ProxyHandler {
                         }
                     }
                 }
+
+                Some(frame) = packet_rx.recv() => {
+                    let message = Message::Binary(frame.into());
+                    let Some(out) = self.handle_message(&ctx, message, &bridge, true).await else {
+                        continue;
+                    };
+                    if let Err(e) = sink.send(out).await {
+                        if !matches!(e, tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) {
+                            error!("WebSocket packet injection error: {e}");
+                        }
+                        break;
+                    }
+                }
                 next = stream.next() => {
                     let Some(message) = next else { break };
                     match message {
                         Ok(message) => {
-                            let Some(out) = self.handle_message(&ctx, message, &bridge).await else {
+                            let Some(out) = self.handle_message(&ctx, message, &bridge, false).await else {
                                 continue;
                             };
                             match sink.send(out).await {
@@ -955,6 +1000,21 @@ impl WebSocketHandler for ProxyHandler {
             }
         }
 
+        if is_uplink {
+            self.packet_senders
+                .lock()
+                .expect("packet senders mutex poisoned")
+                .remove(&client);
+            if let Some(autoplay) = &self.autoplay {
+                let mut selected = autoplay.mitm_packet_tx.write().await;
+                if selected
+                    .as_ref()
+                    .is_some_and(|tx| tx.same_channel(&packet_tx))
+                {
+                    *selected = None;
+                }
+            }
+        }
         self.release_bridge(client, bridge);
     }
 }
@@ -965,6 +1025,7 @@ impl ProxyHandler {
         ctx: &WebSocketContext,
         msg: Message,
         bridge: &SharedBridge,
+        injected: bool,
     ) -> Option<Message> {
         let client = client_addr(ctx);
         let (tag, dir, dir_arrow, uri) = match ctx {
@@ -990,7 +1051,32 @@ impl ProxyHandler {
                     let mut b = bridge.lock().expect("bridge mutex poisoned");
                     b.parse(dir, buf)
                 };
-                self.record_frame(client, dir, FrameRaw::Binary(b64(buf)), buf.len(), &result);
+                if dir == Direction::Down
+                    && result
+                        .parsed
+                        .as_ref()
+                        .is_some_and(|p| p.method == ".lq.ActionPrototype")
+                {
+                    let tx = self
+                        .packet_senders
+                        .lock()
+                        .expect("packet senders mutex poisoned")
+                        .get(&client)
+                        .cloned();
+                    if let (Some(autoplay), Some(tx)) = (&self.autoplay, tx) {
+                        *autoplay.packet_bridge.write().await = Some(bridge.clone());
+                        *autoplay.mitm_packet_tx.write().await = Some(tx);
+                        info!("autoplay: MITM packet target selected from ActionPrototype flow {client}");
+                    }
+                }
+                self.record_frame(
+                    client,
+                    dir,
+                    FrameRaw::Binary(b64(buf)),
+                    buf.len(),
+                    &result,
+                    injected,
+                );
                 self.dispatch_events(dir_arrow, &uri, result.events);
             }
             Message::Text(t) => {
@@ -1007,6 +1093,7 @@ impl ProxyHandler {
                     FrameRaw::Text(t.to_string()),
                     buf.len(),
                     &result,
+                    injected,
                 );
                 self.dispatch_events(dir_arrow, &uri, result.events);
             }
@@ -1041,6 +1128,7 @@ impl ProxyHandler {
         raw: FrameRaw,
         size: usize,
         result: &bridge::ParseResult,
+        injected: bool,
     ) {
         let direction = match dir {
             Direction::Down => FrameDirection::Down,
@@ -1054,6 +1142,7 @@ impl ProxyHandler {
             raw,
             parsed: result.parsed.clone(),
             emitted: result.events.len(),
+            injected,
         });
     }
 }

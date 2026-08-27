@@ -75,8 +75,7 @@ export type PurchasePhase =
 
 type StartOpts = {
   baseUrl: string
-  /** Proxy URL for the inference server ('' = direct). */
-  proxy: string
+  useSystemProxy: boolean
   product: Product
   provider: PaymentProvider
   /** One-time purchases: stack the bought time onto this existing key. */
@@ -88,7 +87,7 @@ type PurchaseStore = {
   product: Product | null
   provider: PaymentProvider
   baseUrl: string
-  proxy: string
+  useSystemProxy: boolean
   approveUrl: string | null
   /** One-time: the prepaid redeem code once `ready` (also emailed). */
   code: string | null
@@ -145,7 +144,7 @@ const initial = {
   // always stamps the caller's choice.)
   provider: 'creem' as PaymentProvider,
   baseUrl: '',
-  proxy: '',
+  useSystemProxy: false,
   approveUrl: null,
   code: null,
   key: null,
@@ -200,9 +199,9 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
       // payer's address, so there is no separate account email to link here.
       const resp = await invoke<RedeemResponse>('native_api_redeem', {
         baseUrl: s.baseUrl,
-        proxy: s.proxy,
         code,
         renewKey: s.renewKey ?? undefined,
+        useSystemProxy: s.useSystemProxy,
       })
       if (gen !== generation) return
       if (resp.key) {
@@ -234,8 +233,8 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
     try {
       const st = await invoke<KeyStatus>('native_api_key_status', {
         baseUrl: get().baseUrl,
-        proxy: get().proxy,
         key,
+        useSystemProxy: get().useSystemProxy,
       })
       if (gen !== generation) return
       if (st.expires_at) set({ until: st.expires_at })
@@ -311,7 +310,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
         // order handler already delivers key-first.
         const r = await invoke<OrderResult>('native_api_checkout_result', {
           baseUrl: get().baseUrl,
-          proxy: get().proxy,
+          useSystemProxy: get().useSystemProxy,
           checkoutId: ids.checkoutId,
           claim: ids.claim,
         })
@@ -321,9 +320,9 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
       } else if (ids.orderId) {
         const r = await invoke<OrderResult>('native_api_order_result', {
           baseUrl: get().baseUrl,
-          proxy: get().proxy,
           orderId: ids.orderId,
           claim: ids.claim,
+          useSystemProxy: get().useSystemProxy,
         })
         if (gen !== generation) return
         pollDelay = POLL_MS
@@ -331,9 +330,9 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
       } else {
         const r = await invoke<SubscriptionResult>('native_api_subscription_result', {
           baseUrl: get().baseUrl,
-          proxy: get().proxy,
           subscriptionId: ids.subscriptionId,
           claim: ids.claim,
+          useSystemProxy: get().useSystemProxy,
         })
         if (gen !== generation) return
         pollDelay = POLL_MS
@@ -385,7 +384,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
         product: opts.product,
         provider: opts.provider,
         baseUrl: opts.baseUrl,
-        proxy: opts.proxy,
+        useSystemProxy: opts.useSystemProxy,
         renewKey,
       })
       void (async () => {
@@ -393,7 +392,7 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
           if (opts.provider === 'creem') {
             const o = await invoke<CreatedCheckout>('native_api_create_checkout', {
               baseUrl: opts.baseUrl,
-              proxy: opts.proxy,
+              useSystemProxy: opts.useSystemProxy,
               product: opts.product.id,
               // Same rule as the PayPal order: server-side redeem unless the
               // code itself is needed to renew an existing key. Subscriptions
@@ -408,12 +407,12 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
           } else if (opts.product.kind === 'onetime') {
             const o = await invoke<CreatedOrder>('native_api_create_order', {
               baseUrl: opts.baseUrl,
-              proxy: opts.proxy,
               product: opts.product.id,
               // Let the server redeem, unless we need the code itself to aim
               // /v3/redeem at an existing key. Server-side redeem is what puts
               // the KEY in the buyer's backup email instead of a spent code.
               redeem: renewKey === null,
+              useSystemProxy: opts.useSystemProxy,
             })
             if (gen !== generation) return
             activeIds = { orderId: o.order_id, claim: o.claim_secret }
@@ -422,8 +421,8 @@ export const usePurchaseStore = create<PurchaseStore>((set, get) => {
           } else {
             const o = await invoke<CreatedSubscription>('native_api_create_subscription', {
               baseUrl: opts.baseUrl,
-              proxy: opts.proxy,
               product: opts.product.id,
+              useSystemProxy: opts.useSystemProxy,
             })
             if (gen !== generation) return
             activeIds = { subscriptionId: o.subscription_id, claim: o.claim_secret }

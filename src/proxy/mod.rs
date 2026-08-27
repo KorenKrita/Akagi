@@ -7,6 +7,7 @@ mod upstream;
 pub use handler::ProxyHandler;
 
 use crate::{
+    autoplay::AutoplayContext,
     config::{HttpCaptureConfig, Platform, ProxyConfig},
     event_bus::{MjaiBus, NotifyBus},
     logger::Session,
@@ -34,6 +35,7 @@ pub async fn start_proxy<F>(
     notify_tx: Option<NotifyBus>,
     force_close: Arc<Notify>,
     inject: Option<crate::autoplay::inject::SharedInjectBus>,
+    autoplay: Option<Arc<AutoplayContext>>,
     shutdown: F,
 ) -> Result<()>
 where
@@ -56,19 +58,32 @@ where
         mjai_tx,
         notify_tx,
         force_close,
+        config.force_mitm_all,
         http_cfg.policy(),
         certs.clone(),
         config.rewrite_certificate_report,
         config.block_telemetry,
         inject,
+        autoplay,
     )?;
+
+    let upstream_proxy = if config.upstream_enabled {
+        config
+            .upstream
+            .as_deref()
+            .map(str::parse)
+            .transpose()
+            .context("Invalid upstream proxy URI")?
+    } else {
+        None
+    };
 
     info!("Starting proxy on {addr}");
 
     let proxy = Proxy::builder()
         .with_addr(addr)
         .with_ca(ca)
-        .with_http_connector(upstream::http_connector(certs.clone()))
+        .with_http_connector(upstream::http_connector(upstream_proxy, certs.clone())?)
         .with_http_handler(handler.clone())
         .with_websocket_handler(handler)
         .with_websocket_connector(upstream::websocket_connector(certs.clone()))

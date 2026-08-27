@@ -38,7 +38,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use super::api::{check, http_client, normalize_base};
+use super::api::{check, configure_proxy, normalize_base};
 
 /// `create-*` calls block on PayPal upstream (the server creates the order /
 /// subscription there before answering), so give them more headroom than the
@@ -176,15 +176,19 @@ struct SubscriptionResultRequest<'a> {
 /// email — carries: `true` for the API key itself, `false` for a redeem code
 /// the caller must exchange. Pass `false` only when the code is needed as a
 /// code, i.e. to renew an existing key through `/v3/redeem`'s `renew_key`.
-pub async fn create_order(
+pub async fn create_order(base_url: &str, product: &str, redeem: bool) -> Result<CreatedOrder> {
+    create_order_with_proxy(base_url, product, redeem, false).await
+}
+
+pub async fn create_order_with_proxy(
     base_url: &str,
-    proxy: &str,
     product: &str,
     redeem: bool,
+    use_system_proxy: bool,
 ) -> Result<CreatedOrder> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/create-order");
-    let resp = http_client(PURCHASE_TIMEOUT, proxy)?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&CreateOrderRequest {
             product: product.trim(),
@@ -206,15 +210,19 @@ pub async fn create_order(
 /// Idempotent and safe to repeat every few seconds until a terminal status.
 /// A wrong `claim` is a `404` and counts toward the per-IP failure guard, so
 /// never retry with guessed secrets.
-pub async fn order_result(
+pub async fn order_result(base_url: &str, order_id: &str, claim: &str) -> Result<OrderResult> {
+    order_result_with_proxy(base_url, order_id, claim, false).await
+}
+
+pub async fn order_result_with_proxy(
     base_url: &str,
-    proxy: &str,
     order_id: &str,
     claim: &str,
+    use_system_proxy: bool,
 ) -> Result<OrderResult> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/order-result");
-    let resp = http_client(PURCHASE_TIMEOUT, proxy)?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&OrderResultRequest { order_id, claim })
         .send()
@@ -229,14 +237,18 @@ pub async fn order_result(
 /// `POST /paypal/create-subscription` (no auth) — start a recurring
 /// subscription for `product` (e.g. `pro-monthly`). Same non-idempotency
 /// caveat as [`create_order`].
-pub async fn create_subscription(
+pub async fn create_subscription(base_url: &str, product: &str) -> Result<CreatedSubscription> {
+    create_subscription_with_proxy(base_url, product, false).await
+}
+
+pub async fn create_subscription_with_proxy(
     base_url: &str,
-    proxy: &str,
     product: &str,
+    use_system_proxy: bool,
 ) -> Result<CreatedSubscription> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/create-subscription");
-    let resp = http_client(PURCHASE_TIMEOUT, proxy)?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&CreateSubscriptionRequest {
             product: product.trim(),
@@ -254,13 +266,21 @@ pub async fn create_subscription(
 /// `ready` the response carries the API key directly (no redeem step).
 pub async fn subscription_result(
     base_url: &str,
-    proxy: &str,
     subscription_id: &str,
     claim: &str,
 ) -> Result<SubscriptionResult> {
+    subscription_result_with_proxy(base_url, subscription_id, claim, false).await
+}
+
+pub async fn subscription_result_with_proxy(
+    base_url: &str,
+    subscription_id: &str,
+    claim: &str,
+    use_system_proxy: bool,
+) -> Result<SubscriptionResult> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/subscription-result");
-    let resp = http_client(PURCHASE_TIMEOUT, proxy)?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&SubscriptionResultRequest {
             subscription_id,
@@ -287,13 +307,13 @@ pub async fn subscription_result(
 /// `renew_key`).
 pub async fn create_checkout(
     base_url: &str,
-    proxy: &str,
+    use_system_proxy: bool,
     product: &str,
     redeem: bool,
 ) -> Result<CreatedCheckout> {
     let base = normalize_base(base_url);
     let url = format!("{base}/creem/create-checkout");
-    let resp = http_client(PURCHASE_TIMEOUT, proxy)?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&CreateCheckoutRequest {
             product: product.trim(),
@@ -316,13 +336,13 @@ pub async fn create_checkout(
 /// contract as PayPal.
 pub async fn checkout_result(
     base_url: &str,
-    proxy: &str,
+    use_system_proxy: bool,
     checkout_id: &str,
     claim: &str,
 ) -> Result<OrderResult> {
     let base = normalize_base(base_url);
     let url = format!("{base}/creem/result");
-    let resp = http_client(PURCHASE_TIMEOUT, proxy)?
+    let resp = build_http(use_system_proxy)?
         .post(&url)
         .json(&CheckoutResultRequest { checkout_id, claim })
         .send()
@@ -332,6 +352,12 @@ pub async fn checkout_result(
     resp.json::<OrderResult>()
         .await
         .context("parse /creem/result response")
+}
+
+fn build_http(use_system_proxy: bool) -> Result<reqwest::Client> {
+    let builder = reqwest::Client::builder().timeout(PURCHASE_TIMEOUT);
+    let builder = configure_proxy(builder, use_system_proxy)?;
+    builder.build().context("build purchase http client")
 }
 
 #[cfg(test)]
@@ -518,18 +544,18 @@ mod tests {
             ),
         ]);
 
-        let created = create_order(&format!("{base}/"), "", "pro-30", false)
+        let created = create_order(&format!("{base}/"), "pro-30", false)
             .await
             .unwrap();
         assert_eq!(created.order_id, "OID1");
         assert_eq!(created.claim_secret, "S1");
 
-        let pending = order_result(&base, "", &created.order_id, &created.claim_secret)
+        let pending = order_result(&base, &created.order_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(pending.status, "pending");
 
-        let ready = order_result(&base, "", &created.order_id, &created.claim_secret)
+        let ready = order_result(&base, &created.order_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(ready.status, "ready");
@@ -561,10 +587,10 @@ mod tests {
             ),
         ]);
 
-        let created = create_order(&base, "", "pro-30", true).await.unwrap();
+        let created = create_order(&base, "pro-30", true).await.unwrap();
         assert_eq!(created.order_id, "OID2");
 
-        let ready = order_result(&base, "", &created.order_id, &created.claim_secret)
+        let ready = order_result(&base, &created.order_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(ready.status, "ready");
@@ -593,7 +619,7 @@ mod tests {
             r#"{"subscription_id":"I-2","approve_url":"https://paypal.example/sub","claim_secret":"S4"}"#.into(),
         )]);
 
-        create_subscription(&base, "", "pro-monthly").await.unwrap();
+        create_subscription(&base, "pro-monthly").await.unwrap();
 
         let reqs = served.join().unwrap();
         assert!(reqs[0].contains(r#"{"product":"pro-monthly"}"#));
@@ -613,10 +639,10 @@ mod tests {
             ),
         ]);
 
-        let created = create_subscription(&base, "", "pro-monthly").await.unwrap();
+        let created = create_subscription(&base, "pro-monthly").await.unwrap();
         assert_eq!(created.subscription_id, "I-1");
 
-        let ready = subscription_result(&base, "", &created.subscription_id, &created.claim_secret)
+        let ready = subscription_result(&base, &created.subscription_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(ready.status, "ready");
@@ -647,16 +673,16 @@ mod tests {
             ),
         ]);
 
-        let created = create_checkout(&base, "", "pro-30", true).await.unwrap();
+        let created = create_checkout(&base, false, "pro-30", true).await.unwrap();
         assert_eq!(created.checkout_id, "ch_A1");
         assert_eq!(created.claim_secret, "S5");
 
-        let pending = checkout_result(&base, "", &created.checkout_id, &created.claim_secret)
+        let pending = checkout_result(&base, false, &created.checkout_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(pending.status, "pending");
 
-        let ready = checkout_result(&base, "", &created.checkout_id, &created.claim_secret)
+        let ready = checkout_result(&base, false, &created.checkout_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(ready.status, "ready");
@@ -690,10 +716,10 @@ mod tests {
             ),
         ]);
 
-        let created = create_checkout(&base, "", "pro-monthly", false)
+        let created = create_checkout(&base, false, "pro-monthly", false)
             .await
             .unwrap();
-        let ready = checkout_result(&base, "", &created.checkout_id, &created.claim_secret)
+        let ready = checkout_result(&base, false, &created.checkout_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(ready.status, "ready");
@@ -716,7 +742,7 @@ mod tests {
             "400 Bad Request",
             r#"{"error":"unknown product"}"#.into(),
         )]);
-        let err = create_order(&base, "", "nope-99", true).await.unwrap_err();
+        let err = create_order(&base, "nope-99", true).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("create order failed"), "got: {msg}");
         assert!(msg.contains("HTTP 400"), "got: {msg}");
@@ -729,7 +755,7 @@ mod tests {
     #[tokio::test]
     async fn order_result_wrong_claim_is_404() {
         let (base, served) = mock_http(vec![("404 Not Found", r#"{"error":"not found"}"#.into())]);
-        let err = order_result(&base, "", "OID1", "WRONG").await.unwrap_err();
+        let err = order_result(&base, "OID1", "WRONG").await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("HTTP 404"), "got: {msg}");
         served.join().unwrap();

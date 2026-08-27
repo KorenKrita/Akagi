@@ -19,7 +19,7 @@ export function isValidProxyUrl(s: string): boolean {
  * so a disabled-but-nonempty proxy never reaches a command.
  */
 export function effectiveProxy(api: NativeApiConfig): string {
-  return api.proxy_enabled ? api.proxy.trim() : ''
+  return api.proxy_enabled ? (api.proxy ?? '').trim() : ''
 }
 
 /**
@@ -28,5 +28,5 @@ export function effectiveProxy(api: NativeApiConfig): string {
  * somewhere).
  */
 export function proxyConfigValid(api: NativeApiConfig): boolean {
-  return !api.proxy_enabled || isValidProxyUrl(api.proxy)
+  return !api.proxy_enabled || isValidProxyUrl(api.proxy ?? '')
 }

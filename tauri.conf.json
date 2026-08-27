@@ -3,7 +3,7 @@
   "identifier": "com.akagi.akagi",
   "build": {
     "frontendDist": "./frontend/dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:2420",
     "beforeDevCommand": {
       "script": "npm run dev",
       "cwd": "./frontend"

@@ -11,7 +11,8 @@
 //! - **System**: `python3` and `uv` are looked up on `PATH` via the `which`
 //!   crate. Used during development (`cargo run` from a checkout without a
 //!   populated `runtime/`) and as a graceful fallback if the bundled
-//!   binaries are missing.
+//!   binaries are missing. Dev checkouts also look in the current working
+//!   directory so `cargo run` can use `runtime/` from the repo root.
 //!
 //! Per-bot venvs live under `<bot_dir>/.akagi/venv` so they don't clash with
 //! a developer's own `.venv` if they happen to keep one in the bot folder.
@@ -62,7 +63,10 @@ impl PythonRuntime {
     ///    secondary fallback so `cargo run` and any future Tauri-bundled
     ///    install (`/usr/lib/akagi/`, `.app/Contents/Resources/`) keep
     ///    working.
-    /// 3. **System PATH**: `python3` and `uv` resolved via the `which` crate.
+    /// 3. **Current working directory**: `runtime/...` under the repo root
+    ///    during `cargo run` from a checkout.
+    /// 4. **System PATH**: `python3`/`python` and `uv` resolved via the
+    ///    `which` crate.
     ///
     /// Pass `None` for `resource_dir` outside Tauri (tests, CLI tools).
     pub fn locate(resource_dir: Option<&Path>) -> Result<Self> {
@@ -74,7 +78,13 @@ impl PythonRuntime {
                 return Ok(rt);
             }
         }
-        try_system().context("no bundled runtime found and neither `python3` nor `uv` is on PATH")
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Some(rt) = try_bundled(&cwd) {
+                return Ok(rt);
+            }
+        }
+        try_system()
+            .context("no bundled runtime found and neither `python3`/`python` nor `uv` is on PATH")
     }
 
     pub fn python(&self) -> &Path {
@@ -601,6 +611,35 @@ mod tests {
         assert!(try_bundled(tmp.path()).is_none());
     }
 
+    #[test]
+    fn try_bundled_finds_windows_layout_when_present() {
+        let tmp = TempDir::new().unwrap();
+        let triple = host_triple();
+        let py = tmp
+            .path()
+            .join("runtime")
+            .join("python")
+            .join(triple)
+            .join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "bin/python3"
+            });
+        let uv = tmp
+            .path()
+            .join("runtime")
+            .join("uv")
+            .join(triple)
+            .join(if cfg!(windows) { "uv.exe" } else { "uv" });
+        write(&py, "");
+        write(&uv, "");
+
+        let rt = try_bundled(tmp.path()).expect("bundled runtime should be found");
+        assert_eq!(rt.python(), py.as_path());
+        assert_eq!(rt.uv(), uv.as_path());
+        assert_eq!(rt.mode(), RuntimeMode::Bundled);
+    }
+
     /// Regression: portable zip relies on `try_bundled_exe_adjacent` to
     /// find `<exe_parent>/runtime/...` because Tauri's `resource_dir()`
     /// doesn't return exe-adjacent on Linux/macOS in a portable layout.
@@ -690,7 +729,7 @@ mod tests {
         );
         let cfg = std::fs::read_to_string(venv.join("pyvenv.cfg")).unwrap();
         assert!(
-            cfg.contains(&format!("home = {}", fresh_dir.display())),
+            cfg.contains(&format!("home = {}", std::fs::canonicalize(&fresh_dir).unwrap().display())),
             "pyvenv.cfg `home` must be rewritten to the fresh bin dir, got:\n{cfg}"
         );
         assert!(

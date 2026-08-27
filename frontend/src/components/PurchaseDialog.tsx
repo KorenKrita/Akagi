@@ -36,6 +36,7 @@ import { usePurchaseStore, type PaymentProvider } from '@/stores/purchaseStore'
 export function PurchaseDialog({
   baseUrl,
   proxy,
+  useSystemProxy,
   currentKey,
   onClose,
   onNewKey,
@@ -43,6 +44,8 @@ export function PurchaseDialog({
   baseUrl: string
   /** Proxy URL for the inference server ('' = direct). */
   proxy: string
+  /** Whether the OS system proxy is honoured for purchase traffic. */
+  useSystemProxy: boolean
   currentKey: string
   onClose: () => void
   onNewKey: (key: string) => void
@@ -104,7 +107,7 @@ export function PurchaseDialog({
     setErr(null)
     usePurchaseStore.getState().start({
       baseUrl,
-      proxy,
+      useSystemProxy,
       product: selected,
       provider,
       renewKey: renew && selected.kind === 'onetime' ? currentKey : undefined,

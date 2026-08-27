@@ -13,30 +13,39 @@
 //! manager logs a warning and skips the click. The bot pipeline is
 //! untouched; the user can still play the round manually.
 
-use crate::autoplay::cdp_input::{dispatch_click_shaped, evaluate_canvas_rect};
+use crate::autoplay::cdp_input::{
+    dispatch_click, dispatch_click_shaped, dispatch_mouse_move, dispatch_ws_binary,
+    evaluate_canvas_rect,
+};
 use crate::autoplay::context::{AutoplayContext, CanvasRect};
 use crate::autoplay::inject::InjectFrame;
-use crate::autoplay::majsoul::MajsoulAutoplay;
-use crate::autoplay::platform::{ActionContext, PlatformAutoplay, Step};
 use crate::autoplay::riichi_city::RiichiCityAutoplay;
 use crate::autoplay::tenhou::TenhouAutoplay;
 use crate::autoplay::verify::InputTicket;
+use crate::autoplay::majsoul::{is_dealer_first_discard, MajsoulAutoplay};
+use crate::autoplay::platform::{ActionContext, PlatformAutoplay, Step};
 use crate::bot::BotResponse;
-use crate::config::AppConfig;
+use crate::bridge::majsoul::tile::mjai_to_ms;
+use crate::bridge::BuildHints;
+use crate::config::{AppConfig, MajsoulAutoplayMode};
 use crate::event_bus::{BotResponseBus, MjaiBus, NotifyBus};
+use crate::game_state::snapshot::Phase;
 use crate::game_state::tracker::GameTracker;
 use crate::schema::MjaiEvent;
 use chromiumoxide::page::Page;
-use riichienv_core::action::Action;
+use rand::Rng;
+use riichienv_core::action::{Action, ActionType};
+use riichienv_core::parser::tid_to_mjai;
 use riichienv_core::state::legal_actions::GameStateLegalActions;
 use riichienv_core::state_3p::legal_actions::GameState3PLegalActions;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast::error::RecvError, Mutex, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// How long before a cached `CanvasRect` is treated as stale and re-queried.
 const CANVAS_RECT_TTL: Duration = Duration::from_secs(30);
+const ACTION_RETRY_AFTER: Duration = Duration::from_secs(1);
 
 pub struct AutoplayManager {
     cfg: Arc<RwLock<AppConfig>>,
@@ -61,6 +70,7 @@ pub struct AutoplayManager {
     /// Directory holding the loaded config file; the script lives at
     /// `<config_dir>/delay.lua`.
     config_dir: std::path::PathBuf,
+    rematch_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 #[derive(Default)]
@@ -105,6 +115,7 @@ impl AutoplayManager {
             state: ManagerState::default(),
             delay_script: crate::autoplay::delay::ScriptHost::default(),
             config_dir,
+            rematch_task: None,
         }
     }
 
@@ -127,6 +138,8 @@ impl AutoplayManager {
             )
             .await;
         });
+
+        self.start_lobby_watcher();
 
         loop {
             tokio::select! {
@@ -240,6 +253,24 @@ impl AutoplayManager {
             delay_script: self.delay_script.script(),
             tenhou: tenhou_state.as_ref(),
         };
+
+        // Packet mode (Majsoul): send a protocol frame over the game's own
+        // WebSocket instead of clicking the UI. Click mode (and every other
+        // platform) falls through to the click path below.
+        if platform_kind == crate::config::Platform::Majsoul
+            && matches!(cfg.mode, crate::config::MajsoulAutoplayMode::Packet)
+        {
+            self.handle_packet_action(
+                &resp,
+                &cfg,
+                planned_budget,
+                our_seat,
+                legal_actions,
+                &snapshot,
+            )
+            .await;
+            return;
+        }
 
         let platform: &dyn PlatformAutoplay = match platform_kind {
             crate::config::Platform::Tenhou => &self.tenhou,
@@ -593,6 +624,224 @@ impl AutoplayManager {
     ///
     /// The client raises its clock display and its highlight together, so the
     /// highlight appearing is the readiness signal.
+
+    /// Packet-mode Majsoul path: build a wire frame for the bot's action
+    /// and dispatch it through the game's WebSocket bridge (see
+    /// `try_packet_action`). Falls back to nothing — packet mode never
+    /// clicks.
+    async fn handle_packet_action(
+        &mut self,
+        resp: &BotResponse,
+        cfg: &crate::config::MajsoulAutoplayConfig,
+        planned_budget: Option<crate::autoplay::budget::TimeBudget>,
+        our_seat: u8,
+        legal_actions: Vec<Action>,
+        snapshot: &crate::game_state::snapshot::GameStateSnapshot,
+    ) {
+        let action_retry_guard = retry_guard_for_action(&resp.action, our_seat, &snapshot);
+
+        let use_packet = matches!(cfg.mode, MajsoulAutoplayMode::Packet);
+        let allow_click = matches!(cfg.mode, MajsoulAutoplayMode::Click);
+
+        let packet_action = normalize_packet_action(
+            &resp.action,
+            our_seat,
+            &snapshot,
+            self.state.last_self_tsumo.as_deref(),
+        );
+        if use_packet && packet_action_allowed(&packet_action, our_seat, &snapshot, &legal_actions)
+        {
+            let dealer_first_discard = matches!(packet_action, MjaiEvent::Dahai { .. })
+                && is_dealer_first_discard(&snapshot, our_seat);
+            let packet_delay_ms = sample_packet_delay(&cfg, dealer_first_discard);
+            tokio::time::sleep(Duration::from_millis(packet_delay_ms.into())).await;
+            if planned_budget.is_some() {
+                let current = self.ctx.time_budget.read().ok().and_then(|g| *g);
+                if current.map(|b| b.opened_at) != planned_budget.map(|b| b.opened_at) {
+                    debug!("autoplay: packet decision window closed during delay");
+                    return;
+                }
+            }
+            if let Some(guard) = action_retry_guard.as_ref() {
+                if !self.action_still_pending(guard).await {
+                    debug!(
+                        "autoplay: packet action {:?} became stale during delay",
+                        packet_action
+                    );
+                    return;
+                }
+            }
+            let packet_hints = packet_build_hints(
+                &packet_action,
+                our_seat,
+                &snapshot,
+                &legal_actions,
+                self.state.last_self_tsumo.as_deref(),
+            );
+            match self.try_packet_action(&packet_action, &packet_hints).await {
+                PacketDispatch::Sent => {
+                    if let Some(guard) = action_retry_guard.as_ref() {
+                        tokio::time::sleep(ACTION_RETRY_AFTER).await;
+                        if self.action_still_pending(guard).await {
+                            debug!(
+                                "autoplay: packet action {:?} still pending after {:?}; retrying",
+                                packet_action, ACTION_RETRY_AFTER
+                            );
+                            let _ = self.try_packet_action(&packet_action, &packet_hints).await;
+                            if self.action_still_pending(guard).await {
+                                error!(
+                                "autoplay: packet action {:?} did not advance game state after retry; phase={:?} current_player={} our_seat={} legal_actions=[{}] player={} before={:?} hints={:?}",
+                                packet_action,
+                                snapshot.phase,
+                                snapshot.current_player,
+                                our_seat,
+                                legal_actions_summary(&legal_actions),
+                                player_snapshot_summary(&snapshot, our_seat),
+                                guard.before,
+                                packet_hints
+                            );
+                                return;
+                            } else {
+                                self.after_action_sent(&resp.action, our_seat, false);
+                                return;
+                            }
+                        } else {
+                            self.after_action_sent(&resp.action, our_seat, false);
+                            return;
+                        }
+                    } else {
+                        self.after_action_sent(&resp.action, our_seat, false);
+                        return;
+                    }
+                }
+                reason => {
+                    error!(
+                        "autoplay: packet action {:?} not sent: {:?}; phase={:?} current_player={} our_seat={} legal_actions=[{}] player={} hints={:?}",
+                        packet_action,
+                        reason,
+                        snapshot.phase,
+                        snapshot.current_player,
+                        our_seat,
+                        legal_actions_summary(&legal_actions),
+                        player_snapshot_summary(&snapshot, our_seat),
+                        packet_hints
+                    );
+                    return;
+                }
+            }
+        } else if use_packet {
+            match packet_action {
+                MjaiEvent::None => {
+                    debug!("autoplay: suppressed packet None outside a visible response window");
+                }
+                MjaiEvent::Dahai { .. } | MjaiEvent::Kita { .. } => {
+                    if snapshot.current_player == our_seat {
+                        error!(
+                            "autoplay: suppressed currently illegal packet action {:?}; phase={:?} current_player={} our_seat={} legal_actions=[{}]",
+                            packet_action,
+                            snapshot.phase,
+                            snapshot.current_player,
+                            our_seat,
+                            legal_actions_summary(&legal_actions)
+                        );
+                    } else {
+                        debug!(
+                            "autoplay: ignored stale packet action {:?}; phase={:?} current_player={} our_seat={} legal_actions=[{}]",
+                            packet_action,
+                            snapshot.phase,
+                            snapshot.current_player,
+                            our_seat,
+                            legal_actions_summary(&legal_actions)
+                        );
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        if !allow_click {
+            debug!("autoplay: packet-only mode did not send {:?}", resp.action);
+            return;
+        }
+
+    }
+
+    async fn try_packet_action(&self, action: &MjaiEvent, hints: &BuildHints) -> PacketDispatch {
+        let bridge = { self.ctx.packet_bridge.read().await.clone() };
+        let Some(bridge) = bridge else {
+            return PacketDispatch::NoPacketBridge;
+        };
+        let frame = {
+            let mut bridge = bridge.lock().expect("packet bridge mutex poisoned");
+            bridge.build_with_hints(action, hints)
+        };
+        let Some(frame) = frame else {
+            return PacketDispatch::BuildReturnedNone;
+        };
+        if let Some(result) = self.ctx.send_mitm_packet(&frame).await {
+            return match result {
+                Ok(()) => {
+                    info!("autoplay: queued MITM packet for {:?}", action);
+                    PacketDispatch::Sent
+                }
+                Err(_) => {
+                    debug!("autoplay: MITM packet WebSocket is closed for {:?}", action);
+                    PacketDispatch::HookNoOpenSocket
+                }
+            };
+        }
+        let page = { self.ctx.page.read().await.clone() };
+        let Some(page) = page else {
+            return PacketDispatch::NoPage;
+        };
+        let target_url = { self.ctx.packet_ws_url.read().await.clone() };
+        let Some(target_url) = target_url else {
+            return PacketDispatch::NoPacketWsUrl;
+        };
+        self.ctx.mark_injected_ws_frame(&frame).await;
+        match dispatch_ws_binary(&page, &target_url, &frame).await {
+            Ok(true) => {
+                info!("autoplay: sent packet for {:?}", action);
+                PacketDispatch::Sent
+            }
+            Ok(false) => {
+                debug!(
+                    "autoplay: packet WebSocket hook has no open socket for {:?}",
+                    action
+                );
+                PacketDispatch::HookNoOpenSocket
+            }
+            Err(e) => {
+                warn!("autoplay: packet dispatch failed for {:?}: {e:#}", action);
+                PacketDispatch::CdpError
+            }
+        }
+    }
+
+    fn after_action_sent(
+        &mut self,
+        action: &MjaiEvent,
+        our_seat: u8,
+        inject_reach_for_followup: bool,
+    ) {
+        // Path-B: a riichi-declaring plan resolved its declaration and its
+        // discard into one send. The bot never saw the reach, so inject a
+        // synthetic one so it emits the riichi-declaring dahai the client
+        // still owes.
+        if inject_reach_for_followup {
+            let synthetic = MjaiEvent::Reach {
+                actor: our_seat,
+                pai: None,
+            };
+            if let Err(e) = self.mjai_bus.send(synthetic) {
+                debug!("autoplay: synthetic Reach send had no subscribers: {e:?}");
+            } else {
+                info!("autoplay: injected synthetic Reach (Path B) for seat {our_seat}");
+            }
+        }
+        let _ = action;
+    }
     async fn await_turn_ready(page: &Page, timeout_ms: u32) -> bool {
         const POLL_INTERVAL: Duration = Duration::from_millis(120);
         let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
@@ -839,9 +1088,14 @@ impl AutoplayManager {
         current.map(|b| b.opened_at) == Some(planned.opened_at)
     }
 
-    /// Reload the game tab. The bridge reconnects into the in-progress
-    /// hand through its `GameRestore` path (`syncGame` replay), so the
-    /// cost is a reconnect rather than the game.
+    async fn action_still_pending(&self, guard: &ActionRetryGuard) -> bool {
+        let tracker = self.tracker.lock().await;
+        let Some(snapshot) = tracker.snapshot() else {
+            return false;
+        };
+        snapshot_fingerprint(&snapshot, guard.our_seat).as_ref() == Some(&guard.before)
+    }
+
     async fn reload_page(&mut self) {
         let page_guard = self.ctx.page.read().await;
         let Some(page) = page_guard.as_ref().cloned() else {
@@ -861,6 +1115,9 @@ impl AutoplayManager {
     fn handle_mjai_event(&mut self, ev: &MjaiEvent) {
         match ev {
             MjaiEvent::StartGame { id, .. } => {
+                if let Some(task) = self.rematch_task.take() {
+                    task.abort();
+                }
                 // Capture our seat directly from the StartGame event rather
                 // than going through the tracker. This avoids the try_lock
                 // race entirely and makes cached_our_seat available from
@@ -868,9 +1125,28 @@ impl AutoplayManager {
                 let seat = *id;
                 self.state = ManagerState::default();
                 self.state.cached_our_seat = seat;
+                self.ctx
+                    .auto_join_set_phase(crate::autoplay::context::AutoJoinPhase::InGame);
             }
             MjaiEvent::EndGame { .. } => {
                 self.state = ManagerState::default();
+                if let Some(task) = self.rematch_task.take() {
+                    task.abort();
+                }
+                info!("auto-join: EndGame received; starting settlement flow");
+                let cfg = Arc::clone(&self.cfg);
+                let ctx = Arc::clone(&self.ctx);
+                self.rematch_task = Some(tokio::spawn(async move {
+                    let settings = {
+                        let cfg = cfg.read().await;
+                        if !cfg.autoplay.enabled || !cfg.autoplay.majsoul.auto_join_game {
+                            return;
+                        }
+                        cfg.autoplay.majsoul.clone()
+                    };
+                    ctx.auto_join_record_completed();
+                    crate::autoplay::majsoul::rematch::run(ctx, settings).await;
+                }));
             }
             MjaiEvent::StartKyoku { .. } | MjaiEvent::EndKyoku => {
                 // Per-kyoku reset: keep last seen rect cache and cached seat,
@@ -878,15 +1154,9 @@ impl AutoplayManager {
                 // push_random_pre_delay uses the max delay (opening-hand guard).
                 let canvas_at = self.state.canvas_rect_at;
                 let cached_seat = self.state.cached_our_seat;
-                // The dead-click count survives too: a client that has
-                // stopped accepting presses stays that way across the kyoku
-                // boundary, and zeroing it here would need the failures to
-                // land inside one hand before anything recovered them.
-                let dead_clicks = self.state.dead_clicks;
                 self.state = ManagerState::default();
                 self.state.canvas_rect_at = canvas_at;
                 self.state.cached_our_seat = cached_seat;
-                self.state.dead_clicks = dead_clicks;
             }
             MjaiEvent::Tsumo { actor, pai } => {
                 if let Some(seat) = self.our_seat_cached() {
@@ -914,7 +1184,8 @@ impl AutoplayManager {
             | MjaiEvent::Pon { actor, .. }
             | MjaiEvent::Daiminkan { actor, .. }
             | MjaiEvent::Ankan { actor, .. }
-            | MjaiEvent::Kakan { actor, .. } => {
+            | MjaiEvent::Kakan { actor, .. }
+            | MjaiEvent::Kita { actor, .. } => {
                 if let Some(seat) = self.our_seat_cached() {
                     if *actor == seat {
                         self.state.last_self_tsumo = None;
@@ -923,6 +1194,14 @@ impl AutoplayManager {
             }
             _ => {}
         }
+    }
+
+    fn start_lobby_watcher(&mut self) {
+        let cfg = Arc::clone(&self.cfg);
+        let ctx = Arc::clone(&self.ctx);
+        self.rematch_task = Some(tokio::spawn(async move {
+            crate::autoplay::majsoul::rematch::wait_for_main_menu(ctx, cfg).await;
+        }));
     }
 
     /// Best-effort seat lookup. Uses the cached seat from `StartGame` first,
@@ -990,27 +1269,10 @@ fn discard_needs_window_guard(action: &MjaiEvent) -> bool {
 /// a chi button whose row is already open, whose effect we cannot predict.
 /// A second retry then replays the whole sequence on the theory that the
 /// opening click was the one lost.
-fn retry_slice(clicks: &[(f64, f64)], attempt: u32) -> &[(f64, f64)] {
-    if attempt == 0 && clicks.len() > 1 {
-        &clicks[clicks.len() - 1..]
-    } else {
-        clicks
-    }
-}
-
-/// Hold duration for retry press number `attempt` (0-based). The original
-/// press already ran at `base`, so the first retry — the second press
-/// overall — is the one that must hold twice as long; `attempt + 1` would
-/// have repeated the original hold verbatim and wasted the attempt.
-/// Capped so a user-configured long hold cannot escalate past 2 s.
 fn retry_hold_ms(base: u32, attempt: u32) -> u32 {
     base.saturating_mul(attempt + 2).min(2_000)
 }
 
-/// How long an action planned with no window open may wait for its window.
-/// Own-turn actions trail the deal animation by seconds; claim offers
-/// trail their discard broadcast by milliseconds, so a tight bound keeps
-/// a timed-out claim from ever landing in the next window.
 fn future_window_grace(action: &MjaiEvent) -> Duration {
     match action {
         MjaiEvent::Dahai { .. }
@@ -1019,6 +1281,280 @@ fn future_window_grace(action: &MjaiEvent) -> Duration {
         _ => Duration::from_secs(3),
     }
 }
+
+fn retry_slice(clicks: &[(f64, f64)], attempt: u32) -> &[(f64, f64)] {
+    if attempt == 0 && clicks.len() > 1 {
+        &clicks[clicks.len() - 1..]
+    } else {
+        clicks
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActionRetryGuard {
+    our_seat: u8,
+    before: SnapshotFingerprint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SnapshotFingerprint {
+    phase: Phase,
+    current_player: u8,
+    is_done: bool,
+    tehai_len: usize,
+    river_len: usize,
+    melds_len: usize,
+    kita_len: usize,
+    all_river_lens: Vec<usize>,
+    all_meld_lens: Vec<usize>,
+}
+
+#[derive(Debug)]
+enum PacketDispatch {
+    Sent,
+    NoPacketBridge,
+    BuildReturnedNone,
+    NoPage,
+    NoPacketWsUrl,
+    HookNoOpenSocket,
+    CdpError,
+}
+
+fn retry_guard_for_action(
+    action: &MjaiEvent,
+    our_seat: u8,
+    snapshot: &crate::game_state::snapshot::GameStateSnapshot,
+) -> Option<ActionRetryGuard> {
+    match action {
+        MjaiEvent::Dahai { actor, .. }
+        | MjaiEvent::Chi { actor, .. }
+        | MjaiEvent::Pon { actor, .. }
+        | MjaiEvent::Daiminkan { actor, .. }
+        | MjaiEvent::Kakan { actor, .. }
+        | MjaiEvent::Ankan { actor, .. }
+        | MjaiEvent::Kita { actor, .. }
+        | MjaiEvent::Hora { actor, .. }
+            if *actor == our_seat =>
+        {
+            Some(ActionRetryGuard {
+                our_seat,
+                before: snapshot_fingerprint(snapshot, our_seat)?,
+            })
+        }
+        MjaiEvent::Ryukyoku { .. } => Some(ActionRetryGuard {
+            our_seat,
+            before: snapshot_fingerprint(snapshot, our_seat)?,
+        }),
+        _ => None,
+    }
+}
+
+fn sample_packet_delay(cfg: &crate::config::MajsoulAutoplayConfig, dealer_first: bool) -> u32 {
+    let lo = cfg.packet_delay_min_ms.min(cfg.packet_delay_max_ms);
+    let hi = cfg.packet_delay_min_ms.max(cfg.packet_delay_max_ms);
+    let base = rand::rng().random_range(lo..=hi);
+    base.saturating_add(if dealer_first {
+        cfg.packet_dealer_first_discard_extra_delay_ms
+    } else {
+        0
+    })
+}
+
+fn snapshot_fingerprint(
+    snapshot: &crate::game_state::snapshot::GameStateSnapshot,
+    our_seat: u8,
+) -> Option<SnapshotFingerprint> {
+    let player = snapshot.players.get(our_seat as usize)?;
+    Some(SnapshotFingerprint {
+        phase: snapshot.phase.clone(),
+        current_player: snapshot.current_player,
+        is_done: snapshot.is_done,
+        tehai_len: player.tehai.len(),
+        river_len: player.river.len(),
+        melds_len: player.melds.len(),
+        kita_len: player.kita_tiles.len(),
+        all_river_lens: snapshot.players.iter().map(|p| p.river.len()).collect(),
+        all_meld_lens: snapshot.players.iter().map(|p| p.melds.len()).collect(),
+    })
+}
+
+fn normalize_packet_action(
+    action: &MjaiEvent,
+    our_seat: u8,
+    snapshot: &crate::game_state::snapshot::GameStateSnapshot,
+    last_self_tsumo: Option<&str>,
+) -> MjaiEvent {
+    let MjaiEvent::Dahai { actor, pai, .. } = action else {
+        return action.clone();
+    };
+    if *actor != our_seat {
+        return action.clone();
+    }
+    let drawn = snapshot
+        .players
+        .get(our_seat as usize)
+        .and_then(|p| p.drawn_tile.as_deref())
+        .or(last_self_tsumo);
+    let moqie = !is_dealer_first_discard(snapshot, our_seat) && drawn == Some(pai.as_str());
+    MjaiEvent::Dahai {
+        actor: *actor,
+        pai: pai.clone(),
+        tsumogiri: moqie,
+    }
+}
+
+fn packet_action_allowed(
+    action: &MjaiEvent,
+    our_seat: u8,
+    snapshot: &crate::game_state::snapshot::GameStateSnapshot,
+    legal_actions: &[Action],
+) -> bool {
+    match action {
+        MjaiEvent::None => {
+            snapshot.phase == Phase::WaitResponse
+                && legal_actions
+                    .iter()
+                    .any(|a| a.action_type == ActionType::Pass)
+                && legal_actions.iter().any(|a| {
+                    matches!(
+                        a.action_type,
+                        ActionType::Chi | ActionType::Pon | ActionType::Daiminkan | ActionType::Ron
+                    )
+                })
+        }
+        MjaiEvent::Dahai { actor, pai, .. } => {
+            *actor == our_seat
+                && snapshot.phase == Phase::WaitAct
+                && snapshot.current_player == our_seat
+                && legal_actions.iter().any(|a| {
+                    a.action_type == ActionType::Discard
+                        && a.tile.map(tid_to_mjai).as_deref() == Some(pai.as_str())
+                })
+        }
+        MjaiEvent::Kita { actor, .. } => {
+            *actor == our_seat
+                && snapshot.phase == Phase::WaitAct
+                && snapshot.current_player == our_seat
+                && legal_actions
+                    .iter()
+                    .any(|a| a.action_type == ActionType::Kita)
+        }
+        MjaiEvent::Reach { actor, .. }
+        | MjaiEvent::Chi { actor, .. }
+        | MjaiEvent::Pon { actor, .. }
+        | MjaiEvent::Daiminkan { actor, .. }
+        | MjaiEvent::Ankan { actor, .. }
+        | MjaiEvent::Kakan { actor, .. }
+        | MjaiEvent::Hora { actor, .. } => *actor == our_seat,
+        MjaiEvent::Ryukyoku { .. } => true,
+        _ => false,
+    }
+}
+
+fn legal_actions_summary(legal_actions: &[Action]) -> String {
+    legal_actions
+        .iter()
+        .map(|a| {
+            let tile = a.tile.map(tid_to_mjai).unwrap_or_else(|| "-".to_string());
+            let consume = if a.consume_tiles.is_empty() {
+                "-".to_string()
+            } else {
+                a.consume_tiles
+                    .iter()
+                    .copied()
+                    .map(tid_to_mjai)
+                    .collect::<Vec<_>>()
+                    .join("/")
+            };
+            let actor = a
+                .actor
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            format!(
+                "{:?}:tile={tile}:consume={consume}:actor={actor}",
+                a.action_type
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn packet_build_hints(
+    action: &MjaiEvent,
+    our_seat: u8,
+    snapshot: &crate::game_state::snapshot::GameStateSnapshot,
+    legal_actions: &[Action],
+    last_self_tsumo: Option<&str>,
+) -> BuildHints {
+    let mut hints = BuildHints {
+        our_seat: Some(our_seat),
+        ..BuildHints::default()
+    };
+    match action {
+        MjaiEvent::Dahai { actor, pai, .. } if *actor == our_seat => {
+            let drawn = snapshot
+                .players
+                .get(our_seat as usize)
+                .and_then(|p| p.drawn_tile.as_deref())
+                .or(last_self_tsumo);
+            let moqie = !is_dealer_first_discard(snapshot, our_seat) && drawn == Some(pai.as_str());
+            hints.self_operation_index = Some(0);
+            hints.self_operation_tile = mjai_to_ms(pai).ok().map(str::to_string);
+            hints.self_operation_moqie = Some(moqie);
+        }
+        MjaiEvent::Kakan { actor, pai, .. } if *actor == our_seat => {
+            let index = legal_actions
+                .iter()
+                .filter(|a| a.action_type == ActionType::Kakan)
+                .position(|a| a.tile.map(tid_to_mjai).as_deref() == Some(pai.as_str()))
+                .unwrap_or(0) as u32;
+            let drawn = snapshot
+                .players
+                .get(our_seat as usize)
+                .and_then(|p| p.drawn_tile.as_deref())
+                .or(last_self_tsumo);
+            hints.self_operation_index = Some(index);
+            hints.self_operation_tile = mjai_to_ms(pai).ok().map(str::to_string);
+            hints.self_operation_moqie = Some(drawn == Some(pai.as_str()));
+        }
+        MjaiEvent::Kita { actor, .. } if *actor == our_seat => {
+            let kita_index = legal_actions
+                .iter()
+                .filter(|a| a.action_type == ActionType::Kita)
+                .position(|a| a.tile.map(|t| t / 4) == Some(30))
+                .unwrap_or(0) as u32;
+            let drawn_is_north = snapshot
+                .players
+                .get(our_seat as usize)
+                .and_then(|p| p.drawn_tile.as_deref())
+                .or(last_self_tsumo)
+                == Some("N");
+            hints.self_operation_index = Some(kita_index);
+            hints.self_operation_tile = Some("4z".into());
+            hints.self_operation_moqie = Some(drawn_is_north);
+        }
+        _ => {}
+    }
+    hints
+}
+
+fn player_snapshot_summary(
+    snapshot: &crate::game_state::snapshot::GameStateSnapshot,
+    our_seat: u8,
+) -> String {
+    let Some(player) = snapshot.players.get(our_seat as usize) else {
+        return "<missing>".into();
+    };
+    format!(
+        "tehai=[{}] drawn={:?} river_len={} melds_len={} kita=[{}]",
+        player.tehai.join("/"),
+        player.drawn_tile,
+        player.river.len(),
+        player.melds.len(),
+        player.kita_tiles.join("/")
+    )
+}
+
 
 /// Execute one Riichi City decision off the plan loop: sleep the (already
 /// clamped) think time, wait for OUR decision window, hold the minimum
@@ -1182,7 +1718,7 @@ mod tests {
     use crate::game_state::tracker;
 
     /// Build a minimal `AutoplayManager` suitable for unit-testing
-    /// `handle_mjai_event`. No CDP page, no config — just enough to
+    /// `handle_mjai_event`. No CDP page, no config - just enough to
     /// exercise the mjai event handler without touching async resources.
     fn make_manager() -> AutoplayManager {
         let bus = mjai_bus();
@@ -1197,6 +1733,18 @@ mod tests {
         )
     }
 
+    #[test]
+    fn packet_delay_uses_its_own_range_and_dealer_extra() {
+        let cfg = crate::config::MajsoulAutoplayConfig {
+            packet_delay_min_ms: 123,
+            packet_delay_max_ms: 123,
+            packet_dealer_first_discard_extra_delay_ms: 456,
+            ..Default::default()
+        };
+        assert_eq!(sample_packet_delay(&cfg, false), 123);
+        assert_eq!(sample_packet_delay(&cfg, true), 579);
+    }
+
     /// Regression: `cached_our_seat` must be populated immediately when
     /// `StartGame` is received, before any bot response fires. Previously
     /// the seat was only cached inside `handle_bot_response`, so the first
@@ -1206,10 +1754,10 @@ mod tests {
     fn start_game_sets_cached_seat_immediately() {
         let mut m = make_manager();
 
-        // Before any event — no seat cached.
+        // Before any event - no seat cached.
         assert!(m.state.cached_our_seat.is_none());
 
-        // StartGame with id = Some(1) — seat must be cached right away.
+        // StartGame with id = Some(1) - seat must be cached right away.
         m.handle_mjai_event(&MjaiEvent::StartGame {
             names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
             kyoku_first: None,
@@ -1277,169 +1825,6 @@ mod tests {
         );
     }
 
-    /// A client that has stopped accepting presses stays that way across
-    /// a kyoku boundary — the failures run to the end of the game — so the
-    /// count has to survive one, or the threshold would only ever be
-    /// reached by failures packed into a single hand. It does reset for a
-    /// new game, which is a new page state.
-    #[test]
-    fn dead_click_count_survives_a_kyoku_but_not_a_game() {
-        let mut m = make_manager();
-        m.state.dead_clicks = 2;
-        m.handle_mjai_event(&MjaiEvent::EndKyoku);
-        assert_eq!(m.state.dead_clicks, 2, "the client is still not listening");
-
-        m.handle_mjai_event(&MjaiEvent::StartGame {
-            names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
-            kyoku_first: None,
-            aka_flag: None,
-            id: Some(0),
-            num_players: 4,
-            game_meta: None,
-        });
-        assert_eq!(m.state.dead_clicks, 0, "a new table is a fresh start");
-    }
-
-    /// A single-click plan (most of them: discard, pon, ron, skip) has
-    /// nothing to escalate — every attempt presses the same one click.
-    #[test]
-    fn a_single_click_plan_always_retries_that_click() {
-        let clicks = [(1.0, 2.0)];
-        assert_eq!(retry_slice(&clicks, 0), &clicks[..]);
-        assert_eq!(retry_slice(&clicks, 1), &clicks[..]);
-    }
-
-    /// A multi-click plan escalates: the committing click first (the one
-    /// pressed while the candidate row was still animating), then the whole
-    /// sequence. Re-pressing a chi button whose row is already open has an
-    /// effect we cannot predict, so it is not the first thing tried.
-    #[test]
-    fn a_multi_click_plan_retries_the_committing_click_first() {
-        let clicks = [(1.0, 2.0), (3.0, 4.0)];
-        assert_eq!(
-            retry_slice(&clicks, 0),
-            &[(3.0, 4.0)],
-            "first retry presses only the candidate/tile click"
-        );
-        assert_eq!(
-            retry_slice(&clicks, 1),
-            &clicks[..],
-            "second retry assumes the opening click was lost too"
-        );
-    }
-
-    /// Defensive: an empty plan is never verified, but the slice helper
-    /// must not panic if it ever is.
-    #[test]
-    fn no_clicks_is_not_a_panic() {
-        let clicks: [(f64, f64); 0] = [];
-        assert!(retry_slice(&clicks, 0).is_empty());
-        assert!(retry_slice(&clicks, 3).is_empty());
-    }
-
-    /// The first retry (attempt 0) is the *second* press overall and must
-    /// already escalate the hold — `attempt + 1` would repeat the original
-    /// hold verbatim and waste the attempt.
-    #[test]
-    fn retry_press_escalates_the_hold_from_the_first_retry() {
-        assert_eq!(retry_hold_ms(120, 0), 240, "second press holds twice");
-        assert_eq!(retry_hold_ms(120, 1), 360);
-        assert_eq!(retry_hold_ms(1_500, 1), 2_000, "capped at 2s");
-        assert_eq!(retry_hold_ms(u32::MAX, 5), 2_000, "no overflow");
-    }
-
-    /// Regression (stale discard into a live board): the client's discard
-    /// handler applies locally even when the turn is over, so a discard must
-    /// be dropped once the window it was planned against is gone. The riichi
-    /// plan is exempt — its own button press is what replaces the window,
-    /// and the tile is still owed.
-    #[test]
-    fn a_discard_is_guarded_by_its_window_except_for_riichi() {
-        let dahai = MjaiEvent::Dahai {
-            actor: 0,
-            pai: "1m".into(),
-            tsumogiri: false,
-        };
-        assert!(discard_needs_window_guard(&dahai));
-        let reach = MjaiEvent::Reach {
-            actor: 0,
-            pai: Some("2m".into()),
-        };
-        assert!(!discard_needs_window_guard(&reach));
-    }
-
-    /// Own-turn actions wait out the deal animation (long grace); claim
-    /// offers follow their discard within milliseconds, so their grace is
-    /// tight — a timed-out claim must never land in the next window.
-    #[test]
-    fn future_window_grace_is_tight_for_claims() {
-        let own = MjaiEvent::Dahai {
-            actor: 0,
-            pai: "1m".into(),
-            tsumogiri: false,
-        };
-        assert_eq!(future_window_grace(&own), Duration::from_secs(15));
-        let claim = MjaiEvent::Chi {
-            actor: 0,
-            target: 1,
-            pai: "3p".into(),
-            consumed: ["2p".into(), "4p".into()],
-        };
-        assert_eq!(future_window_grace(&claim), Duration::from_secs(3));
-        assert_eq!(
-            future_window_grace(&MjaiEvent::None),
-            Duration::from_secs(3)
-        );
-        // Kyuushu rides our own first-turn draw, so it gets the own-turn
-        // grace — not the claim-tight one.
-        assert_eq!(
-            future_window_grace(&MjaiEvent::Ryukyoku { deltas: None }),
-            Duration::from_secs(15)
-        );
-    }
-
-    /// The window's `opened_at` is its identity: a slot holding a different
-    /// instant — or nothing — means the plan is stale. No planned window
-    /// (other platforms) never reports movement.
-    #[test]
-    fn tenhou_window_moved_tracks_the_slot() {
-        use crate::autoplay::tenhou_state::{DecisionWindow, TenhouState};
-        let m = make_manager();
-        let w1 = DecisionWindow {
-            ops: 0,
-            opened_at: std::time::Instant::now(),
-        };
-        let put = |window| {
-            *m.ctx.tenhou_state.write().unwrap() = Some(TenhouState {
-                seat: 0,
-                hand: vec![0],
-                melds: Vec::new(),
-                is_tsumo: true,
-                window,
-            });
-        };
-
-        put(Some(w1));
-        assert!(
-            !m.tenhou_window_moved(Some(w1)),
-            "same instant — still live"
-        );
-        assert!(
-            !m.tenhou_window_moved(None),
-            "nothing planned, nothing stale"
-        );
-
-        put(None);
-        assert!(m.tenhou_window_moved(Some(w1)), "window resolved — stale");
-
-        let w2 = DecisionWindow {
-            ops: 8,
-            opened_at: std::time::Instant::now(),
-        };
-        put(Some(w2));
-        assert!(m.tenhou_window_moved(Some(w1)), "window replaced — stale");
-    }
-
     /// Observer/replay mode: `StartGame` with `id: None` must not cache a
     /// stale seat from a previous game.
     #[test]
@@ -1456,7 +1841,7 @@ mod tests {
         });
         assert_eq!(m.state.cached_our_seat, Some(0));
 
-        // New game, observer mode — no seat.
+        // New game, observer mode - no seat.
         m.handle_mjai_event(&MjaiEvent::StartGame {
             names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
             kyoku_first: None,

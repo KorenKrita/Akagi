@@ -208,10 +208,8 @@ pub async fn update_config(
 /// Flip `overlay.enabled` and apply it, without going through the Settings
 /// page's whole-config save.
 ///
-/// The overlay's own close button is the reason this exists: closing the
-/// window has to *stay* closed across restarts, and the overlay webview has no
-/// business round-tripping (and re-persisting) an entire `AppConfig` it never
-/// loaded.
+/// This backs the Game-page toolbar shortcut; the overlay's own close button
+/// closes only its window and deliberately leaves this persisted flag alone.
 #[tauri::command]
 pub async fn set_overlay_enabled(
     enabled: bool,
@@ -667,6 +665,16 @@ pub async fn get_capture_status(
     state: State<'_, AppState>,
 ) -> CmdResult<crate::schema::CaptureStatus> {
     Ok(state.capture_control.lock().await.status.clone())
+}
+
+#[tauri::command]
+pub async fn get_auto_join_status(
+    state: State<'_, AppState>,
+) -> CmdResult<crate::autoplay::context::AutoJoinStatus> {
+    let cfg = state.config.read().await;
+    Ok(state
+        .autoplay_context
+        .auto_join_status(cfg.autoplay.enabled, &cfg.autoplay.majsoul))
 }
 
 #[tauri::command]
@@ -1397,20 +1405,13 @@ pub async fn apply_update(
 #[tauri::command]
 pub async fn native_api_redeem(
     base_url: String,
-    proxy: Option<String>,
     code: String,
     email: Option<String>,
     renew_key: Option<String>,
 ) -> CmdResult<crate::bot::api::RedeemResponse> {
-    crate::bot::api::redeem(
-        &base_url,
-        proxy.as_deref().unwrap_or(""),
-        &code,
-        email.as_deref(),
-        renew_key.as_deref(),
-    )
-    .await
-    .map_err(|e| format!("{e:#}"))
+    crate::bot::api::redeem(&base_url, &code, email.as_deref(), renew_key.as_deref(), "")
+        .await
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Fetch a key's plan / expiry / live limits (`GET /v3/key`).
@@ -1431,8 +1432,8 @@ pub async fn native_api_key_status(
 #[tauri::command]
 pub async fn native_api_models(
     base_url: String,
-    proxy: Option<String>,
     key: String,
+    proxy: Option<String>,
 ) -> CmdResult<Vec<crate::bot::api::ModelInfo>> {
     crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
         .map_err(|e| format!("{e:#}"))?
@@ -1445,11 +1446,56 @@ pub async fn native_api_models(
 #[tauri::command]
 pub async fn native_api_health(
     base_url: String,
+    key: Option<String>,
     proxy: Option<String>,
 ) -> CmdResult<crate::bot::api::Health> {
     crate::bot::api::health(&base_url, proxy.as_deref().unwrap_or(""))
         .await
         .map_err(|e| format!("{e:#}"))
+}
+
+/// Probe the configured inference server immediately and release every live
+/// native bot's circuit breaker so its next real decision retries inference.
+#[tauri::command]
+pub async fn retry_native_api(state: State<'_, AppState>) -> CmdResult<crate::bot::api::Health> {
+    let cfg = state.config.read().await.bot.api.clone();
+    if !cfg.is_active() {
+        return Err("在线 API 尚未完整启用（请检查地址和密钥）".to_string());
+    }
+
+    crate::bot::native::request_api_retry();
+    let result = crate::bot::api::health_with_proxy(
+        cfg.active_base_url(),
+        cfg.use_system_proxy,
+    )
+    .await;
+
+    match result {
+        Ok(health) => {
+            let _ = state.notify_bus.send(
+                Notification::success("在线推理 API 已连接")
+                    .body("连接探测成功；下一次 Bot 决策将使用在线推理。")
+                    .id(format!(
+                        "{}-attempt-success",
+                        crate::bot::native::NATIVE_API_HEALTH_ID
+                    )),
+            );
+            Ok(health)
+        }
+        Err(error) => {
+            let reason = crate::bot::native::api_failure_reason(&error);
+            let _ = state.notify_bus.send(
+                Notification::warn("在线推理 API 手动重试失败")
+                    .body(reason.clone())
+                    .id(format!(
+                        "{}-failure-{}",
+                        crate::bot::native::NATIVE_API_HEALTH_ID,
+                        ulid::Ulid::new()
+                    )),
+            );
+            Err(reason)
+        }
+    }
 }
 
 // ---------- Whole-game review (native API, `/v3/review*`) ----------
@@ -1606,11 +1652,10 @@ pub async fn native_api_revoke_share(
 #[tauri::command]
 pub async fn native_api_create_order(
     base_url: String,
-    proxy: Option<String>,
     product: String,
     redeem: bool,
 ) -> CmdResult<crate::bot::purchase::CreatedOrder> {
-    crate::bot::purchase::create_order(&base_url, proxy.as_deref().unwrap_or(""), &product, redeem)
+    crate::bot::purchase::create_order(&base_url, &product, redeem)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1621,11 +1666,10 @@ pub async fn native_api_create_order(
 #[tauri::command]
 pub async fn native_api_order_result(
     base_url: String,
-    proxy: Option<String>,
     order_id: String,
     claim: String,
 ) -> CmdResult<crate::bot::purchase::OrderResult> {
-    crate::bot::purchase::order_result(&base_url, proxy.as_deref().unwrap_or(""), &order_id, &claim)
+    crate::bot::purchase::order_result(&base_url, &order_id, &claim)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1635,10 +1679,9 @@ pub async fn native_api_order_result(
 #[tauri::command]
 pub async fn native_api_create_subscription(
     base_url: String,
-    proxy: Option<String>,
     product: String,
 ) -> CmdResult<crate::bot::purchase::CreatedSubscription> {
-    crate::bot::purchase::create_subscription(&base_url, proxy.as_deref().unwrap_or(""), &product)
+    crate::bot::purchase::create_subscription(&base_url, &product)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1648,18 +1691,12 @@ pub async fn native_api_create_subscription(
 #[tauri::command]
 pub async fn native_api_subscription_result(
     base_url: String,
-    proxy: Option<String>,
     subscription_id: String,
     claim: String,
 ) -> CmdResult<crate::bot::purchase::SubscriptionResult> {
-    crate::bot::purchase::subscription_result(
-        &base_url,
-        proxy.as_deref().unwrap_or(""),
-        &subscription_id,
-        &claim,
-    )
-    .await
-    .map_err(|e| format!("{e:#}"))
+    crate::bot::purchase::subscription_result(&base_url, &subscription_id, &claim)
+        .await
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Start a Creem checkout (`POST /creem/create-checkout`, no auth). One
@@ -1671,13 +1708,13 @@ pub async fn native_api_subscription_result(
 #[tauri::command]
 pub async fn native_api_create_checkout(
     base_url: String,
-    proxy: Option<String>,
+    use_system_proxy: Option<bool>,
     product: String,
     redeem: bool,
 ) -> CmdResult<crate::bot::purchase::CreatedCheckout> {
     crate::bot::purchase::create_checkout(
         &base_url,
-        proxy.as_deref().unwrap_or(""),
+        use_system_proxy.unwrap_or(false),
         &product,
         redeem,
     )
@@ -1692,13 +1729,13 @@ pub async fn native_api_create_checkout(
 #[tauri::command]
 pub async fn native_api_checkout_result(
     base_url: String,
-    proxy: Option<String>,
+    use_system_proxy: Option<bool>,
     checkout_id: String,
     claim: String,
 ) -> CmdResult<crate::bot::purchase::OrderResult> {
     crate::bot::purchase::checkout_result(
         &base_url,
-        proxy.as_deref().unwrap_or(""),
+        use_system_proxy.unwrap_or(false),
         &checkout_id,
         &claim,
     )
@@ -1761,6 +1798,7 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::download_chrome_for_testing,
             $crate::ipc::commands::remove_chrome_for_testing,
             $crate::ipc::commands::get_status,
+            $crate::ipc::commands::get_auto_join_status,
             $crate::ipc::commands::get_log_dir,
             $crate::ipc::commands::open_log_folder,
             $crate::ipc::commands::open_external_url,
@@ -1788,6 +1826,7 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::native_api_review_share,
             $crate::ipc::commands::native_api_list_shares,
             $crate::ipc::commands::native_api_revoke_share,
+            $crate::ipc::commands::retry_native_api,
             $crate::ipc::commands::native_api_create_order,
             $crate::ipc::commands::native_api_order_result,
             $crate::ipc::commands::native_api_create_subscription,

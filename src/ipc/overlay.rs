@@ -15,8 +15,10 @@
 //!
 //! - at startup, `lib::run` calls [`reconcile`] once;
 //! - on every `update_config`, the command calls [`reconcile`] again;
-//! - the overlay's own close button flips `enabled` to false, which routes
-//!   back through the same path.
+//! - the Game-page toolbar can persistently toggle it through
+//!   `set_overlay_enabled`;
+//! - the overlay's own close button closes only the current window, so an
+//!   enabled overlay returns on the next launch.
 
 use crate::config::OverlayConfig;
 use tauri::{
@@ -33,7 +35,7 @@ pub const LABEL: &str = "overlay";
 
 /// Event carrying a fresh [`OverlayConfig`] to every webview: the overlay reads
 /// top-N / opacity off it, and the main window uses it to keep its own toggles
-/// in sync when the overlay is closed from the overlay's own × button.
+/// in sync with persisted setting changes.
 pub const CONFIG_EVENT: &str = "overlay-config";
 
 /// Position and size are the only state worth restoring. The plugin's default
@@ -149,8 +151,8 @@ fn apply<R: Runtime>(app: &AppHandle<R>, cfg: &OverlayConfig) {
         return;
     }
     // Broadcast, not `emit_to(LABEL, …)`: the overlay needs the new top-N /
-    // opacity, and the main window needs it to keep its toggles in sync with an
-    // overlay that was closed from its own × button.
+    // opacity, and the main window needs it to keep its toggles in sync with
+    // persisted setting changes.
     if let Err(e) = app.emit(CONFIG_EVENT, cfg) {
         warn!("overlay: could not emit {CONFIG_EVENT}: {e}");
     }

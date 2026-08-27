@@ -16,6 +16,7 @@ const api = (patch: Partial<NativeApiConfig> = {}): NativeApiConfig => ({
   key: 'sk-test-key',
   model_4p: '',
   model_3p: '',
+  use_system_proxy: false,
   proxy_enabled: false,
   proxy: '',
   react_timeout_ms: 3000,

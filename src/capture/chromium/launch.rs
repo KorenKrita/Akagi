@@ -47,6 +47,11 @@ pub fn spawn(exe: &Path, profile: &Path, cfg: &ChromiumConfig) -> Result<Spawned
     cmd.arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-features=TranslateUI,InterestFeedContentSuggestions")
+        // The game must keep processing matchmaking and room-entry events even
+        // when its window is minimized, covered, or behind Akagi.
+        .arg("--disable-background-timer-throttling")
+        .arg("--disable-backgrounding-occluded-windows")
+        .arg("--disable-renderer-backgrounding")
         .arg("--disable-search-engine-choice-screen")
         .arg("--disable-component-update")
         .arg("--disable-background-networking")

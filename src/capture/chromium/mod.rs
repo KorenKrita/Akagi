@@ -15,6 +15,7 @@ pub mod cft;
 pub mod detect;
 pub mod launch;
 pub mod profile;
+pub mod visuals;
 
 use super::{CaptureBackend, CaptureCtx, CaptureDescriptor, CaptureKind, ShutdownToken};
 use crate::capture::flow::FlowBridges;
@@ -139,6 +140,16 @@ impl CaptureBackend for ChromiumBackend {
             ctx.autoplay.clone(),
             ctx.http.clone(),
             ctx.notify_bus.clone(),
+            (ctx.platform == crate::config::Platform::Majsoul
+                && (self.cfg.show_danger_overlay || self.cfg.show_recommendation_overlay))
+                .then(|| visuals::VisualContext {
+                    show_danger: self.cfg.show_danger_overlay,
+                    show_recommendation: self.cfg.show_recommendation_overlay,
+                    bot_response_bus: ctx.bot_response_bus.clone(),
+                    analysis_bus: ctx.analysis_bus.clone(),
+                    analysis_cache: ctx.analysis_cache.clone(),
+                    game_tracker: ctx.game_tracker.clone(),
+                }),
         );
         let mut cdp_fut = Box::pin(cdp_run);
         let shutdown_fut = shutdown.wait();

@@ -56,6 +56,7 @@ impl CaptureBackend for HudsuckerBackend {
             // Riichi City autoplay injects frames through the relay; other
             // platforms ignore the channel (their autoplay clicks a page).
             ctx.autoplay.as_ref().map(|a| a.inject.clone()),
+            ctx.autoplay,
             shutdown_fut,
         )
         .await

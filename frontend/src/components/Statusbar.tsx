@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { invoke } from '@/lib/tauri'
+import { RefreshCw } from 'lucide-react'
 import { useConfigStore } from '@/stores/configStore'
 import { useApiStatusStore } from '@/stores/apiStatusStore'
 import { useCaptureStore } from '@/stores/captureStore'
@@ -35,8 +38,17 @@ export function Statusbar() {
   const config = useConfigStore((s) => s.config)
   const degraded = useApiStatusStore((s) => s.degraded)
   const apiError = useApiStatusStore((s) => s.error)
+  const lastAttemptAt = useApiStatusStore((s) => s.lastAttemptAt)
+  const retrying = useApiStatusStore((s) => s.retrying)
   const capture = useCaptureStore((s) => s.status)
   const bot = useBotStore((s) => s.status)
+  const [now, setNow] = useState(Date.now)
+
+  useEffect(() => {
+    if (!degraded || !lastAttemptAt) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [degraded, lastAttemptAt])
 
   // Capture LED — "is Akagi reading the game?" (proxy / capture transport).
   // Tooltip surfaces the capture descriptor, or the error message on failure,
@@ -77,6 +89,29 @@ export function Statusbar() {
     api.key.trim() !== '' &&
     nativeActive
 
+  const elapsedSeconds = lastAttemptAt
+    ? Math.max(0, Math.floor((now - lastAttemptAt) / 1_000))
+    : undefined
+  const elapsedLabel = elapsedSeconds === undefined
+    ? undefined
+    : elapsedSeconds < 60
+      ? t('status.api_last_attempt_seconds', { count: elapsedSeconds })
+      : t('status.api_last_attempt_minutes', { count: Math.floor(elapsedSeconds / 60) })
+
+  const retryApi = async () => {
+    const store = useApiStatusStore.getState()
+    if (store.retrying) return
+    store.setRetrying(true)
+    try {
+      await invoke('retry_native_api')
+    } catch {
+      // The backend emits the classified failure notification used by both the
+      // toast and status indicator.
+    } finally {
+      useApiStatusStore.getState().setRetrying(false)
+    }
+  }
+
   return (
     <footer className="flex items-center justify-between border-t border-border px-4 py-1.5 text-xs text-muted-foreground bg-muted/30">
       <IndicatorDot
@@ -86,15 +121,32 @@ export function Statusbar() {
       />
       <span className="flex items-center gap-3">
         {usingApi && (
-          <IndicatorDot
-            tone={degraded ? 'fault' : 'live'}
-            label={degraded ? t('status.api_degraded') : t('status.api_active')}
-            title={
-              degraded
-                ? apiError ?? t('status.api_degraded_hint')
-                : t('status.api_active_hint')
-            }
-          />
+          <span className="flex items-center gap-1.5">
+            <IndicatorDot
+              tone={degraded ? 'fault' : 'live'}
+              label={degraded ? t('status.api_degraded') : t('status.api_active')}
+              title={
+                degraded
+                  ? apiError ?? t('status.api_degraded_hint')
+                  : t('status.api_active_hint')
+              }
+            />
+            {degraded && (
+              <>
+                {elapsedLabel && <span className="text-muted-foreground/80">· {elapsedLabel}</span>}
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-muted disabled:opacity-50"
+                  onClick={() => void retryApi()}
+                  disabled={retrying}
+                  title={t('status.api_retry_hint')}
+                >
+                  <RefreshCw className={`h-3 w-3 ${retrying ? 'animate-spin' : ''}`} />
+                  {retrying ? t('status.api_retrying') : t('status.api_retry')}
+                </button>
+              </>
+            )}
+          </span>
         )}
         <IndicatorDot
           tone={botT}

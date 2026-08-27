@@ -157,15 +157,30 @@ impl Default for DelayModelConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MajsoulAutoplayMode {
+    #[default]
+    #[serde(alias = "packet_with_click_fallback")]
+    Packet,
+    Click,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MajsoulAutoplayConfig {
+    /// How Majsoul autoplay executes bot decisions.
+    pub mode: MajsoulAutoplayMode,
     /// Lower bound of the random pre-click delay (ms). The reference
     /// Akagi autoplay used `random.uniform(1.0, 3.0)` seconds; the same
     /// distribution is replicated here as `[1000, 3000]` ms by default.
     pub pre_click_delay_min_ms: u32,
     /// Upper bound of the random pre-click delay (ms).
     pub pre_click_delay_max_ms: u32,
+    /// Lower bound of the packet-mode delay before sending an action (ms).
+    pub packet_delay_min_ms: u32,
+    /// Upper bound of the packet-mode delay before sending an action (ms).
+    pub packet_delay_max_ms: u32,
     /// Inter-click delay between staged clicks within one action (e.g.
     /// reach button → riichi tile, or chi button → candidate select).
     pub inter_click_delay_ms: u32,
@@ -212,13 +227,28 @@ pub struct MajsoulAutoplayConfig {
     /// opt out (e.g. on a fast box where the animation finishes inside
     /// the regular pre-click delay anyway).
     pub dealer_first_discard_extra_delay_ms: u32,
+    /// Packet-mode-only delay for the dealer's first discard animation.
+    pub packet_dealer_first_discard_extra_delay_ms: u32,
+    /// Return to the lobby after a match and queue the configured ranked game.
+    pub auto_join_game: bool,
+    /// Ranked room: 0 bronze, 1 silver, 2 gold, 3 jade, 4 throne.
+    pub auto_join_level: u8,
+    /// Queue mode: `4e`, `4s`, `3e`, or `3s`.
+    pub auto_join_mode: String,
+    /// Stop queueing after this many completed matches. 0 = unlimited.
+    pub auto_join_stop_after_games: u32,
+    /// Stop queueing after this many minutes. 0 = unlimited.
+    pub auto_join_stop_after_minutes: u32,
 }
 
 impl Default for MajsoulAutoplayConfig {
     fn default() -> Self {
         Self {
+            mode: MajsoulAutoplayMode::default(),
             pre_click_delay_min_ms: 1000,
             pre_click_delay_max_ms: 3000,
+            packet_delay_min_ms: 1000,
+            packet_delay_max_ms: 3000,
             inter_click_delay_ms: 300,
             hover_delay_ms: 200,
             click_hold_ms: 100,
@@ -226,6 +256,12 @@ impl Default for MajsoulAutoplayConfig {
             click_retries: 2,
             reload_after_failures: 3,
             dealer_first_discard_extra_delay_ms: 2000,
+            packet_dealer_first_discard_extra_delay_ms: 2000,
+            auto_join_game: false,
+            auto_join_level: 2,
+            auto_join_mode: "3e".to_string(),
+            auto_join_stop_after_games: 0,
+            auto_join_stop_after_minutes: 0,
         }
     }
 }
@@ -258,5 +294,12 @@ mod tests {
         assert_eq!(cfg.delay.mode, default.mode);
         assert_eq!(cfg.delay.min_button_delay_ms, default.min_button_delay_ms);
         assert!(!cfg.delay.lognormal.is_empty());
+    }
+
+    #[test]
+    fn old_fallback_mode_migrates_to_packet() {
+        let cfg: AutoplayConfig =
+            toml::from_str("[majsoul]\nmode = \"packet_with_click_fallback\"\n").unwrap();
+        assert!(matches!(cfg.majsoul.mode, MajsoulAutoplayMode::Packet));
     }
 }

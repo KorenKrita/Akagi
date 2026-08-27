@@ -11,8 +11,9 @@ mod proxy;
 
 pub use autoplay::{
     AutoplayConfig, DelayDistribution, DelayMode, DelayModelConfig, MajsoulAutoplayConfig,
+    MajsoulAutoplayMode,
 };
-pub use bot::{BotConfig, NativeApiConfig};
+pub use bot::{ApiProvider, BotConfig, NativeApiConfig};
 pub use capture::{CaptureConfig, CaptureMode, ChromiumConfig, HttpCaptureConfig};
 pub use general::GeneralConfig;
 pub use logging::LoggingConfig;
@@ -168,7 +169,10 @@ pub fn load_config(cli_path: Option<&Path>) -> (AppConfig, PathBuf) {
 
     let mut cfg = match std::fs::read_to_string(&path) {
         Ok(content) => match toml::from_str::<AppConfig>(&content) {
-            Ok(config) => config,
+            Ok(mut config) => {
+                migrate_upstream_enabled_marker(&mut config, &content);
+                config
+            }
             Err(e) => {
                 eprintln!("Failed to parse config: {e}, using defaults");
                 AppConfig::default()
@@ -211,6 +215,21 @@ fn migrate_first_run_marker(cfg: &mut AppConfig, path: &Path) {
     // the wizard.
     if !body.contains("first_run_completed") {
         cfg.general.first_run_completed = true;
+    }
+}
+
+fn migrate_upstream_enabled_marker(cfg: &mut AppConfig, body: &str) {
+    if body.contains("upstream_enabled") {
+        return;
+    }
+    let has_upstream = cfg
+        .proxy
+        .upstream
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if has_upstream {
+        cfg.proxy.upstream_enabled = true;
     }
 }
 
@@ -263,6 +282,7 @@ mod tests {
         cfg.bot.api.key = "test-key-not-real".into();
         cfg.bot.api.model_4p = "4p-model".into();
         cfg.bot.api.model_3p = "3p-model".into();
+        cfg.bot.api.use_system_proxy = true;
 
         let body = toml::to_string_pretty(&cfg).unwrap();
         assert!(
@@ -276,6 +296,7 @@ mod tests {
         assert_eq!(back.bot.api.key, "test-key-not-real");
         assert_eq!(back.bot.api.model_4p, "4p-model");
         assert_eq!(back.bot.api.model_3p, "3p-model");
+        assert!(back.bot.api.use_system_proxy);
         assert!(back.bot.api.is_active());
         assert_eq!(back.bot.api.model_for(3), "3p-model");
         assert_eq!(back.bot.api.model_for(4), "4p-model");

@@ -39,7 +39,7 @@
 //! mid-kyoku has a complete stream to send — and shape it for the API in
 //! [`build_api_events`].
 
-use crate::bot::api::{ApiClient, Candidate};
+use crate::bot::api::{ApiClient, Candidate, ReactResponse};
 use crate::bot::runner::BotRunner;
 use crate::bot::types::BotResponse;
 use crate::config::{AppConfig, NativeApiConfig};
@@ -50,6 +50,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use native_bot::engine::{BotAction, Decision, Engine};
 use serde_json::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -65,6 +66,40 @@ pub const NATIVE_3P: &str = "akagi-native3p";
 /// and the frontend keys its persistent "online API" status indicator off the
 /// same channel: `warn`/`error` mean degraded, anything else means healthy.
 pub const NATIVE_API_HEALTH_ID: &str = "native-api-health";
+
+/// Process-wide retry generation. The IPC "retry now" command bumps this;
+/// every live native runner observes it at its next genuine decision point and
+/// clears only the backoff window (without pretending the API is healthy).
+static API_RETRY_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn request_api_retry() {
+    API_RETRY_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
+pub(crate) fn api_failure_reason(error: &anyhow::Error) -> String {
+    let detail = format!("{error:#}");
+    if error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<reqwest::Error>())
+        .any(reqwest::Error::is_timeout)
+    {
+        return format!("连接超时：{detail}");
+    }
+    if let Some(http) = detail.find("HTTP ") {
+        return format!("服务器返回错误：{}", &detail[http..]);
+    }
+    if error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<reqwest::Error>())
+        .any(reqwest::Error::is_connect)
+    {
+        return format!("连接失败：{detail}");
+    }
+    if detail.contains("parse ") {
+        return format!("响应解析失败：{detail}");
+    }
+    format!("请求失败：{detail}")
+}
 
 /// First backoff after an API failure. Roughly one Majsoul turn, so a blip
 /// costs a single local-model move.
@@ -161,21 +196,41 @@ impl Breaker {
         self.consecutive_failures = 0;
         self.open_until = None;
     }
+
+    /// User-requested retry: allow the next decision immediately while keeping
+    /// the degraded health bit until a real request succeeds.
+    fn retry_now(&mut self) {
+        self.consecutive_failures = 0;
+        self.open_until = None;
+    }
 }
 
 /// The remote inference session: an authenticated client plus the settings it
 /// was built from, so a change to any of them rebuilds it.
 struct ApiSession {
-    client: ApiClient,
+    client: RemoteClient,
     base_url: String,
     key: String,
-    /// Proxy URL the client was built with; part of the rebuild key.
+    use_system_proxy: bool,
+    /// Custom proxy URL (empty ⇒ none configured); part of the rebuild key.
     proxy: String,
     /// Model id to request; empty ⇒ let the server pick its game default.
     model: String,
     /// Raw `react_timeout_ms` the client's react timeout was built from; part
     /// of the rebuild key so editing the timeout re-applies on the next move.
     react_timeout_ms: u32,
+}
+
+enum RemoteClient {
+    Ot3(ApiClient),
+}
+
+impl RemoteClient {
+    fn with_react_timeout(self, timeout: std::time::Duration) -> Self {
+        match self {
+            RemoteClient::Ot3(c) => RemoteClient::Ot3(c.with_react_timeout(timeout)),
+        }
+    }
 }
 
 pub struct NativeBot {
@@ -191,17 +246,15 @@ pub struct NativeBot {
     /// Accumulated even while the API is off, so enabling it mid-kyoku can
     /// upload the kyoku so far.
     stream: Vec<MjaiEvent>,
+    /// Stable FlyA continuity id for the current game.
+    session_id: String,
     /// Toast channel — tells the user when cloud inference turns on/off, breaks,
     /// and recovers.
     notify_tx: NotifyBus,
     /// `Some` while cloud inference is configured (`enabled` + URL + key).
     api: Option<ApiSession>,
-    /// The (base_url, key, proxy, model) tuple that last failed client build
-    /// (e.g. an invalid proxy URL). Re-read every decision, so without this
-    /// the same broken config would re-attempt and re-toast on every move;
-    /// with it, the warning fires once until the user actually edits something.
-    api_failed: Option<(String, String, String, String)>,
     breaker: Breaker,
+    retry_generation: u64,
 }
 
 impl NativeBot {
@@ -221,10 +274,11 @@ impl NativeBot {
             num_players,
             config,
             stream: Vec::new(),
+            session_id: ulid::Ulid::new().to_string(),
             notify_tx,
             api: None,
-            api_failed: None,
             breaker: Breaker::new(),
+            retry_generation: API_RETRY_GENERATION.load(Ordering::SeqCst),
         })
     }
 
@@ -237,7 +291,6 @@ impl NativeBot {
     /// rather than after the current backoff window.
     fn apply_api_config(&mut self, cfg: &NativeApiConfig, announce: Announce) {
         if !cfg.is_active() {
-            self.api_failed = None;
             if self.api.take().is_some() {
                 self.breaker.reset();
                 self.notify(
@@ -250,11 +303,10 @@ impl NativeBot {
             return;
         }
 
-        let base_url = cfg.base_url.trim();
-        let key = cfg.key.trim();
-        // Collapses the on/off toggle into the effective value, so flipping
-        // `proxy_enabled` alone changes this and rebuilds the client.
-        let proxy = cfg.effective_proxy();
+        let base_url = cfg.active_base_url().trim();
+        let key = cfg.active_key().trim();
+        let use_system_proxy = cfg.use_system_proxy;
+        let proxy = cfg.effective_proxy().to_string();
         let model = cfg.model_for(self.num_players).trim().to_string();
         // Raw ms is the rebuild key (round-trips the user's exact value); the
         // clamped Duration is what the client is actually built with.
@@ -262,6 +314,7 @@ impl NativeBot {
         let unchanged = self.api.as_ref().is_some_and(|s| {
             s.base_url == base_url
                 && s.key == key
+                && s.use_system_proxy == use_system_proxy
                 && s.proxy == proxy
                 && s.model == model
                 && s.react_timeout_ms == react_timeout_ms
@@ -269,26 +322,24 @@ impl NativeBot {
         if unchanged {
             return;
         }
-        // This exact config already failed to build a client — stay on the
-        // local model quietly instead of re-attempting (and re-toasting) on
-        // every decision. Any edit to the config clears the tombstone below.
-        if self
-            .api_failed
-            .as_ref()
-            .is_some_and(|f| f.0 == base_url && f.1 == key && f.2 == proxy && f.3 == model)
-        {
-            return;
-        }
 
         let was_off = self.api.is_none();
-        match ApiClient::new(base_url, key, proxy) {
+        // Custom proxy URL (http/https/socks5) wins; otherwise the OS
+        // system proxy is honoured per `use_system_proxy`.
+        let client = if proxy.is_empty() {
+            ApiClient::new_with_proxy(base_url, key, use_system_proxy)
+        } else {
+            ApiClient::new(base_url, key, &proxy)
+        }
+        .map(RemoteClient::Ot3);
+        match client {
             Ok(client) => {
-                self.api_failed = None;
                 self.api = Some(ApiSession {
                     client: client.with_react_timeout(cfg.effective_react_timeout()),
                     base_url: base_url.to_string(),
                     key: key.to_string(),
-                    proxy: proxy.to_string(),
+                    use_system_proxy,
+                    proxy,
                     model: model.clone(),
                     react_timeout_ms,
                 });
@@ -312,17 +363,10 @@ impl NativeBot {
             }
             Err(e) => {
                 // Building the HTTP client failed — retrying won't help, so drop
-                // to the local model rather than opening a breaker window, and
-                // remember the rejected config so this warns once, not per move.
+                // to the local model rather than opening a breaker window.
                 let msg = format!("{e:#}");
                 warn!("native API: client setup failed ({msg}); using the local model");
                 self.api = None;
-                self.api_failed = Some((
-                    base_url.to_string(),
-                    key.to_string(),
-                    proxy.to_string(),
-                    model.clone(),
-                ));
                 self.notify(
                     Notification::warn("Cloud inference unavailable")
                         .body(msg)
@@ -339,27 +383,28 @@ impl NativeBot {
         }
     }
 
-    /// Record the outcome of an API request and, **only on a health change**,
-    /// toast the user: a warning when the server first becomes unreachable
-    /// (the bot silently falls back to the local model), and a success when it
-    /// recovers. `ok` = the HTTP request itself succeeded (server reachable).
+    /// Record an API request outcome. Every failure gets its own toast so a
+    /// repeated retry remains visible; successes toast only on recovery.
     fn record_health(&mut self, ok: bool, err: Option<&str>) {
-        if ok == self.breaker.healthy {
-            return; // no transition
+        if ok && self.breaker.healthy {
+            return;
         }
         self.breaker.healthy = ok;
         let note = if ok {
             Notification::success("Online inference restored")
                 .body("The built-in bot is using the online API again.")
-                .id(NATIVE_API_HEALTH_ID)
+                .id(format!("{NATIVE_API_HEALTH_ID}-attempt-success"))
         } else {
             let body = match err {
-                Some(e) => format!("Falling back to the built-in local model. ({e})"),
+                Some(e) => format!("{e}；已改用内建本地模型。"),
                 None => "Falling back to the built-in local model.".to_string(),
             };
-            Notification::warn("Online inference unavailable")
+            Notification::warn("在线推理 API 请求失败")
                 .body(body)
-                .id(NATIVE_API_HEALTH_ID)
+                .id(format!(
+                    "{NATIVE_API_HEALTH_ID}-failure-{}",
+                    ulid::Ulid::new()
+                ))
         };
         let _ = self.notify_tx.send(note);
     }
@@ -371,20 +416,7 @@ impl NativeBot {
             MjaiEvent::StartGame { .. } => {
                 self.stream.clear();
                 self.stream.push(ev.clone());
-            }
-            MjaiEvent::StartKyoku { .. } => {
-                // Keep the leading start_game (required as events[0]); drop the
-                // previous kyoku's tail.
-                let start_game = self
-                    .stream
-                    .first()
-                    .filter(|e| matches!(e, MjaiEvent::StartGame { .. }))
-                    .cloned();
-                self.stream.clear();
-                if let Some(sg) = start_game {
-                    self.stream.push(sg);
-                }
-                self.stream.push(ev.clone());
+                self.session_id = ulid::Ulid::new().to_string();
             }
             _ => self.stream.push(ev.clone()),
         }
@@ -394,11 +426,19 @@ impl NativeBot {
     /// to `local` (the local model's decision) on any error or a `null`
     /// reaction so a live game never stalls.
     async fn remote_decision(&mut self, local: &Decision) -> (MjaiEvent, Option<Value>) {
-        let events = build_api_events(&self.stream, self.seat, self.num_players);
+        let events = build_api_events(&ot3_stream(&self.stream), self.seat, self.num_players);
         let result = match self.api.as_ref() {
             Some(s) => {
                 let model = s.model.clone();
-                s.client.react(model_arg(&model), self.seat, events).await
+                remote_react(
+                    &s.client,
+                    model_arg(&model),
+                    self.seat,
+                    self.num_players,
+                    &self.session_id,
+                    events,
+                )
+                .await
             }
             None => return local_reply(local, self.seat),
         };
@@ -447,7 +487,7 @@ impl NativeBot {
                 }
             }
             Err(e) => {
-                let msg = format!("{e:#}");
+                let msg = api_failure_reason(&e);
                 let backoff = self.breaker.record_failure();
                 warn!(
                     "native API react failed ({msg}); using the local model, \
@@ -500,12 +540,24 @@ impl NativeBot {
     /// re-query the server. Falls back to the local model's predicted riichi
     /// discard on any error.
     async fn reach_discard(&mut self) -> Option<String> {
-        let mut events = build_api_events(&self.stream, self.seat, self.num_players);
-        events.push(serde_json::json!({ "type": "reach", "actor": self.seat }));
+        let mut raw_stream = self.stream.clone();
+        raw_stream.push(MjaiEvent::Reach {
+            actor: self.seat,
+            pai: None,
+        });
+        let events = build_api_events(&ot3_stream(&raw_stream), self.seat, self.num_players);
         let result = {
             let s = self.api.as_ref()?;
             let model = s.model.clone();
-            s.client.react(model_arg(&model), self.seat, events).await
+            remote_react(
+                &s.client,
+                model_arg(&model),
+                self.seat,
+                self.num_players,
+                &self.session_id,
+                events,
+            )
+            .await
         };
         match result {
             Ok(resp) => {
@@ -521,7 +573,7 @@ impl NativeBot {
                 self.engine.reach_discard()
             }
             Err(e) => {
-                let msg = format!("{e:#}");
+                let msg = api_failure_reason(&e);
                 // The declare call succeeded but the follow-up didn't: the server
                 // is flaky. Trip the breaker so the *next* decision doesn't pay
                 // another timeout, and play the local model's riichi discard.
@@ -538,6 +590,20 @@ impl NativeBot {
 /// falls back to its game default.
 fn model_arg(model: &str) -> Option<&str> {
     (!model.is_empty()).then_some(model)
+}
+
+async fn remote_react(
+    client: &RemoteClient,
+    model: Option<&str>,
+    seat: u8,
+    num_players: u8,
+    session_id: &str,
+    events: Vec<Value>,
+) -> anyhow::Result<ReactResponse> {
+    let _ = (seat, num_players, session_id);
+    match client {
+        RemoteClient::Ot3(client) => client.react(model, seat, events).await,
+    }
 }
 
 #[async_trait]
@@ -590,6 +656,12 @@ impl BotRunner for NativeBot {
         // move, and they expect it to take effect now — not next game.
         let cfg = self.config.read().await.bot.api.clone();
         self.apply_api_config(&cfg, Announce::ToUser);
+
+        let retry_generation = API_RETRY_GENERATION.load(Ordering::SeqCst);
+        if retry_generation != self.retry_generation {
+            self.retry_generation = retry_generation;
+            self.breaker.retry_now();
+        }
 
         // A forced move (the legal set is a singleton — e.g. tsumogiri while
         // riichi) has only one possible answer, so asking the server would
@@ -679,6 +751,26 @@ pub(crate) fn build_api_events(stream: &[MjaiEvent], seat: u8, num_players: u8) 
         .map(|ev| to_api_event(ev, seat, num_players))
         .collect()
 }
+
+/// OT3 wants only the current hand, preceded by the game's `start_game`.
+/// FlyA, in contrast, receives the complete game history for continuity.
+fn ot3_stream(stream: &[MjaiEvent]) -> Vec<MjaiEvent> {
+    let start_game = stream
+        .iter()
+        .find(|e| matches!(e, MjaiEvent::StartGame { .. }))
+        .cloned();
+    let start = stream
+        .iter()
+        .rposition(|e| matches!(e, MjaiEvent::StartKyoku { .. }))
+        .unwrap_or(0);
+    let mut out = Vec::new();
+    if let Some(event) = start_game {
+        out.push(event);
+    }
+    out.extend(stream[start..].iter().cloned());
+    out
+}
+
 
 fn to_api_event(ev: &MjaiEvent, seat: u8, num_players: u8) -> Value {
     use serde_json::json;
@@ -1271,7 +1363,7 @@ mod tests {
     }
 
     /// The API path must never stall a live game: an unreachable server falls
-    /// back to the embedded model's move and warns the user once.
+    /// back to the embedded model's move and reports the classified failure.
     #[tokio::test]
     async fn unreachable_server_falls_back_to_the_local_model() {
         use crate::schema::NotifyLevel;
@@ -1287,7 +1379,10 @@ mod tests {
         );
         let n = rx.try_recv().expect("degrade toast");
         assert_eq!(n.level, NotifyLevel::Warn);
-        assert_eq!(n.id.as_deref(), Some(NATIVE_API_HEALTH_ID));
+        assert!(n
+            .id
+            .as_deref()
+            .is_some_and(|id| id.starts_with(&format!("{NATIVE_API_HEALTH_ID}-failure-"))));
 
         // And the breaker is now open, so the next decision skips the network.
         assert!(
@@ -2183,7 +2278,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn api_health_toasts_only_on_transition() {
+    async fn api_health_toasts_on_every_failure_and_on_recovery() {
         use crate::schema::NotifyLevel;
         let notify = crate::event_bus::notify_bus();
         let mut rx = notify.subscribe();
@@ -2193,21 +2288,23 @@ mod tests {
         bot.record_health(false, Some("boom"));
         let n = rx.try_recv().expect("degrade toast");
         assert_eq!(n.level, NotifyLevel::Warn);
-        assert_eq!(n.id.as_deref(), Some(NATIVE_API_HEALTH_ID));
+        assert!(n
+            .id
+            .as_deref()
+            .is_some_and(|id| id.starts_with(&format!("{NATIVE_API_HEALTH_ID}-failure-"))));
         assert!(n.body.unwrap_or_default().contains("boom"));
 
-        // still degraded: no repeat toast (would spam once per turn).
+        // Still degraded: every actual retry failure remains visible.
         bot.record_health(false, Some("boom again"));
-        assert!(
-            rx.try_recv().is_err(),
-            "must not toast without a transition"
-        );
+        let n = rx.try_recv().expect("repeat failure toast");
+        assert_eq!(n.level, NotifyLevel::Warn);
+        assert!(n.body.unwrap_or_default().contains("boom again"));
 
-        // recovered: one success toast, same id (replaces the warning).
+        // Recovered: one success toast updates persistent health.
         bot.record_health(true, None);
         let n = rx.try_recv().expect("recover toast");
         assert_eq!(n.level, NotifyLevel::Success);
-        assert_eq!(n.id.as_deref(), Some(NATIVE_API_HEALTH_ID));
+        assert_eq!(n.id.as_deref(), Some("native-api-health-attempt-success"));
 
         // still healthy: silent.
         bot.record_health(true, None);
