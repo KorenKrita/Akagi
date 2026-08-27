@@ -80,6 +80,11 @@ pub struct BotManager {
     pending: Vec<MjaiEvent>,
     /// Bot's seat in the current game; set on `start_game`.
     actor_id: Option<u8>,
+    /// The tile our seat most recently drew (mjai string), tracked from
+    /// the event stream so `bot::selection` can recompute `tsumogiri`
+    /// when a sampled discard replaces the bot's pick. Cleared on our
+    /// own discard and at game boundaries.
+    last_self_tsumo: Option<String>,
     /// One-shot: drop the next own-seat bridge `reach` echo before it is
     /// fed to the runner. Set after an autoplay reach follow-up (see
     /// [`Self::handle_tracked`]) has already fed this runner a synthetic
@@ -125,6 +130,7 @@ impl BotManager {
             runner: None,
             pending: Vec::new(),
             actor_id: None,
+            last_self_tsumo: None,
             drop_next_own_reach: false,
             out_tx,
             status_tx,
@@ -260,6 +266,20 @@ impl BotManager {
                 }
             }
         }
+        // Track our most recent draw for `bot::selection`'s tsumogiri
+        // recomputation (a sampled discard may replace the bot's pick).
+        match (&event, self.actor_id) {
+            (MjaiEvent::Tsumo { actor, pai }, Some(seat)) if *actor == seat => {
+                self.last_self_tsumo = Some(pai.clone());
+            }
+            (MjaiEvent::Dahai { actor, .. }, Some(seat)) if *actor == seat => {
+                self.last_self_tsumo = None;
+            }
+            (MjaiEvent::EndGame { .. }, _) => {
+                self.last_self_tsumo = None;
+            }
+            _ => {}
+        }
 
         self.pending.push(event.clone());
 
@@ -344,6 +364,30 @@ impl BotManager {
         // of the same declaration so a stateful bot doesn't apply reach twice.
         if did_reach_followup {
             self.drop_next_own_reach = true;
+        }
+
+        // Copilot-style weighted discard sampling for external bots
+        // (`bot.selection.randomize_level`, the same knob the native bot's
+        // engine applies internally — see `bot::selection`). The native
+        // bot is skipped: it already samples inside `Engine::decide`, and
+        // applying it twice would compound the randomness. Runs before
+        // the response is broadcast so the HUD, inspector and autoplay
+        // all see the same (sampled) action. A change to the level takes
+        // effect on the very next decision — re-read per decision, the
+        // same way `NativeBot` re-reads its API settings.
+        {
+            let level = self.config.read().await.bot.selection.randomize_level;
+            if level > 0 && !crate::bot::native::is_native(&self.active_name) {
+                let draw = self.last_self_tsumo.clone();
+                if let Some((from, to)) =
+                    crate::bot::selection::apply_discard_sampling(&mut resp, level, draw.as_deref())
+                {
+                    info!(
+                        bot = %self.active_name, from = %from, to = %to, level,
+                        "bot manager: discard sampling replaced the bot's pick"
+                    );
+                }
+            }
         }
 
         debug!(action = ?resp.action, meta = ?resp.meta, reaction_ms, "bot reacted");

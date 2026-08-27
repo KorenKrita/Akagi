@@ -16,6 +16,7 @@ pub mod purchase;
 pub mod registry;
 pub mod runner;
 pub mod runtime;
+pub mod selection;
 pub mod supervisor;
 pub mod sync_guard;
 #[cfg(test)]
