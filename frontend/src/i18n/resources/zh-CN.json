@@ -392,7 +392,7 @@
     "active_bot_4p": "启用的 Bot(四麻)",
     "active_bot_3p": "启用的 Bot(三麻)",
     "randomize_level": "打牌权重随机度",
-    "randomize_level_hint": "参考 MahjongCopilot 的 ai_randomize_choice：关闭时始终打出模型第一名推荐；开启后自动打牌会按模型自身的权重（softmax 概率）在前 3 名候选里加权选择，数字越大越常偏离第一名。仅影响内置 Bot 的本地模型出牌，云端推理由服务器决定。",
+    "randomize_level_hint": "参考 MahjongCopilot 的 ai_randomize_choice：关闭时始终打出模型第一名推荐；开启后自动打牌会按模型自身的权重（softmax 概率）在前 3 名候选里加权选择，数字越大越常偏离第一名。内置 Bot 与外部 mjai Bot（如 Mortal）均生效，云端推理由服务器决定。",
     "randomize_level_0": "0 · 关（始终打第一名）",
     "randomize_level_1": "1 · 极轻",
     "randomize_level_2": "2 · 轻",

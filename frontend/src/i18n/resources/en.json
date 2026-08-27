@@ -392,7 +392,7 @@
     "active_bot_4p": "Active bot (4p)",
     "active_bot_3p": "Active bot (3p)",
     "randomize_level": "Discard randomness",
-    "randomize_level_hint": "Port of MahjongCopilot's ai_randomize_choice: off plays the model's top pick every time; on, autoplay draws among the top-3 discards weighted by the model's own softmax probabilities, with higher levels deviating from the top pick more often. Applies to the built-in bot's local model only; cloud reactions come from the server as-is.",
+    "randomize_level_hint": "Port of MahjongCopilot's ai_randomize_choice: off plays the model's top pick every time; on, autoplay draws among the top-3 discards weighted by the model's own softmax probabilities, with higher levels deviating from the top pick more often. Applies to the built-in bot's local model and to external mjai bots (e.g. Mortal) alike; cloud reactions come from the server as-is.",
     "randomize_level_0": "0 · Off (always top pick)",
     "randomize_level_1": "1 · Very light",
     "randomize_level_2": "2 · Light",
