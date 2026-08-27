@@ -783,7 +783,6 @@ fn ot3_stream(stream: &[MjaiEvent]) -> Vec<MjaiEvent> {
     out
 }
 
-
 fn to_api_event(ev: &MjaiEvent, seat: u8, num_players: u8) -> Value {
     use serde_json::json;
     let three_p = num_players == 3;

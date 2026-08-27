@@ -116,11 +116,7 @@ mod tests {
     fn level_controls_concentration() {
         // A moderately close call: 1m 60%, 2p 30%, 西 10%.
         let cands = [(0u8, 0.6f32), (1, 0.3), (2, 0.1)];
-        for (level, min_top, max_top) in [
-            (1u8, 0.90, 1.00),
-            (2, 0.60, 0.98),
-            (5, 0.45, 0.90),
-        ] {
+        for (level, min_top, max_top) in [(1u8, 0.90, 1.00), (2, 0.60, 0.98), (5, 0.45, 0.90)] {
             let mut rng = Rng::new(7);
             let mut top = 0usize;
             let n = 10_000;

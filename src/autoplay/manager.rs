@@ -19,11 +19,11 @@ use crate::autoplay::cdp_input::{
 };
 use crate::autoplay::context::{AutoplayContext, CanvasRect};
 use crate::autoplay::inject::InjectFrame;
+use crate::autoplay::majsoul::{is_dealer_first_discard, MajsoulAutoplay};
+use crate::autoplay::platform::{ActionContext, PlatformAutoplay, Step};
 use crate::autoplay::riichi_city::RiichiCityAutoplay;
 use crate::autoplay::tenhou::TenhouAutoplay;
 use crate::autoplay::verify::InputTicket;
-use crate::autoplay::majsoul::{is_dealer_first_discard, MajsoulAutoplay};
-use crate::autoplay::platform::{ActionContext, PlatformAutoplay, Step};
 use crate::bot::BotResponse;
 use crate::bridge::majsoul::tile::mjai_to_ms;
 use crate::bridge::BuildHints;
@@ -764,7 +764,6 @@ impl AutoplayManager {
             debug!("autoplay: packet-only mode did not send {:?}", resp.action);
             return;
         }
-
     }
 
     async fn try_packet_action(&self, action: &MjaiEvent, hints: &BuildHints) -> PacketDispatch {
@@ -1560,7 +1559,6 @@ fn player_snapshot_summary(
         player.kita_tiles.join("/")
     )
 }
-
 
 /// Execute one Riichi City decision off the plan loop: sleep the (already
 /// clamped) think time, wait for OUR decision window, hold the minimum

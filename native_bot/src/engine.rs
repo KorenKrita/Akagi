@@ -225,8 +225,7 @@ impl Engine {
     pub fn decide(&mut self) -> Result<Option<Decision>> {
         let seat = self.seat;
         let (mut ranked, logits, legal, last_discarder, drawn, reach_pai, forced) =
-            match &mut self.backend
-            {
+            match &mut self.backend {
                 Backend::Four { state, model } => {
                     // `last_discard` is `(discarder_pid, tile)`.
                     let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
@@ -248,7 +247,15 @@ impl Engine {
                     } else {
                         None
                     };
-                    (ranked, logits, legal, last_discarder, drawn, reach_pai, forced)
+                    (
+                        ranked,
+                        logits,
+                        legal,
+                        last_discarder,
+                        drawn,
+                        reach_pai,
+                        forced,
+                    )
                 }
                 Backend::Three { state, model } => {
                     let last_discarder = state.last_discard.map(|(pid, _tile)| pid);
@@ -268,7 +275,15 @@ impl Engine {
                     } else {
                         None
                     };
-                    (ranked, logits, legal, last_discarder, drawn, reach_pai, forced)
+                    (
+                        ranked,
+                        logits,
+                        legal,
+                        last_discarder,
+                        drawn,
+                        reach_pai,
+                        forced,
+                    )
                 }
             };
 
@@ -361,9 +376,11 @@ impl Engine {
         let chosen = &discards[idx];
         let mut out = Vec::with_capacity(ranked.len());
         out.push(chosen.clone());
-        out.extend(ranked.into_iter().filter(|(a, _)| {
-            !(a.action_type == ActionType::Discard && a.tile == chosen.0.tile)
-        }));
+        out.extend(
+            ranked.into_iter().filter(|(a, _)| {
+                !(a.action_type == ActionType::Discard && a.tile == chosen.0.tile)
+            }),
+        );
         out.truncate(SHOW_TOP_N);
         out
     }

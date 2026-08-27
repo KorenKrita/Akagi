@@ -679,18 +679,32 @@ mod tests {
             ),
         ]);
 
-        let created = create_checkout(&base, "", false, "pro-30", true).await.unwrap();
+        let created = create_checkout(&base, "", false, "pro-30", true)
+            .await
+            .unwrap();
         assert_eq!(created.checkout_id, "ch_A1");
         assert_eq!(created.claim_secret, "S5");
 
-        let pending = checkout_result(&base, "", false, &created.checkout_id, &created.claim_secret)
-            .await
-            .unwrap();
+        let pending = checkout_result(
+            &base,
+            "",
+            false,
+            &created.checkout_id,
+            &created.claim_secret,
+        )
+        .await
+        .unwrap();
         assert_eq!(pending.status, "pending");
 
-        let ready = checkout_result(&base, "", false, &created.checkout_id, &created.claim_secret)
-            .await
-            .unwrap();
+        let ready = checkout_result(
+            &base,
+            "",
+            false,
+            &created.checkout_id,
+            &created.claim_secret,
+        )
+        .await
+        .unwrap();
         assert_eq!(ready.status, "ready");
         assert_eq!(
             ready.key.as_deref(),
@@ -725,9 +739,15 @@ mod tests {
         let created = create_checkout(&base, "", false, "pro-monthly", false)
             .await
             .unwrap();
-        let ready = checkout_result(&base, "", false, &created.checkout_id, &created.claim_secret)
-            .await
-            .unwrap();
+        let ready = checkout_result(
+            &base,
+            "",
+            false,
+            &created.checkout_id,
+            &created.claim_secret,
+        )
+        .await
+        .unwrap();
         assert_eq!(ready.status, "ready");
         assert_eq!(
             ready.key.as_deref(),
