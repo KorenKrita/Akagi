@@ -86,6 +86,19 @@ export type ChromiumConfig = {
 export type CaptureConfig = {
   mode: CaptureMode
   chromium: ChromiumConfig
+  /** Rust `HttpCaptureConfig`; mirrors src/config/capture.rs. */
+  http: HttpCaptureConfig
+}
+
+export type HttpCaptureConfig = {
+  /** Record every intercepted exchange, not just recognized ones. */
+  record_all: boolean
+  /** Keep textual bodies within max_body_bytes (when recorded). */
+  bodies: boolean
+  /** Ceiling on a buffered body; larger ones recorded as skipped. */
+  max_body_bytes: number
+  /** Chromium backend only: also record static subresources. */
+  static_assets: boolean
 }
 
 export type DetectedBrowser = {

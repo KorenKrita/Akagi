@@ -383,6 +383,17 @@ export function NativeApiFields({
           )}
         </div>
 
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col">
+            <Label>{t('bots.api.use_system_proxy')}</Label>
+            <span className="text-xs text-muted-foreground">{t('bots.api.use_system_proxy_hint')}</span>
+          </div>
+          <Switch
+            checked={value.use_system_proxy}
+            onCheckedChange={(on) => set({ use_system_proxy: on })}
+          />
+        </div>
+
         <div className="grid gap-1.5">
           <Label>{t('bots.api.react_timeout')}</Label>
           <div className="flex items-center gap-2">

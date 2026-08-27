@@ -978,6 +978,8 @@ export function AutoplayCard({
             </SelectContent>
           </Select>
         </Field>
+        <TimeSlider label={t('settings.autoplay.min_delay')} hint={t('settings.autoplay.min_delay_hint')} value={delay.min_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setDelayField({ min_delay_ms: value })} />
+        <TimeSlider label={t('settings.autoplay.min_button_delay')} hint={t('settings.autoplay.min_button_delay_hint')} value={delay.min_button_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setDelayField({ min_button_delay_ms: value })} />
         {ap.majsoul.mode === 'packet' ? (
           <>
             <Field
@@ -1042,8 +1044,6 @@ export function AutoplayCard({
                 />
               </Field>
             )}
-            <TimeSlider label={t('settings.autoplay.min_delay')} hint={t('settings.autoplay.min_delay_hint')} value={delay.min_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setDelayField({ min_delay_ms: value })} />
-            <TimeSlider label={t('settings.autoplay.min_button_delay')} hint={t('settings.autoplay.min_button_delay_hint')} value={delay.min_button_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setDelayField({ min_button_delay_ms: value })} />
             <TimeSlider label={t('settings.autoplay.inter_click_delay')} value={ap.majsoul.inter_click_delay_ms} max={2_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ inter_click_delay_ms: value })} />
             <TimeSlider label={t('settings.autoplay.hover_delay')} hint={t('settings.autoplay.hover_delay_hint')} value={ap.majsoul.hover_delay_ms} max={1_000} step={50} unit="ms" onChange={(value) => setMajsoulField({ hover_delay_ms: value })} />
             <TimeSlider label={t('settings.autoplay.click_hold')} value={ap.majsoul.click_hold_ms} max={1_000} step={10} unit="ms" onChange={(value) => setMajsoulField({ click_hold_ms: value })} />
@@ -1053,6 +1053,77 @@ export function AutoplayCard({
             <TimeSlider label={t('settings.autoplay.dealer_first_discard_extra_delay')} hint={t('settings.autoplay.dealer_first_discard_extra_delay_hint')} value={ap.majsoul.dealer_first_discard_extra_delay_ms} max={10_000} step={100} unit="ms" onChange={(value) => setMajsoulField({ dealer_first_discard_extra_delay_ms: value })} />
           </>
         )}
+        <details className="group">
+          <summary className="cursor-pointer select-none text-xs text-muted-foreground">
+            {t('settings.autoplay.adv_delay_title')}
+          </summary>
+          <div className="grid gap-4 pt-3">
+            <Toggle
+              label={t('settings.autoplay.bank_on_long_thought')}
+              hint={t('settings.autoplay.bank_on_long_thought_hint')}
+              value={delay.bank_on_long_thought ?? true}
+              onChange={(v) => setDelayField({ bank_on_long_thought: v })}
+            />
+            <Field label={t('settings.autoplay.distribution')} hint={t('settings.autoplay.distribution_hint')}>
+              <Select
+                value={delay.distribution ?? 'log_normal'}
+                onValueChange={(v) =>
+                  setDelayField({ distribution: v as DelayModelConfig['distribution'] })
+                }
+              >
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="log_normal">{t('settings.autoplay.distribution_lognormal')}</SelectItem>
+                  <SelectItem value="uniform">{t('settings.autoplay.distribution_uniform')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <TimeSlider label={t('settings.autoplay.riichi_extra_ms')} value={delay.riichi_extra_ms ?? 0} max={5_000} step={100} unit="ms" onChange={(v) => setDelayField({ riichi_extra_ms: v })} />
+            <TimeSlider label={t('settings.autoplay.kan_extra_ms')} value={delay.kan_extra_ms ?? 0} max={5_000} step={100} unit="ms" onChange={(v) => setDelayField({ kan_extra_ms: v })} />
+            <TimeSlider label={t('settings.autoplay.safety_margin_ms')} hint={t('settings.autoplay.safety_margin_ms_hint')} value={delay.safety_margin_ms ?? 1000} max={5_000} step={100} unit="ms" onChange={(v) => setDelayField({ safety_margin_ms: v })} />
+            <TimeSlider label={t('settings.autoplay.bank_use_fraction')} hint={t('settings.autoplay.bank_use_fraction_hint')} value={Math.round((delay.bank_use_fraction ?? 0.25) * 100)} max={100} step={5} unit="%" onChange={(v) => setDelayField({ bank_use_fraction: v / 100 })} />
+            <TimeSlider label={t('settings.autoplay.bank_max_single_ms')} value={delay.bank_max_single_ms ?? 5000} max={10_000} step={500} unit="ms" onChange={(v) => setDelayField({ bank_max_single_ms: v })} />
+            <TimeSlider label={t('settings.autoplay.no_budget_cap_ms')} hint={t('settings.autoplay.no_budget_cap_ms_hint')} value={delay.no_budget_cap_ms ?? 15000} max={30_000} step={1_000} unit="ms" onChange={(v) => setDelayField({ no_budget_cap_ms: v })} />
+            <Field label={t('settings.autoplay.lognormal_params')} hint={t('settings.autoplay.lognormal_params_hint')}>
+              <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
+                {(['dahai_tedashi', 'dahai_tsumogiri', 'post_call_dahai', 'reach', 'claim', 'hora'] as const).map((kind) => {
+                  const [mu = 0, sigma = 0] = delay.lognormal?.[kind] ?? []
+                  const setParam = (idx: 0 | 1, raw: string) => {
+                    const next: [number, number] = [
+                      delay.lognormal?.[kind]?.[0] ?? 0,
+                      delay.lognormal?.[kind]?.[1] ?? 0,
+                    ]
+                    next[idx] = Number(raw) || 0
+                    setDelayField({
+                      lognormal: { ...(delay.lognormal ?? {}), [kind]: next },
+                    })
+                  }
+                  return (
+                    <div key={kind} className="contents">
+                      <span className="text-xs text-muted-foreground">{kind}</span>
+                      <Input
+                        aria-label={`${kind} mu`}
+                        className="h-8 w-24"
+                        type="number"
+                        step={0.01}
+                        value={mu}
+                        onChange={(e) => setParam(0, e.target.value)}
+                      />
+                      <Input
+                        aria-label={`${kind} sigma`}
+                        className="h-8 w-24"
+                        type="number"
+                        step={0.01}
+                        value={sigma}
+                        onChange={(e) => setParam(1, e.target.value)}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            </Field>
+          </div>
+        </details>
         <p className="text-xs text-muted-foreground">
           {t('settings.autoplay.platform_note')}
         </p>
@@ -1194,6 +1265,21 @@ function CaptureCard({
     show_recommendation_overlay: false,
     extra_args: [],
   }
+  const http = draft.capture?.http ?? {
+    record_all: false,
+    bodies: true,
+    max_body_bytes: 256 * 1024,
+    static_assets: false,
+  }
+  const setHttp = (patch: Partial<typeof http>) =>
+    setDraft({
+      ...draft,
+      capture: {
+        mode,
+        chromium,
+        http: { ...http, ...patch },
+      },
+    })
   const [detected, setDetected] = useState<DetectedBrowser[] | null>(null)
   const [detecting, setDetecting] = useState(false)
 
@@ -1223,6 +1309,7 @@ function CaptureCard({
       capture: {
         mode: v,
         chromium,
+        http,
       },
     })
   const setChromium = (patch: Partial<typeof chromium>) =>
@@ -1231,6 +1318,7 @@ function CaptureCard({
       capture: {
         mode,
         chromium: { ...chromium, ...patch },
+        http,
       },
     })
 
@@ -1299,6 +1387,35 @@ function CaptureCard({
                 onChange={(e) => setDraft({ ...draft, proxy: { ...draft.proxy, ca_dir: e.target.value } })}
               />
             </Field>
+            <Toggle
+              label={t('settings.http_record_all')}
+              hint={t('settings.http_record_all_hint')}
+              value={http.record_all ?? false}
+              onChange={(v) => setHttp({ record_all: v })}
+            />
+            <Toggle
+              label={t('settings.http_record_bodies')}
+              hint={t('settings.http_record_bodies_hint')}
+              value={http.bodies ?? true}
+              onChange={(v) => setHttp({ bodies: v })}
+            />
+            <Field label={t('settings.http_max_body_bytes')} hint={t('settings.http_max_body_bytes_hint')}>
+              <Input
+                type="number"
+                min={0}
+                step={1024}
+                value={http.max_body_bytes ?? 262144}
+                onChange={(e) =>
+                  setHttp({ max_body_bytes: Math.max(0, Math.floor(Number(e.target.value || 0))) })
+                }
+              />
+            </Field>
+            <Toggle
+              label={t('settings.http_static_assets')}
+              hint={t('settings.http_static_assets_hint')}
+              value={http.static_assets ?? false}
+              onChange={(v) => setHttp({ static_assets: v })}
+            />
           </>
         )}
 
@@ -1363,6 +1480,21 @@ function CaptureCard({
               onChange={(v) => setChromium({ show_recommendation_overlay: v })}
             />
             <CftPanel chromium={chromium} setChromium={setChromium} />
+            <Field label={t('settings.extra_args')} hint={t('settings.extra_args_hint')}>
+              <textarea
+                className="flex min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={(chromium.extra_args ?? []).join('\n')}
+                onChange={(e) =>
+                  setChromium({
+                    extra_args: e.target.value
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  })
+                }
+                placeholder={'--disable-background-timer-throttling\n--disable-renderer-backgrounding'}
+              />
+            </Field>
           </>
         )}
       </CardContent>

@@ -47,6 +47,12 @@ function makeConfig(over: {
         show_recommendation_overlay: false,
         extra_args: [],
       },
+      http: {
+        record_all: false,
+        bodies: true,
+        max_body_bytes: 262144,
+        static_assets: false,
+      },
     },
     autoplay: {
       enabled: false,
