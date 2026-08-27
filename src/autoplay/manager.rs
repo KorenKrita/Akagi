@@ -1154,9 +1154,15 @@ impl AutoplayManager {
                 // push_random_pre_delay uses the max delay (opening-hand guard).
                 let canvas_at = self.state.canvas_rect_at;
                 let cached_seat = self.state.cached_our_seat;
+                // The dead-click count survives too: a client that has
+                // stopped accepting presses stays that way across the kyoku
+                // boundary, and zeroing it here would need the failures to
+                // land inside one hand before anything recovered them.
+                let dead_clicks = self.state.dead_clicks;
                 self.state = ManagerState::default();
                 self.state.canvas_rect_at = canvas_at;
                 self.state.cached_our_seat = cached_seat;
+                self.state.dead_clicks = dead_clicks;
             }
             MjaiEvent::Tsumo { actor, pai } => {
                 if let Some(seat) = self.our_seat_cached() {
@@ -1750,6 +1756,29 @@ mod tests {
     /// the seat was only cached inside `handle_bot_response`, so the first
     /// `Tsumo` event on the opening draw could arrive before the bot had
     /// responded and `last_self_tsumo` would be silently missed.
+    /// A client that has stopped accepting presses stays that way across
+    /// a kyoku boundary — the failures run to the end of the game — so the
+    /// count has to survive one, or the threshold would only ever be
+    /// reached by failures packed into a single hand. It does reset for a
+    /// new game, which is a new page state.
+    #[test]
+    fn dead_click_count_survives_a_kyoku_but_not_a_game() {
+        let mut m = make_manager();
+        m.state.dead_clicks = 2;
+        m.handle_mjai_event(&MjaiEvent::EndKyoku);
+        assert_eq!(m.state.dead_clicks, 2, "the client is still not listening");
+
+        m.handle_mjai_event(&MjaiEvent::StartGame {
+            names: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            kyoku_first: None,
+            aka_flag: None,
+            id: Some(0),
+            num_players: 4,
+            game_meta: None,
+        });
+        assert_eq!(m.state.dead_clicks, 0, "a new table is a fresh start");
+    }
+
     #[test]
     fn start_game_sets_cached_seat_immediately() {
         let mut m = make_manager();

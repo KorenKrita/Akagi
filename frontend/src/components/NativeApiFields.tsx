@@ -109,6 +109,7 @@ export function NativeApiFields({
     const list = await invoke<ModelInfo[]>('native_api_models', {
       baseUrl: v.base_url,
       proxy: effectiveProxy(v),
+      useSystemProxy: v.use_system_proxy,
       key: v.key,
     })
     setModels(list)
@@ -199,6 +200,7 @@ export function NativeApiFields({
         await invoke<KeyStatus>('native_api_key_status', {
           baseUrl: value.base_url,
           proxy: effectiveProxy(value),
+          useSystemProxy: value.use_system_proxy,
           key: value.key,
         }),
       )
@@ -254,6 +256,7 @@ export function NativeApiFields({
       const h = await invoke<ApiHealth>('native_api_health', {
         baseUrl: value.base_url,
         proxy: effectiveProxy(value),
+        useSystemProxy: value.use_system_proxy,
       })
       // `degraded` (a worker down) still answers 200 — surface it as a
       // warning rather than the all-clear toast.
@@ -528,6 +531,7 @@ export function NativeApiFields({
         <RedeemDialog
           baseUrl={value.base_url}
           proxy={effectiveProxy(value)}
+          useSystemProxy={value.use_system_proxy}
           currentKey={value.key}
           onClose={() => setRedeemOpen(false)}
           onNewKey={(key) => void adoptNewKey(key)}
@@ -589,12 +593,14 @@ function Kv({ label, value }: { label: string; value: string }) {
 function RedeemDialog({
   baseUrl,
   proxy,
+  useSystemProxy,
   currentKey,
   onClose,
   onNewKey,
 }: {
   baseUrl: string
   proxy: string
+  useSystemProxy: boolean
   currentKey: string
   onClose: () => void
   onNewKey: (key: string) => void
@@ -614,7 +620,7 @@ function RedeemDialog({
   // reminder banner below). A code's plan isn't knowable up front, but a
   // cross-plan renew is rejected with a 400 *without consuming the code*, so
   // the default is safe even then; an explicit toggle always wins.
-  const keyStatus = useKeyStatus(baseUrl, proxy, currentKey)
+  const keyStatus = useKeyStatus(baseUrl, proxy, useSystemProxy, currentKey)
   const renew = renewChoice ?? (keyStatus !== null)
 
   const submit = async () => {
@@ -633,6 +639,7 @@ function RedeemDialog({
       const resp = await invoke<RedeemResponse>('native_api_redeem', {
         baseUrl,
         proxy,
+        useSystemProxy,
         code: code.trim(),
         email: email.trim() || undefined,
         renewKey: renew ? currentKey : undefined,

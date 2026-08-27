@@ -71,7 +71,7 @@ export function PurchaseDialog({
   // Is the saved key still alive? Besides liveness, the status carries the
   // plan, which decides whether stacking time onto the key is even legal
   // (renewal codes are same-plan only).
-  const keyStatus = useKeyStatus(baseUrl, proxy, currentKey)
+  const keyStatus = useKeyStatus(baseUrl, proxy, useSystemProxy, currentKey)
 
   // A buyer who already holds a live key of the product's plan almost always
   // wants MORE TIME on it, not a second credential — so renewal defaults ON
@@ -107,6 +107,7 @@ export function PurchaseDialog({
     setErr(null)
     usePurchaseStore.getState().start({
       baseUrl,
+      proxy,
       useSystemProxy,
       product: selected,
       provider,

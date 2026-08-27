@@ -1013,6 +1013,19 @@ impl WebSocketHandler for ProxyHandler {
                 {
                     *selected = None;
                 }
+                // Drop the selected bridge too when it belongs to this
+                // connection: the context held an extra Arc, which would
+                // otherwise keep the map entry alive past the disconnect
+                // (release_bridge only removes at strong-count 1) and let a
+                // later reconnect with a reused source address resume the
+                // stale parser state.
+                let mut selected_bridge = autoplay.packet_bridge.write().await;
+                if selected_bridge
+                    .as_ref()
+                    .is_some_and(|b| Arc::ptr_eq(b, &bridge))
+                {
+                    *selected_bridge = None;
+                }
             }
         }
         self.release_bridge(client, bridge);

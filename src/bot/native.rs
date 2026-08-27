@@ -246,8 +246,6 @@ pub struct NativeBot {
     /// Accumulated even while the API is off, so enabling it mid-kyoku can
     /// upload the kyoku so far.
     stream: Vec<MjaiEvent>,
-    /// Stable FlyA continuity id for the current game.
-    session_id: String,
     /// Toast channel — tells the user when cloud inference turns on/off, breaks,
     /// and recovers.
     notify_tx: NotifyBus,
@@ -274,7 +272,6 @@ impl NativeBot {
             num_players,
             config,
             stream: Vec::new(),
-            session_id: ulid::Ulid::new().to_string(),
             notify_tx,
             api: None,
             breaker: Breaker::new(),
@@ -416,7 +413,6 @@ impl NativeBot {
             MjaiEvent::StartGame { .. } => {
                 self.stream.clear();
                 self.stream.push(ev.clone());
-                self.session_id = ulid::Ulid::new().to_string();
             }
             _ => self.stream.push(ev.clone()),
         }
@@ -435,7 +431,6 @@ impl NativeBot {
                     model_arg(&model),
                     self.seat,
                     self.num_players,
-                    &self.session_id,
                     events,
                 )
                 .await
@@ -554,7 +549,6 @@ impl NativeBot {
                 model_arg(&model),
                 self.seat,
                 self.num_players,
-                &self.session_id,
                 events,
             )
             .await
@@ -597,10 +591,9 @@ async fn remote_react(
     model: Option<&str>,
     seat: u8,
     num_players: u8,
-    session_id: &str,
     events: Vec<Value>,
 ) -> anyhow::Result<ReactResponse> {
-    let _ = (seat, num_players, session_id);
+    let _ = (seat, num_players);
     match client {
         RemoteClient::Ot3(client) => client.react(model, seat, events).await,
     }
@@ -773,7 +766,6 @@ pub(crate) fn build_api_events(stream: &[MjaiEvent], seat: u8, num_players: u8) 
 }
 
 /// OT3 wants only the current hand, preceded by the game's `start_game`.
-/// FlyA, in contrast, receives the complete game history for continuity.
 fn ot3_stream(stream: &[MjaiEvent]) -> Vec<MjaiEvent> {
     let start_game = stream
         .iter()

@@ -72,7 +72,7 @@ export function GameList({
   const config = useConfigStore((s) => s.config)
   const api = config?.bot.api
   const proxy = api?.proxy_enabled ? api.proxy.trim() : ''
-  const keyStatus = useKeyStatus(api?.base_url ?? '', proxy, api?.key ?? '')
+  const keyStatus = useKeyStatus(api?.base_url ?? '', proxy, api?.use_system_proxy ?? false, api?.key ?? '')
 
   // The status badges join the per-key gameMap against the live share list;
   // hydrate the store's namespace and fetch the list once when the History

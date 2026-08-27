@@ -1408,10 +1408,19 @@ pub async fn native_api_redeem(
     code: String,
     email: Option<String>,
     renew_key: Option<String>,
+    proxy: Option<String>,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::api::RedeemResponse> {
-    crate::bot::api::redeem(&base_url, &code, email.as_deref(), renew_key.as_deref(), "")
-        .await
-        .map_err(|e| format!("{e:#}"))
+    crate::bot::api::redeem_for(
+        &base_url,
+        &code,
+        email.as_deref(),
+        renew_key.as_deref(),
+        proxy.as_deref().unwrap_or(""),
+        use_system_proxy.unwrap_or(false),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Fetch a key's plan / expiry / live limits (`GET /v3/key`).
@@ -1419,11 +1428,15 @@ pub async fn native_api_redeem(
 pub async fn native_api_key_status(
     base_url: String,
     proxy: Option<String>,
+    use_system_proxy: Option<bool>,
     key: String,
 ) -> CmdResult<crate::bot::api::KeyStatus> {
-    crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
-        .map_err(|e| format!("{e:#}"))?
-        .key_status()
+    let http = crate::bot::api::http_client_for(
+        proxy.as_deref().unwrap_or(""),
+        use_system_proxy.unwrap_or(false),
+    )
+    .map_err(|e| format!("{e:#}"))?;
+    crate::bot::api::key_status_with(&base_url, http, &key)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1434,10 +1447,14 @@ pub async fn native_api_models(
     base_url: String,
     key: String,
     proxy: Option<String>,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<Vec<crate::bot::api::ModelInfo>> {
-    crate::bot::api::ApiClient::new(&base_url, &key, proxy.as_deref().unwrap_or(""))
-        .map_err(|e| format!("{e:#}"))?
-        .models()
+    let http = crate::bot::api::http_client_for(
+        proxy.as_deref().unwrap_or(""),
+        use_system_proxy.unwrap_or(false),
+    )
+    .map_err(|e| format!("{e:#}"))?;
+    crate::bot::api::models_with(&base_url, http, &key)
         .await
         .map_err(|e| format!("{e:#}"))
 }
@@ -1448,10 +1465,16 @@ pub async fn native_api_health(
     base_url: String,
     key: Option<String>,
     proxy: Option<String>,
+    use_system_proxy: Option<bool>,
 ) -> CmdResult<crate::bot::api::Health> {
-    crate::bot::api::health(&base_url, proxy.as_deref().unwrap_or(""))
-        .await
-        .map_err(|e| format!("{e:#}"))
+    let _ = key;
+    crate::bot::api::health_for(
+        &base_url,
+        proxy.as_deref().unwrap_or(""),
+        use_system_proxy.unwrap_or(false),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Probe the configured inference server immediately and release every live
@@ -1464,8 +1487,9 @@ pub async fn retry_native_api(state: State<'_, AppState>) -> CmdResult<crate::bo
     }
 
     crate::bot::native::request_api_retry();
-    let result = crate::bot::api::health_with_proxy(
+    let result = crate::bot::api::health_for(
         cfg.active_base_url(),
+        cfg.effective_proxy(),
         cfg.use_system_proxy,
     )
     .await;
@@ -1652,12 +1676,20 @@ pub async fn native_api_revoke_share(
 #[tauri::command]
 pub async fn native_api_create_order(
     base_url: String,
+    proxy: Option<String>,
+    use_system_proxy: Option<bool>,
     product: String,
     redeem: bool,
 ) -> CmdResult<crate::bot::purchase::CreatedOrder> {
-    crate::bot::purchase::create_order(&base_url, &product, redeem)
-        .await
-        .map_err(|e| format!("{e:#}"))
+    crate::bot::purchase::create_order_with_proxy(
+        &base_url,
+        proxy.as_deref().unwrap_or(""),
+        &product,
+        redeem,
+        use_system_proxy.unwrap_or(false),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Poll a one-time purchase (`POST /paypal/order-result`, no auth).
@@ -1666,12 +1698,20 @@ pub async fn native_api_create_order(
 #[tauri::command]
 pub async fn native_api_order_result(
     base_url: String,
+    proxy: Option<String>,
+    use_system_proxy: Option<bool>,
     order_id: String,
     claim: String,
 ) -> CmdResult<crate::bot::purchase::OrderResult> {
-    crate::bot::purchase::order_result(&base_url, &order_id, &claim)
-        .await
-        .map_err(|e| format!("{e:#}"))
+    crate::bot::purchase::order_result_with_proxy(
+        &base_url,
+        &order_id,
+        &claim,
+        proxy.as_deref().unwrap_or(""),
+        use_system_proxy.unwrap_or(false),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Start a subscription (`POST /paypal/create-subscription`, no auth). Not
@@ -1679,11 +1719,18 @@ pub async fn native_api_order_result(
 #[tauri::command]
 pub async fn native_api_create_subscription(
     base_url: String,
+    proxy: Option<String>,
+    use_system_proxy: Option<bool>,
     product: String,
 ) -> CmdResult<crate::bot::purchase::CreatedSubscription> {
-    crate::bot::purchase::create_subscription(&base_url, &product)
-        .await
-        .map_err(|e| format!("{e:#}"))
+    crate::bot::purchase::create_subscription_with_proxy(
+        &base_url,
+        proxy.as_deref().unwrap_or(""),
+        &product,
+        use_system_proxy.unwrap_or(false),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Poll a subscription (`POST /paypal/subscription-result`, no auth). On
@@ -1691,12 +1738,20 @@ pub async fn native_api_create_subscription(
 #[tauri::command]
 pub async fn native_api_subscription_result(
     base_url: String,
+    proxy: Option<String>,
+    use_system_proxy: Option<bool>,
     subscription_id: String,
     claim: String,
 ) -> CmdResult<crate::bot::purchase::SubscriptionResult> {
-    crate::bot::purchase::subscription_result(&base_url, &subscription_id, &claim)
-        .await
-        .map_err(|e| format!("{e:#}"))
+    crate::bot::purchase::subscription_result_with_proxy(
+        &base_url,
+        &subscription_id,
+        &claim,
+        proxy.as_deref().unwrap_or(""),
+        use_system_proxy.unwrap_or(false),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Start a Creem checkout (`POST /creem/create-checkout`, no auth). One
@@ -1708,12 +1763,14 @@ pub async fn native_api_subscription_result(
 #[tauri::command]
 pub async fn native_api_create_checkout(
     base_url: String,
+    proxy: Option<String>,
     use_system_proxy: Option<bool>,
     product: String,
     redeem: bool,
 ) -> CmdResult<crate::bot::purchase::CreatedCheckout> {
     crate::bot::purchase::create_checkout(
         &base_url,
+        proxy.as_deref().unwrap_or(""),
         use_system_proxy.unwrap_or(false),
         &product,
         redeem,
@@ -1729,12 +1786,14 @@ pub async fn native_api_create_checkout(
 #[tauri::command]
 pub async fn native_api_checkout_result(
     base_url: String,
+    proxy: Option<String>,
     use_system_proxy: Option<bool>,
     checkout_id: String,
     claim: String,
 ) -> CmdResult<crate::bot::purchase::OrderResult> {
     crate::bot::purchase::checkout_result(
         &base_url,
+        proxy.as_deref().unwrap_or(""),
         use_system_proxy.unwrap_or(false),
         &checkout_id,
         &claim,

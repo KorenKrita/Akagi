@@ -444,7 +444,6 @@
     "theme_default": "Akagi",
     "theme_crimson": "クリムゾン",
     "theme_slate": "スレート",
-    "theme_flya": "FlyA",
     "theme_custom": "カスタム",
     "custom_hint": "各モードで 5 つのベース色を選ぶと、残りのトークンは color-mix で自動的に派生されます。",
     "custom_light": "ライトモード",

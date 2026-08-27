@@ -16,13 +16,13 @@ import type { KeyStatus } from '@/types'
  * response for a previously-typed key reads as `null` instead of needing a
  * state reset in the effect (which would cascade renders).
  */
-export function useKeyStatus(baseUrl: string, proxy: string, key: string): KeyStatus | null {
+export function useKeyStatus(baseUrl: string, proxy: string, useSystemProxy: boolean, key: string): KeyStatus | null {
   const [statusFor, setStatusFor] = useState<{ key: string; st: KeyStatus } | null>(null)
   const trimmed = key.trim()
   useEffect(() => {
     if (trimmed === '' || baseUrl.trim() === '') return
     let cancelled = false
-    void invoke<KeyStatus>('native_api_key_status', { baseUrl, proxy, key: trimmed })
+    void invoke<KeyStatus>('native_api_key_status', { baseUrl, proxy, useSystemProxy, key: trimmed })
       .then((st) => {
         if (!cancelled) setStatusFor({ key: trimmed, st })
       })

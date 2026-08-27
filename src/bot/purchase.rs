@@ -177,18 +177,19 @@ struct SubscriptionResultRequest<'a> {
 /// the caller must exchange. Pass `false` only when the code is needed as a
 /// code, i.e. to renew an existing key through `/v3/redeem`'s `renew_key`.
 pub async fn create_order(base_url: &str, product: &str, redeem: bool) -> Result<CreatedOrder> {
-    create_order_with_proxy(base_url, product, redeem, false).await
+    create_order_with_proxy(base_url, "", product, redeem, false).await
 }
 
 pub async fn create_order_with_proxy(
     base_url: &str,
+    custom_proxy: &str,
     product: &str,
     redeem: bool,
     use_system_proxy: bool,
 ) -> Result<CreatedOrder> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/create-order");
-    let resp = build_http(use_system_proxy)?
+    let resp = crate::bot::api::http_client_for(custom_proxy, use_system_proxy)?
         .post(&url)
         .json(&CreateOrderRequest {
             product: product.trim(),
@@ -211,18 +212,19 @@ pub async fn create_order_with_proxy(
 /// A wrong `claim` is a `404` and counts toward the per-IP failure guard, so
 /// never retry with guessed secrets.
 pub async fn order_result(base_url: &str, order_id: &str, claim: &str) -> Result<OrderResult> {
-    order_result_with_proxy(base_url, order_id, claim, false).await
+    order_result_with_proxy(base_url, order_id, claim, "", false).await
 }
 
 pub async fn order_result_with_proxy(
     base_url: &str,
     order_id: &str,
     claim: &str,
+    custom_proxy: &str,
     use_system_proxy: bool,
 ) -> Result<OrderResult> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/order-result");
-    let resp = build_http(use_system_proxy)?
+    let resp = crate::bot::api::http_client_for(custom_proxy, use_system_proxy)?
         .post(&url)
         .json(&OrderResultRequest { order_id, claim })
         .send()
@@ -238,17 +240,18 @@ pub async fn order_result_with_proxy(
 /// subscription for `product` (e.g. `pro-monthly`). Same non-idempotency
 /// caveat as [`create_order`].
 pub async fn create_subscription(base_url: &str, product: &str) -> Result<CreatedSubscription> {
-    create_subscription_with_proxy(base_url, product, false).await
+    create_subscription_with_proxy(base_url, "", product, false).await
 }
 
 pub async fn create_subscription_with_proxy(
     base_url: &str,
+    custom_proxy: &str,
     product: &str,
     use_system_proxy: bool,
 ) -> Result<CreatedSubscription> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/create-subscription");
-    let resp = build_http(use_system_proxy)?
+    let resp = crate::bot::api::http_client_for(custom_proxy, use_system_proxy)?
         .post(&url)
         .json(&CreateSubscriptionRequest {
             product: product.trim(),
@@ -269,18 +272,19 @@ pub async fn subscription_result(
     subscription_id: &str,
     claim: &str,
 ) -> Result<SubscriptionResult> {
-    subscription_result_with_proxy(base_url, subscription_id, claim, false).await
+    subscription_result_with_proxy(base_url, subscription_id, claim, "", false).await
 }
 
 pub async fn subscription_result_with_proxy(
     base_url: &str,
     subscription_id: &str,
     claim: &str,
+    custom_proxy: &str,
     use_system_proxy: bool,
 ) -> Result<SubscriptionResult> {
     let base = normalize_base(base_url);
     let url = format!("{base}/paypal/subscription-result");
-    let resp = build_http(use_system_proxy)?
+    let resp = crate::bot::api::http_client_for(custom_proxy, use_system_proxy)?
         .post(&url)
         .json(&SubscriptionResultRequest {
             subscription_id,
@@ -307,13 +311,14 @@ pub async fn subscription_result_with_proxy(
 /// `renew_key`).
 pub async fn create_checkout(
     base_url: &str,
+    custom_proxy: &str,
     use_system_proxy: bool,
     product: &str,
     redeem: bool,
 ) -> Result<CreatedCheckout> {
     let base = normalize_base(base_url);
     let url = format!("{base}/creem/create-checkout");
-    let resp = build_http(use_system_proxy)?
+    let resp = crate::bot::api::http_client_for(custom_proxy, use_system_proxy)?
         .post(&url)
         .json(&CreateCheckoutRequest {
             product: product.trim(),
@@ -336,13 +341,14 @@ pub async fn create_checkout(
 /// contract as PayPal.
 pub async fn checkout_result(
     base_url: &str,
+    custom_proxy: &str,
     use_system_proxy: bool,
     checkout_id: &str,
     claim: &str,
 ) -> Result<OrderResult> {
     let base = normalize_base(base_url);
     let url = format!("{base}/creem/result");
-    let resp = build_http(use_system_proxy)?
+    let resp = crate::bot::api::http_client_for(custom_proxy, use_system_proxy)?
         .post(&url)
         .json(&CheckoutResultRequest { checkout_id, claim })
         .send()
@@ -673,16 +679,16 @@ mod tests {
             ),
         ]);
 
-        let created = create_checkout(&base, false, "pro-30", true).await.unwrap();
+        let created = create_checkout(&base, "", false, "pro-30", true).await.unwrap();
         assert_eq!(created.checkout_id, "ch_A1");
         assert_eq!(created.claim_secret, "S5");
 
-        let pending = checkout_result(&base, false, &created.checkout_id, &created.claim_secret)
+        let pending = checkout_result(&base, "", false, &created.checkout_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(pending.status, "pending");
 
-        let ready = checkout_result(&base, false, &created.checkout_id, &created.claim_secret)
+        let ready = checkout_result(&base, "", false, &created.checkout_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(ready.status, "ready");
@@ -716,10 +722,10 @@ mod tests {
             ),
         ]);
 
-        let created = create_checkout(&base, false, "pro-monthly", false)
+        let created = create_checkout(&base, "", false, "pro-monthly", false)
             .await
             .unwrap();
-        let ready = checkout_result(&base, false, &created.checkout_id, &created.claim_secret)
+        let ready = checkout_result(&base, "", false, &created.checkout_id, &created.claim_secret)
             .await
             .unwrap();
         assert_eq!(ready.status, "ready");

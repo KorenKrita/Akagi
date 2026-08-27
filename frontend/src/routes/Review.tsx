@@ -53,7 +53,7 @@ export function Review() {
   const configured =
     !!api && api.base_url.trim() !== '' && api.key.trim() !== ''
   const proxy = api?.proxy_enabled ? api.proxy.trim() : ''
-  const keyStatus = useKeyStatus(api?.base_url ?? '', proxy, api?.key ?? '')
+  const keyStatus = useKeyStatus(api?.base_url ?? '', proxy, api?.use_system_proxy ?? false, api?.key ?? '')
 
   const job = useReviewStore((s) => s.job)
   const loadShares = useReviewStore((s) => s.loadShares)

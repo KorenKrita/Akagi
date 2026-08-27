@@ -547,6 +547,21 @@ pub async fn redeem(
     redeem_with(base, http, code, email, renew_key).await
 }
 
+/// Unified-policy redeem: custom proxy URL wins, else the OS system proxy
+/// when `use_system_proxy`, else direct.
+pub async fn redeem_for(
+    base_url: &str,
+    code: &str,
+    email: Option<&str>,
+    renew_key: Option<&str>,
+    custom_proxy: &str,
+    use_system_proxy: bool,
+) -> Result<RedeemResponse> {
+    let base = normalize_base(base_url);
+    let http = http_client_for(custom_proxy, use_system_proxy)?;
+    redeem_with(base, http, code, email, renew_key).await
+}
+
 async fn redeem_with(
     base: String,
     http: reqwest::Client,
@@ -574,6 +589,63 @@ async fn redeem_with(
 
 /// `GET /healthz` (no auth) — liveness + aggregate load. Routes through
 /// `proxy` when given (empty ⇒ direct).
+/// `GET /v3/models` over a pre-built client (see [`http_client_for`]).
+pub async fn models_with(
+    base_url: &str,
+    http: reqwest::Client,
+    key: &str,
+) -> Result<Vec<ModelInfo>> {
+    let base = normalize_base(base_url);
+    let url = format!("{base}/v3/models");
+    let resp = http
+        .get(&url)
+        .bearer_auth(key.trim())
+        .send()
+        .await
+        .context("GET /v3/models")?;
+    let resp = check(resp, "models").await?;
+    resp.json::<Vec<ModelInfo>>()
+        .await
+        .context("parse /v3/models response")
+}
+
+/// `GET /v3/key` over a pre-built client (see [`http_client_for`]).
+pub async fn key_status_with(
+    base_url: &str,
+    http: reqwest::Client,
+    key: &str,
+) -> Result<KeyStatus> {
+    let base = normalize_base(base_url);
+    let url = format!("{base}/v3/key");
+    let resp = http
+        .get(&url)
+        .bearer_auth(key.trim())
+        .send()
+        .await
+        .context("GET /v3/key")?;
+    let resp = check(resp, "key status").await?;
+    resp.json::<KeyStatus>()
+        .await
+        .context("parse /v3/key response")
+}
+
+/// Unified-policy health probe: custom proxy URL wins, else the OS system
+/// proxy when `use_system_proxy`, else direct.
+pub async fn health_for(
+    base_url: &str,
+    custom_proxy: &str,
+    use_system_proxy: bool,
+) -> Result<Health> {
+    let base = normalize_base(base_url);
+    let http = http_client_for(custom_proxy, use_system_proxy)?;
+    let url = format!("{base}/healthz");
+    let resp = http.get(&url).send().await.context("GET /healthz")?;
+    let resp = check(resp, "health").await?;
+    resp.json::<Health>()
+        .await
+        .context("parse /healthz response")
+}
+
 pub async fn health(base_url: &str, proxy: &str) -> Result<Health> {
     let base = normalize_base(base_url);
     let http = http_client(REQUEST_TIMEOUT, proxy)?;
@@ -594,6 +666,25 @@ pub async fn health_with_proxy(base_url: &str, use_system_proxy: bool) -> Result
     resp.json::<Health>()
         .await
         .context("parse /healthz response")
+}
+
+/// Unified inference-server network policy: a non-empty custom proxy URL
+/// (http/https/socks5/socks5h) wins; otherwise the OS system proxy is
+/// honoured when `use_system_proxy` is on; otherwise direct. Every
+/// purchase/redeem/retry/health/key path must go through this so the
+/// user-visible buttons observe the same network as the live `react` path.
+pub(crate) fn http_client_for(
+    custom_proxy: &str,
+    use_system_proxy: bool,
+) -> Result<reqwest::Client> {
+    let custom = custom_proxy.trim();
+    if !custom.is_empty() {
+        http_client(REQUEST_TIMEOUT, custom)
+    } else if use_system_proxy {
+        build_http(true)
+    } else {
+        http_client(REQUEST_TIMEOUT, "")
+    }
 }
 
 pub(crate) fn http_client(timeout: Duration, proxy: &str) -> Result<reqwest::Client> {

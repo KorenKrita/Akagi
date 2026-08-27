@@ -47,12 +47,18 @@ const base = (patch: Partial<NativeApiConfig> = {}): NativeApiConfig => ({
   ...patch,
 })
 
+const KEY_PLACEHOLDER = '••••••••••••••••••••••••••••••••'
+
 /**
  * Render the (fully controlled) component behind a state holder, the way the
  * Bots page and the Setup wizard both drive it. `latest()` reads back what the
  * component asked its owner to store.
+ *
+ * Everything below the enable switch is collapsed while MJOT is off, so by
+ * default the helper flips the switch first — with no key configured that
+ * flip is local (no server call) and just reveals the fields.
  */
-function renderFields(initial: NativeApiConfig) {
+function renderFields(initial: NativeApiConfig, { expand = true }: { expand?: boolean } = {}) {
   let current = initial
   function Host() {
     const [api, setApi] = useState(initial)
@@ -60,8 +66,13 @@ function renderFields(initial: NativeApiConfig) {
     return <NativeApiFields value={api} onChange={setApi} />
   }
   render(<Host />)
-  const keyInput = screen.getByPlaceholderText('••••••••••••••••••••••••••••••••')
-  return { keyInput, latest: () => current }
+  if (expand && !initial.enabled) {
+    fireEvent.click(screen.getByRole('switch'))
+  }
+  return {
+    keyInput: () => screen.getByPlaceholderText(KEY_PLACEHOLDER),
+    latest: () => current,
+  }
 }
 
 describe('NativeApiFields — entering a key', () => {
@@ -69,24 +80,39 @@ describe('NativeApiFields — entering a key', () => {
     invoke.mockReset()
   })
 
-  it('enables cloud inference and fills empty model slots on a complete key', async () => {
+  it('collapses the settings while off and reveals them when switched on', () => {
+    const { latest } = renderFields(base(), { expand: false })
+
+    // Off → only the enable switch row; no key field, no server calls.
+    expect(screen.queryByPlaceholderText(KEY_PLACEHOLDER)).toBeNull()
+    expect(invoke).not.toHaveBeenCalled()
+
+    // Flipping the switch with no key configured reveals the fields without
+    // querying anything.
+    fireEvent.click(screen.getByRole('switch'))
+    expect(screen.getByPlaceholderText(KEY_PLACEHOLDER)).toBeTruthy()
+    expect(latest().enabled).toBe(true)
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('keeps cloud inference on and fills empty model slots on a complete key', async () => {
     invoke.mockResolvedValueOnce([
       { id: 'mortal-4p', game: '4p', desc: '' },
       { id: 'mortal-3p', game: '3p', desc: '' },
     ])
     const { keyInput, latest } = renderFields(base())
 
-    fireEvent.change(keyInput, { target: { value: FULL_KEY } })
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY } })
 
-    await waitFor(() => expect(latest().enabled).toBe(true))
+    await waitFor(() => expect(latest().model_4p).toBe('mortal-4p'))
+    expect(latest().enabled).toBe(true)
     expect(latest().key).toBe(FULL_KEY)
-    expect(latest().model_4p).toBe('mortal-4p')
     expect(latest().model_3p).toBe('mortal-3p')
     expect(invoke).toHaveBeenCalledWith('native_api_models', {
       baseUrl: 'https://mjapi.example.test',
-      key: FULL_KEY,
-      provider: 'ot3',
+      proxy: '',
       useSystemProxy: false,
+      key: FULL_KEY,
     })
   })
 
@@ -97,32 +123,34 @@ describe('NativeApiFields — entering a key', () => {
     ])
     const { keyInput, latest } = renderFields(base({ model_4p: 'my-pick' }))
 
-    fireEvent.change(keyInput, { target: { value: FULL_KEY } })
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY } })
 
-    await waitFor(() => expect(latest().enabled).toBe(true))
+    await waitFor(() => expect(latest().model_3p).toBe('mortal-3p'))
     expect(latest().model_4p).toBe('my-pick')
-    expect(latest().model_3p).toBe('mortal-3p')
   })
 
-  it('stores a partial key without enabling or calling the server', () => {
+  it('stores a partial key without calling the server', () => {
     const { keyInput, latest } = renderFields(base())
 
-    fireEvent.change(keyInput, { target: { value: FULL_KEY.slice(0, 20) } })
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY.slice(0, 20) } })
 
     expect(latest().key).toBe(FULL_KEY.slice(0, 20))
-    expect(latest().enabled).toBe(false)
     expect(invoke).not.toHaveBeenCalled()
   })
 
-  it('enables nothing and surfaces the reason when the server rejects the key', async () => {
+  it('fills nothing and surfaces the reason when the server rejects the key', async () => {
     invoke.mockRejectedValueOnce('401 Unauthorized: unknown key')
     const { keyInput, latest } = renderFields(base())
 
-    fireEvent.change(keyInput, { target: { value: FULL_KEY } })
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY } })
 
     await waitFor(() => screen.getByText(/401 Unauthorized: unknown key/))
-    expect(latest().enabled).toBe(false)
+    // The key is stored (often a half-paste the user will fix), but no model
+    // slot was filled from a rejected key. The Save-side check
+    // (`checkApiBeforeSave`) is what blocks persisting a broken enabled
+    // config.
     expect(latest().key).toBe(FULL_KEY)
+    expect(latest().model_4p).toBe('')
   })
 
   it('retries a rejected key on the next edit, but adopts a good one only once', async () => {
@@ -131,28 +159,27 @@ describe('NativeApiFields — entering a key', () => {
       .mockResolvedValueOnce([{ id: 'mortal-4p', game: '4p', desc: '' }])
     const { keyInput, latest } = renderFields(base())
 
-    // A key the server rejects must not stay silently disabled forever: fixing
-    // the field (here, retyping the last character) has to ask again.
-    fireEvent.change(keyInput, { target: { value: FULL_KEY } })
+    // A key the server rejects must not stay silently unadopted forever:
+    // fixing the field (here, retyping the last character) has to ask again.
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY } })
     await waitFor(() => screen.getByText(/401 Unauthorized/))
-    fireEvent.change(keyInput, { target: { value: FULL_KEY.slice(0, -1) } })
-    fireEvent.change(keyInput, { target: { value: FULL_KEY } })
-    await waitFor(() => expect(latest().enabled).toBe(true))
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY.slice(0, -1) } })
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY } })
+    await waitFor(() => expect(latest().model_4p).toBe('mortal-4p'))
     expect(invoke).toHaveBeenCalledTimes(2)
 
     // Once adopted, editing away and back does not re-query the same key.
-    fireEvent.change(keyInput, { target: { value: FULL_KEY.slice(0, -1) } })
-    fireEvent.change(keyInput, { target: { value: FULL_KEY } })
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY.slice(0, -1) } })
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY } })
     expect(invoke).toHaveBeenCalledTimes(2)
   })
 
   it('does not query the server when no base URL is set', () => {
     const { keyInput, latest } = renderFields(base({ base_url: '' }))
 
-    fireEvent.change(keyInput, { target: { value: FULL_KEY } })
+    fireEvent.change(keyInput(), { target: { value: FULL_KEY } })
 
     expect(latest().key).toBe(FULL_KEY)
-    expect(latest().enabled).toBe(false)
     expect(invoke).not.toHaveBeenCalled()
   })
 })
