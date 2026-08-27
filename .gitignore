@@ -67,3 +67,4 @@ native_bot/out/
 
 # ZCode session artifacts
 .zcode/
+.DS_Store
