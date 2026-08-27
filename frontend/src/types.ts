@@ -130,22 +130,6 @@ export type MajsoulAutoplayConfig = {
   reload_after_failures: number
   dealer_first_discard_extra_delay_ms: number
   packet_dealer_first_discard_extra_delay_ms: number
-  auto_join_game: boolean
-  auto_join_level: number
-  auto_join_mode: '4e' | '4s' | '3e' | '3s'
-  auto_join_stop_after_games: number
-  auto_join_stop_after_minutes: number
-}
-
-export type AutoJoinStatus = {
-  enabled: boolean
-  running: boolean
-  phase: 'disabled' | 'waiting_for_lobby' | 'settling' | 'joining' | 'matching' | 'in_game' | 'stopped'
-  stop_reason: 'game_limit' | 'time_limit' | null
-  completed_games: number
-  max_games: number | null
-  remaining_games: number | null
-  remaining_seconds: number | null
 }
 
 /** Pre-click delay model parameters. Mirrors

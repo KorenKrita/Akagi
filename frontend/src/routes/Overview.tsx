@@ -1,8 +1,6 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
-import { Bot, Shield, ScrollText, Gamepad2, Clock3, Settings as SettingsIcon, Download, X } from 'lucide-react'
+import { Bot, Shield, ScrollText, Gamepad2, Settings as SettingsIcon, Download, X } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useBotStore } from '@/stores/botStore'
@@ -14,7 +12,6 @@ import { fmtTime } from '@/lib/format'
 import { AkagiWordmark } from '@/components/BrandLogo'
 import { AKAGIMS_DOWNLOAD_URL, AKAGIMS_GITHUB_URL, openExternal } from '@/lib/external'
 import akagimsScreenshot from '@/assets/akagims-fullauto.jpg'
-import type { AutoJoinStatus } from '@/types'
 
 const DOT: Record<string, string> = {
   ready:    'bg-emerald-500',
@@ -46,7 +43,6 @@ export function Overview() {
         <p className="text-sm text-muted-foreground">{t('overview.description')}</p>
       </header>
 
-      <AutoJoinPanel />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatusCard
@@ -103,68 +99,6 @@ export function Overview() {
       <AkagiMsPromoCard />
     </div>
   )
-}
-
-function AutoJoinPanel() {
-  const { t } = useTranslation()
-  const [status, setStatus] = useState<AutoJoinStatus | null>(null)
-
-  useEffect(() => {
-    let alive = true
-    const refresh = () => {
-      invoke<AutoJoinStatus>('get_auto_join_status')
-        .then((next) => { if (alive) setStatus(next) })
-        .catch(() => {})
-    }
-    refresh()
-    const timer = window.setInterval(refresh, 1_000)
-    return () => {
-      alive = false
-      window.clearInterval(timer)
-    }
-  }, [])
-
-  const phase = status?.phase ?? 'disabled'
-  const games = status?.max_games == null
-    ? `${status?.completed_games ?? 0} / ∞`
-    : `${status.completed_games} / ${status.max_games}`
-  const time = status?.remaining_seconds == null
-    ? '∞'
-    : formatRemaining(status.remaining_seconds)
-
-  return (
-    <Card>
-      <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3 text-sm">
-        <div className="flex items-center gap-2 font-medium">
-          <span className={`size-2 rounded-full ${status?.running ? 'bg-emerald-500' : 'bg-zinc-500'}`} />
-          {t('game.auto_join.title')}: {t(`game.auto_join.phase_${phase}`)}
-        </div>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Gamepad2 className="size-4" />
-          {t('game.auto_join.games')}: <span className="font-mono text-foreground">{games}</span>
-          {status?.remaining_games != null && ` (${t('game.auto_join.remaining')} ${status.remaining_games})`}
-        </div>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Clock3 className="size-4" />
-          {t('game.auto_join.time')}: <span className="font-mono text-foreground">{time}</span>
-        </div>
-        {status?.stop_reason && (
-          <div className="text-amber-500">
-            {t(`game.auto_join.reason_${status.stop_reason}`)}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function formatRemaining(seconds: number) {
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const secs = seconds % 60
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
-    : `${minutes}:${String(secs).padStart(2, '0')}`
 }
 
 // Dismissible AkagiMS promo — the persistent, quieter counterpart to the

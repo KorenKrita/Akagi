@@ -70,11 +70,6 @@ function makeConfig(over: {
         reload_after_failures: 0,
         dealer_first_discard_extra_delay_ms: 0,
         packet_dealer_first_discard_extra_delay_ms: 0,
-        auto_join_game: false,
-        auto_join_level: 2,
-        auto_join_mode: '3e',
-        auto_join_stop_after_games: 0,
-        auto_join_stop_after_minutes: 0,
       },
       delay: {
         mode: 'legacy',

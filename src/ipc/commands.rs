@@ -668,16 +668,6 @@ pub async fn get_capture_status(
 }
 
 #[tauri::command]
-pub async fn get_auto_join_status(
-    state: State<'_, AppState>,
-) -> CmdResult<crate::autoplay::context::AutoJoinStatus> {
-    let cfg = state.config.read().await;
-    Ok(state
-        .autoplay_context
-        .auto_join_status(cfg.autoplay.enabled, &cfg.autoplay.majsoul))
-}
-
-#[tauri::command]
 pub async fn get_log_dir(state: State<'_, AppState>) -> CmdResult<PathBuf> {
     Ok(state.log_session.dir().to_path_buf())
 }
@@ -1857,7 +1847,6 @@ macro_rules! ipc_handlers {
             $crate::ipc::commands::download_chrome_for_testing,
             $crate::ipc::commands::remove_chrome_for_testing,
             $crate::ipc::commands::get_status,
-            $crate::ipc::commands::get_auto_join_status,
             $crate::ipc::commands::get_log_dir,
             $crate::ipc::commands::open_log_folder,
             $crate::ipc::commands::open_external_url,

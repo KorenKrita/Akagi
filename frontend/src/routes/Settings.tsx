@@ -904,11 +904,6 @@ export function AutoplayCard({
       reload_after_failures: 3,
       dealer_first_discard_extra_delay_ms: 2000,
       packet_dealer_first_discard_extra_delay_ms: 2000,
-      auto_join_game: false,
-      auto_join_level: 2,
-      auto_join_mode: '3e' as const,
-      auto_join_stop_after_games: 0,
-      auto_join_stop_after_minutes: 0,
     },
     delay: defaultDelayModel(),
   }
@@ -1132,91 +1127,6 @@ export function AutoplayCard({
   )
 }
 
-export function AutoJoinCard({
-  draft,
-  setDraft,
-}: {
-  draft: AppConfig
-  setDraft: (c: AppConfig) => void
-}) {
-  const { t } = useTranslation()
-  const ap = draft.autoplay
-  const setMajsoulField = (patch: Partial<typeof ap.majsoul>) =>
-    setDraft({
-      ...draft,
-      autoplay: { ...ap, majsoul: { ...ap.majsoul, ...patch } },
-    })
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t('game.auto_join.title')}</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <Field label={t('settings.autoplay.auto_join_level')}>
-          <Select
-            value={String(ap.majsoul.auto_join_level ?? 2)}
-            onValueChange={(v) => setMajsoulField({ auto_join_level: Number(v) })}
-          >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {[0, 1, 2, 3, 4].map((level) => (
-                <SelectItem key={level} value={String(level)}>
-                  {t(`settings.autoplay.auto_join_level_${level}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label={t('settings.autoplay.auto_join_mode')}>
-          <Select
-            value={ap.majsoul.auto_join_mode ?? '3e'}
-            onValueChange={(v) =>
-              setMajsoulField({
-                auto_join_mode: v as typeof ap.majsoul.auto_join_mode,
-              })
-            }
-          >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {(['4e', '4s', '3e', '3s'] as const).map((mode) => (
-                <SelectItem key={mode} value={mode}>
-                  {t(`settings.autoplay.auto_join_mode_${mode}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field
-          label={t('settings.autoplay.auto_join_stop_after_games')}
-          hint={t('settings.autoplay.auto_join_zero_unlimited')}
-        >
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            step={1}
-            value={ap.majsoul.auto_join_stop_after_games ?? 0}
-            onChange={(e) =>
-              setMajsoulField({
-                auto_join_stop_after_games: Math.max(0, Math.floor(Number(e.target.value || 0))),
-              })
-            }
-          />
-        </Field>
-        <TimeSlider
-          label={t('settings.autoplay.auto_join_stop_after_minutes')}
-          hint={t('settings.autoplay.auto_join_zero_unlimited')}
-          value={ap.majsoul.auto_join_stop_after_minutes ?? 0}
-          max={1_440}
-          step={1}
-          unit="min"
-          onChange={(value) => setMajsoulField({ auto_join_stop_after_minutes: value })}
-        />
-      </CardContent>
-    </Card>
-  )
-}
 
 /** Mirror of `DelayModelConfig::default()` on the Rust side. */
 function defaultDelayModel(): DelayModelConfig {

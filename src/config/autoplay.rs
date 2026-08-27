@@ -229,16 +229,6 @@ pub struct MajsoulAutoplayConfig {
     pub dealer_first_discard_extra_delay_ms: u32,
     /// Packet-mode-only delay for the dealer's first discard animation.
     pub packet_dealer_first_discard_extra_delay_ms: u32,
-    /// Return to the lobby after a match and queue the configured ranked game.
-    pub auto_join_game: bool,
-    /// Ranked room: 0 bronze, 1 silver, 2 gold, 3 jade, 4 throne.
-    pub auto_join_level: u8,
-    /// Queue mode: `4e`, `4s`, `3e`, or `3s`.
-    pub auto_join_mode: String,
-    /// Stop queueing after this many completed matches. 0 = unlimited.
-    pub auto_join_stop_after_games: u32,
-    /// Stop queueing after this many minutes. 0 = unlimited.
-    pub auto_join_stop_after_minutes: u32,
 }
 
 impl Default for MajsoulAutoplayConfig {
@@ -257,11 +247,6 @@ impl Default for MajsoulAutoplayConfig {
             reload_after_failures: 3,
             dealer_first_discard_extra_delay_ms: 2000,
             packet_dealer_first_discard_extra_delay_ms: 2000,
-            auto_join_game: false,
-            auto_join_level: 2,
-            auto_join_mode: "3e".to_string(),
-            auto_join_stop_after_games: 0,
-            auto_join_stop_after_minutes: 0,
         }
     }
 }

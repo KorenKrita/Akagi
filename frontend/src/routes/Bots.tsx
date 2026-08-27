@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useBlocker } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive, Download, Cloud, MousePointerClick, LogIn } from 'lucide-react'
+import { Plus, Settings as SettingsIcon, RefreshCw, CheckCircle2, Trash2, FileArchive, Download, Cloud, MousePointerClick } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -43,7 +43,7 @@ import { NativeApiFields } from '@/components/NativeApiFields'
 import { checkApiBeforeSave, persistApiConfig } from '@/lib/nativeApi'
 import { proxyConfigValid } from '@/lib/proxy'
 import { mergeExternal } from '@/lib/merge'
-import { AutoJoinCard, AutoplayCard } from '@/routes/Settings'
+import { AutoplayCard } from '@/routes/Settings'
 
 // Reserved names of the built-in, pure-Rust bots (see `src/bot/native.rs`).
 // They have no directory, no manifest, and nothing to install/configure/delete.
@@ -328,19 +328,17 @@ function BotRuntimeSettings() {
 
   const autoplayDirty = autoplaySettingsKey(draft) !== autoplaySettingsKey(config)
 
-  const persistToggle = async (kind: 'autoplay' | 'autoJoin', enabled: boolean) => {
+  const persistToggle = async (enabled: boolean) => {
     setSavingToggle(true)
     setErr(null)
-    const nextDraft = withAutomationToggle(draft, kind, enabled)
+    const nextDraft = withAutomationToggle(draft, enabled)
     setDraft(nextDraft)
-    const next = withAutomationToggle(config, kind, enabled)
+    const next = withAutomationToggle(config, enabled)
     try {
       await invoke('update_config', { newConfig: next })
       setConfig(next)
     } catch (e) {
-      setDraft((cur) => (cur ? withAutomationToggle(cur, kind, kind === 'autoplay'
-        ? config.autoplay.enabled
-        : config.autoplay.majsoul.auto_join_game) : config))
+      setDraft((cur) => (cur ? withAutomationToggle(cur, config.autoplay.enabled) : config))
       setErr(String(e))
     } finally {
       setSavingToggle(false)
@@ -367,7 +365,6 @@ function BotRuntimeSettings() {
           enabled: config.autoplay.enabled,
           majsoul: {
             ...draft.autoplay.majsoul,
-            auto_join_game: config.autoplay.majsoul.auto_join_game,
           },
         },
         bot: { ...config.bot, api: draft.bot.api },
@@ -404,15 +401,8 @@ function BotRuntimeSettings() {
           onClick={() => {
             const next = !draft.autoplay.enabled
             if (next && draft.platform?.kind === 'RiichiCity') setRcAutoplayWarnOpen(true)
-            void persistToggle('autoplay', next)
+            void persistToggle(next)
           }}
-        />
-        <AutomationToggle
-          icon={LogIn}
-          label={t('settings.autoplay.auto_join_game')}
-          enabled={draft.autoplay.majsoul.auto_join_game}
-          disabled={savingToggle}
-          onClick={() => void persistToggle('autoJoin', !draft.autoplay.majsoul.auto_join_game)}
         />
       </div>
 
@@ -433,7 +423,6 @@ function BotRuntimeSettings() {
       </Dialog>
 
       <AutoplayCard draft={draft} setDraft={setDraft} />
-      <AutoJoinCard draft={draft} setDraft={setDraft} />
 
       <Card>
         <CardHeader>
@@ -537,27 +526,14 @@ function AutomationToggle({
   )
 }
 
-function withAutomationToggle(
-  config: AppConfig,
-  kind: 'autoplay' | 'autoJoin',
-  enabled: boolean,
-): AppConfig {
-  return kind === 'autoplay'
-    ? { ...config, autoplay: { ...config.autoplay, enabled } }
-    : {
-        ...config,
-        autoplay: {
-          ...config.autoplay,
-          majsoul: { ...config.autoplay.majsoul, auto_join_game: enabled },
-        },
-      }
+function withAutomationToggle(config: AppConfig, enabled: boolean): AppConfig {
+  return { ...config, autoplay: { ...config.autoplay, enabled } }
 }
 
 function automationSettingsKey(config: AppConfig): string {
   return JSON.stringify({
     ...config.autoplay,
     enabled: false,
-    majsoul: { ...config.autoplay.majsoul, auto_join_game: false },
   })
 }
 
@@ -565,33 +541,11 @@ function autoplaySettingsKey(config: AppConfig): string {
   return JSON.stringify({
     ...config.autoplay,
     enabled: false,
-    majsoul: {
-      ...config.autoplay.majsoul,
-      auto_join_game: false,
-      auto_join_level: 0,
-      auto_join_mode: '3e',
-      auto_join_stop_after_games: 0,
-      auto_join_stop_after_minutes: 0,
-    },
   })
 }
 
 function resetAutoplaySettings(draft: AppConfig, stored: AppConfig): AppConfig {
-  const join = draft.autoplay.majsoul
-  return {
-    ...draft,
-    autoplay: {
-      ...stored.autoplay,
-      majsoul: {
-        ...stored.autoplay.majsoul,
-        auto_join_game: join.auto_join_game,
-        auto_join_level: join.auto_join_level,
-        auto_join_mode: join.auto_join_mode,
-        auto_join_stop_after_games: join.auto_join_stop_after_games,
-        auto_join_stop_after_minutes: join.auto_join_stop_after_minutes,
-      },
-    },
-  }
+  return { ...draft, autoplay: stored.autoplay }
 }
 
 function DeleteBotDialog({
